@@ -7,13 +7,19 @@ export type { MailboxKind }
 
 export type { Actor } from '../auth/types'
 
-export type EmailEnv = Pick<Env, 'DB' | 'STALWART_URL' | 'STALWART_API_KEY'>
+export type EmailEnv = Pick<
+  Env,
+  'DB' | 'STALWART_URL' | 'STALWART_API_KEY' | 'AWS_SES_ACCESS_KEY_ID' | 'AWS_SES_SECRET_ACCESS_KEY' | 'AWS_SES_REGION' | 'SES_SNS_TOPIC_ARNS'
+>
 
 export type Domain = {
   id: string
   organizationId: string
   name: string
+  /** Receiving: the MX, SPF, DKIM and DMARC records are in place. */
   status: 'pending' | 'verified'
+  /** Sending to outside addresses: Amazon SES has verified the domain. null when it isn't registered with SES. */
+  sending: 'pending' | 'verified' | 'failed' | null
   enabled: boolean
   verifiedAt: string | null
   createdAt: string
@@ -41,6 +47,7 @@ export function toDomain(row: DomainRow): Domain {
     organizationId: row.organization_id,
     name: row.name,
     status: row.status,
+    sending: row.ses_status,
     enabled: row.enabled === 1,
     verifiedAt: row.verified_at,
     createdAt: row.created_at,

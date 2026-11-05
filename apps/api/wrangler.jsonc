@@ -18,7 +18,9 @@
     // Cloudflare account that holds the organizations' R2 buckets (xstate-org-<id>).
     "CLOUDFLARE_ACCOUNT_ID": "99322c1871edd6eb7fba729f872c1832",
     // SNS topics allowed to post SES bounces and complaints to /webhooks/ses (comma-separated).
-    "SES_SNS_TOPIC_ARNS": "arn:aws:sns:us-east-2:881901370832:xstate-ses-events"
+    "SES_SNS_TOPIC_ARNS": "arn:aws:sns:us-east-2:881901370832:xstate-ses-events",
+    // Amazon SES region for outbound mail and domain registration (mailserver/ses.ts).
+    "AWS_SES_REGION": "us-east-2"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -39,6 +41,7 @@
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
   // STALWART_WEBHOOK_SECRET: HMAC key shared with the WebHook object on Stalwart (signatureKey).
+  // AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY: IAM user that manages SES identities (not sending).
   // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY: an R2 API token's S3 keys, Object Read & Write on all buckets.
   // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
   "secrets": {
@@ -48,7 +51,9 @@
       "R2_ACCESS_KEY_ID",
       "R2_SECRET_ACCESS_KEY",
       "CLOUDFLARE_API_TOKEN",
-      "STALWART_WEBHOOK_SECRET"
+      "STALWART_WEBHOOK_SECRET",
+      "AWS_SES_ACCESS_KEY_ID",
+      "AWS_SES_SECRET_ACCESS_KEY"
     ]
   }
 }

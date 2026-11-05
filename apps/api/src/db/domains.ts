@@ -8,6 +8,9 @@ export type DomainRow = {
   status: 'pending' | 'verified'
   enabled: number
   verified_at: string | null
+  ses_status: 'pending' | 'verified' | 'failed' | null
+  /** JSON array of Easy DKIM tokens. */
+  ses_dkim_tokens: string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -49,6 +52,12 @@ export function setVerified(db: D1Database, id: string, now: string): D1Prepared
   return db
     .prepare("UPDATE domains SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ?")
     .bind(now, now, id)
+}
+
+export function setSes(db: D1Database, id: string, ses: { status: string; dkimTokens: string[] }, now: string): D1PreparedStatement {
+  return db
+    .prepare('UPDATE domains SET ses_status = ?, ses_dkim_tokens = ?, updated_at = ? WHERE id = ?')
+    .bind(ses.status, JSON.stringify(ses.dkimTokens), now, id)
 }
 
 export function remove(db: D1Database, id: string): D1PreparedStatement {

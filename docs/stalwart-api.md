@@ -348,6 +348,20 @@ AWS blocks outbound port 25 on EC2, so Stalwart hands mail for outside addresses
   https://api.xstate.com/webhooks/ses`. The API verifies the SNS signature, accepts only topics in
   `SES_SNS_TOPIC_ARNS`, and confirms the subscription itself. It records `email_events` and suppresses
   hard-bounced addresses for everyone, and complainers for the sending organization.
+- **Stalwart config (2026-11-05):**
+  - Relay route `ses` (`x:MtaRoute` `jm3sqbjoaaaa`): `email-smtp.us-east-2.amazonaws.com:587` with STARTTLS. The
+    user name is the SMTP user's `AKIA…` access key ID. The password is `{"@type":"EnvironmentVariable",
+    "variableName":"SES_SMTP_PASSWORD"}`, from `/etc/stalwart/stalwart.env`.
+  - `x:MtaOutboundStrategy` `route`: local domains → `'local'`, otherwise `'ses'` (was `'mx'`; that route is kept).
+  - `x:MtaStageData` `dkimSignDomain` is now `{"match":{},"else":"false"}`: Stalwart no longer signs. SES rejects
+    messages that already carry more than one `DKIM-Signature` (Stalwart added Ed25519 and RSA), and SES signs
+    each message itself with the From domain's SES DKIM key, plus `d=amazonses.com`. Previous value (the default):
+    `{"match":{"0":{"if":"is_local_domain(sender_domain) && !is_empty(authenticated_as)","then":"sender_domain"}},"else":"false"}`.
+  - Restart Stalwart after changing any of these.
+- **Every sending domain must be a verified SES identity.** SES signs with that domain's own key and refuses mail
+  from unverified domains. It never signs with another domain's key.
+- **Identity precedence:** an address identity (e.g. asif@xstate.com) overrides its domain's notification
+  settings, so give it the same bounce and complaint topic, or don't create address identities.
 - **Testing:** SES's mailbox simulator (`bounce@simulator.amazonses.com`, `complaint@simulator.amazonses.com`)
   produces real notifications without hurting reputation.
 

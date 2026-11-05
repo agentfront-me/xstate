@@ -46,18 +46,31 @@ export async function lookupDomain(name: string): Promise<{ registered: boolean;
 }
 
 /**
- * Picks the records mail depends on out of Stalwart's zone file: MX, SPF, both DKIM keys and DMARC. The rest
- * (SRV, MTA-STS, autoconfig, CAA) help mail apps and hardening but aren't needed to send and receive.
+ * Picks the records mail depends on out of Stalwart's zone file: MX, SPF, DKIM and DMARC. The rest (SRV,
+ * MTA-STS, autoconfig, CAA) help mail apps and hardening but aren't needed to send and receive.
+ *
+ * Outbound mail goes through Amazon SES, which signs it, so when the domain is registered with SES its three
+ * Easy DKIM CNAMEs (`sesDkim`) replace Stalwart's own DKIM keys (Stalwart no longer signs).
  */
-export function essentialRecords(zoneFile: string, domain: string): Omit<DnsRecord, 'found'>[] {
+export function essentialRecords(
+  zoneFile: string,
+  domain: string,
+  sesDkim: Omit<DnsRecord, 'found'>[] = [],
+): Omit<DnsRecord, 'found'>[] {
   const records: Omit<DnsRecord, 'found'>[] = []
   for (const { owner, type, value } of parseZone(zoneFile)) {
     const name = owner === domain ? '@' : owner.endsWith(`.${domain}`) ? owner.slice(0, -domain.length - 1) : owner
     if (type === 'MX' && name === '@') records.push({ type, name, value, purpose: 'Mail', required: true })
     else if (type === 'TXT' && name === '@' && value.startsWith('v=spf1')) {
       records.push({ type, name, value, purpose: 'SPF', required: true })
-    } else if (type === 'TXT' && name.endsWith('._domainkey')) records.push({ type, name, value, purpose: 'DKIM', required: true })
-    else if (type === 'TXT' && name === '_dmarc') records.push({ type, name, value, purpose: 'DMARC', required: false })
+    } else if (type === 'TXT' && name.endsWith('._domainkey')) {
+      if (!sesDkim.length) records.push({ type, name, value, purpose: 'DKIM', required: true })
+    } else if (type === 'TXT' && name === '_dmarc') records.push({ type, name, value, purpose: 'DMARC', required: false })
+  }
+  // SES's DKIM keys go where Stalwart's were: after SPF, before DMARC.
+  if (sesDkim.length) {
+    const at = records.findIndex((r) => r.purpose === 'DMARC')
+    records.splice(at === -1 ? records.length : at, 0, ...sesDkim)
   }
   return records
 }

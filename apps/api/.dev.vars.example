@@ -16,3 +16,7 @@ CLOUDFLARE_API_TOKEN=
 # Signs Stalwart's webhook requests (X-Signature). Same value as the WebHook's signatureKey on Stalwart.
 # Any long random string: openssl rand -base64 32
 STALWART_WEBHOOK_SECRET=
+# Amazon SES identity management (register customer domains). IAM user with ses:CreateEmailIdentity,
+# GetEmailIdentity, DeleteEmailIdentity, SetIdentityNotificationTopic. Leave empty to skip SES registration.
+AWS_SES_ACCESS_KEY_ID=
+AWS_SES_SECRET_ACCESS_KEY=

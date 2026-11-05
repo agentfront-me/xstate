@@ -4,6 +4,7 @@ import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
 import { checkRecords, essentialRecords, lookupDomain, type DnsProvider, type DnsRecord } from './dns'
+import * as ses from './ses'
 import * as stalwart from './stalwart/domains'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
 import { normalizeDomain } from './validation'
@@ -30,8 +31,28 @@ export async function addDomain(env: EmailEnv, actor: Actor, organizationId: str
     () => stalwart.destroyDomain(env, stalwartId),
   )
 
+  // Register for sending through SES now, so its DKIM records are part of the DNS step. If SES is down, the next
+  // "Check DNS" (verifyDomain) tries again.
+  await syncSes(env, (await domainsDb.find(env.DB, id))!).catch((err) => console.error(`ses: registering ${name} failed`, err))
   return toDomain((await domainsDb.find(env.DB, id))!)
 }
+
+/**
+ * Registers the domain with SES if it isn't yet, otherwise refreshes SES's verification status. Returns the
+ * up-to-date row. Does nothing when SES isn't configured.
+ */
+async function syncSes(env: EmailEnv, domain: domainsDb.DomainRow): Promise<domainsDb.DomainRow> {
+  if (!ses.sesConfigured(env) || domain.ses_status === 'verified') return domain
+  const identity = domain.ses_status
+    ? ((await ses.getDomainIdentity(env, domain.name)) ?? (await ses.registerDomain(env, domain.name)))
+    : await ses.registerDomain(env, domain.name)
+  if (identity.status === domain.ses_status && JSON.stringify(identity.dkimTokens) === domain.ses_dkim_tokens) return domain
+  await domainsDb.setSes(env.DB, domain.id, identity, new Date().toISOString()).run()
+  return (await domainsDb.find(env.DB, domain.id))!
+}
+
+const sesDkimRecords = (domain: domainsDb.DomainRow) =>
+  ses.dkimRecords(domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : [])
 
 export async function getDomain(env: EmailEnv, actor: Actor, domainId: string): Promise<Domain> {
   const { domain } = await domainContext(env, actor, domainId, 'read')
@@ -53,10 +74,14 @@ export async function getDomainDnsRecords(env: EmailEnv, actor: Actor, domainId:
   const { domain } = await domainContext(env, actor, domainId, 'read')
   const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
   if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
-  return zone
+  const sesDkim = sesDkimRecords(domain)
+  const lines = zone
     .split('\n')
     .filter((line) => !/\sTLSA\s/i.test(line))
-    .join('\n')
+    // With SES signing, Stalwart's own DKIM keys aren't used; SES's CNAMEs replace them.
+    .filter((line) => !(sesDkim.length && /_domainkey\S*\s+IN\s+TXT/i.test(line)))
+  for (const r of sesDkim) lines.push(`${r.name}.${domain.name}. IN CNAME ${r.value}.`)
+  return lines.join('\n')
 }
 
 /**
@@ -81,8 +106,15 @@ export async function verifyDomain(
   actor: Actor,
   domainId: string,
 ): Promise<{ domain: Domain; records: DnsRecord[] }> {
-  const { domain } = await domainContext(env, actor, domainId, 'read')
-  const records = await checkRecords(essentialRecords(await getDomainDnsRecords(env, actor, domainId), domain.name), domain.name)
+  const { domain: row } = await domainContext(env, actor, domainId, 'read')
+  // Also registers domains added before SES, and picks up SES's verification once its DKIM records are found.
+  const domain = await syncSes(env, row).catch((err) => {
+    console.error(`ses: syncing ${row.name} failed`, err)
+    return row
+  })
+  const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
+  if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
+  const records = await checkRecords(essentialRecords(zone, domain.name, sesDkimRecords(domain)), domain.name)
   if (domain.status !== 'verified' && records.every((r) => r.found || !r.required)) {
     await domainsDb.setVerified(env.DB, domain.id, new Date().toISOString()).run()
     return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
@@ -110,6 +142,9 @@ export async function removeDomain(env: EmailEnv, actor: Actor, domainId: string
   if (inUse) throw new EmailError('domain_not_empty', `Delete the ${inUse} address(es) on ${domain.name} first`, 409)
 
   await stalwart.destroyDomain(env, domain.stalwart_id)
+  if (ses.sesConfigured(env) && domain.ses_status) {
+    await ses.deleteDomainIdentity(env, domain.name).catch((err) => console.error(`ses: removing ${domain.name} failed`, err))
+  }
   await env.DB.batch([
     domainsDb.remove(env.DB, domain.id),
     membersDb.removeDomainFromPermissions(env.DB, domain.organization_id, domain.id),

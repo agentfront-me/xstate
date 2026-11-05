@@ -329,6 +329,14 @@ function domains(body) {
   })
 }
 
+/** Whether mail from this domain can reach outside addresses yet (Amazon SES verification). */
+function sendingLabel(d) {
+  if (d.sending === 'verified') return ' · Sending ready'
+  if (d.sending === 'failed') return ' · Sending failed: check the DKIM records'
+  if (d.sending === 'pending') return ' · Sending pending: waiting for DKIM records'
+  return ''
+}
+
 function domainRow(d) {
   const n = mailboxesOf(d.id).length
   const verified = d.status === 'verified'
@@ -336,7 +344,7 @@ function domainRow(d) {
   return `
     <div class="card-row">
       <span class="lead">${icon('at-sign', 16)}</span>
-      <div class="text"><span class="name">${esc(d.name)}</span><span class="sub">${n} ${n === 1 ? 'mailbox' : 'mailboxes'}</span></div>
+      <div class="text"><span class="name">${esc(d.name)}</span><span class="sub">${n} ${n === 1 ? 'mailbox' : 'mailboxes'}${sendingLabel(d)}</span></div>
       <span class="right">
         ${
           verified
