@@ -11,7 +11,7 @@
   "routes": [{ "pattern": "api.xstate.com", "custom_domain": true }],
   "vars": {
     "ENVIRONMENT": "production",
-    "STALWART_URL": "https://mx.xstate.com",
+    "STALWART_URL": "https://mx.xstate.io",
     // Browser origins allowed to call the API (comma-separated): the site's sign-up pages and dashboard, and the
     // desktop app, which serves the dashboard from app://xstate.
     "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate",

@@ -93,7 +93,20 @@ function matches(record: Omit<DnsRecord, 'found'>, published: string): boolean {
     if (record.purpose === 'DMARC') return value.startsWith('v=DMARC1')
     return squash(value) === squash(record.value)
   }
+  if (record.type === 'MX') return mxHost(published) === mxHost(record.value)
   return hostname(published) === hostname(record.value)
+}
+
+/**
+ * The mail server moved from mx.xstate.com to mx.xstate.io on 2026-11-05. Both names reach the same server, so a
+ * domain whose MX still points at the old name keeps working and counts as set up.
+ */
+const LEGACY_MX_HOSTS: Record<string, string> = { 'mx.xstate.com': 'mx.xstate.io' }
+
+/** `10 mx.xstate.com.` → `10 mx.xstate.io`: the MX data with any legacy host replaced by its current name. */
+function mxHost(value: string): string {
+  const [priority, host = ''] = hostname(value).split(/\s+/)
+  return `${priority} ${LEGACY_MX_HOSTS[host] ?? host}`
 }
 
 /** The record data for a name and type, or null when the name doesn't exist (NXDOMAIN). */
@@ -134,7 +147,7 @@ function squash(value: string): string {
   return value.replace(/\s+/g, ' ').replace(/;\s*/g, ';').trim().toLowerCase()
 }
 
-/** MX data is `10 mx.xstate.com.`; compare priority and host without the trailing dot. */
+/** MX data is `10 mx.xstate.io.`; compare priority and host without the trailing dot. */
 function hostname(value: string): string {
   return value.trim().toLowerCase().replace(/\.$/, '')
 }

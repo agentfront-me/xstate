@@ -29,7 +29,7 @@ export const sampleMailboxes = [
 
 /** DNS records shown under a pending domain in demo mode (the live app gets them from the verify call). */
 export const sampleRecords = [
-  { type: 'MX', name: '@', value: '10 mx.xstate.com', found: false, required: true },
+  { type: 'MX', name: '@', value: '10 mx.xstate.io', found: false, required: true },
   { type: 'TXT', name: '@', value: 'v=spf1 include:mail.xstate.com ~all', found: false, required: true },
   { type: 'CNAME', name: 'hn._domainkey', value: 'dkim.xstate.com', found: false, required: true },
 ]

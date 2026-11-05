@@ -1,11 +1,11 @@
 # Stalwart management API for xstate
 
-How xstate talks to the Stalwart mail server (v1.0.2 at `https://mx.xstate.com`) to add domains and manage mailboxes.
+How xstate talks to the Stalwart mail server (v1.0.2 at `https://mx.xstate.io`) to add domains and manage mailboxes.
 
 Source: Stalwart docs — [HTTP API](https://stalw.art/docs/http/api), [Domain object](https://stalw.art/docs/ref/object/domain/), [Account object](https://stalw.art/docs/ref/object/account/), [Managing accounts](https://stalw.art/docs/auth/accounts/manage/), [API keys](https://stalw.art/docs/auth/authentication/api-key/).
 
 > Status: domain add/enable/DNS/remove, mailbox create (User and Group), password reset, aliases, display name, quota and
-> group membership were run against mx.xstate.com on 2026-11-04 by the API's end-to-end test. Items still marked
+> group membership were run against mx.xstate.com (now mx.xstate.io) on 2026-11-04 by the API's end-to-end test. Items still marked
 > **(verify)** have not been tried.
 >
 > **List fields are objects keyed by position, not JSON arrays.** Stalwart sends and expects `credentials` and `aliases`
@@ -18,7 +18,7 @@ Stalwart 1.0 has no REST endpoints for this. All management is JMAP: one `POST` 
 
 | | |
 |---|---|
-| Endpoint | `POST https://mx.xstate.com/jmap/` |
+| Endpoint | `POST https://mx.xstate.io/jmap/` |
 | Auth | `Authorization: Bearer <API key>` |
 | Content-Type | `application/json` |
 | `using` | `["urn:ietf:params:jmap:core", "urn:stalwart:jmap"]` |
@@ -38,7 +38,7 @@ The response mirrors it: `{"methodResponses": [["<Method>", { ...result }, "c1"]
 
 ### Getting an API key
 
-1. Sign in to `https://mx.xstate.com` as an administrator (asif@xstate.com).
+1. Sign in to `https://mx.xstate.io` as an administrator (asif@xstate.io, which also owns the API key in `STALWART_API_KEY`).
 2. Go to Account → Credentials → **API Keys** and create one, e.g. "xstate backend".
 3. Copy the secret. It is shown only once and stored hashed.
 
@@ -55,7 +55,7 @@ Objects are addressed by Stalwart IDs (short strings like `d`, `jmwngjkwaaaa`), 
 Method: `x:Domain/set` with `create`. Needs permission `sysDomainCreate`.
 
 ```bash
-curl -X POST https://mx.xstate.com/jmap/ \
+curl -X POST https://mx.xstate.io/jmap/ \
   -H "Authorization: Bearer $STALWART_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -118,7 +118,7 @@ Stalwart also rejects domain names whose TLD isn't real (e.g. `.invalid`) with "
 A mailbox is an `Account` of type `User`. Its address is `name@<domain name>`. Method: `x:Account/set` with `create`. Needs `sysAccountCreate`.
 
 ```bash
-curl -X POST https://mx.xstate.com/jmap/ \
+curl -X POST https://mx.xstate.io/jmap/ \
   -H "Authorization: Bearer $STALWART_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{

@@ -249,7 +249,7 @@ reverse DNS (PTR) is still the default EC2 name. Mail between xstate addresses w
 deliver until one of these is done:
 
 - **Recommended:** relay Stalwart's outbound mail through Amazon SES (on AWS already, handles sending reputation).
-- Ask AWS to lift the port 25 block, set the PTR to `mx.xstate.com`, and build reputation on our own IP.
+- Ask AWS to lift the port 25 block, set the PTR to `mx.xstate.io`, and build reputation on our own IP.
 
 ## Dashboard changes
 

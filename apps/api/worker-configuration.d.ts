@@ -5,7 +5,7 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	MAIL_SYNC: Queue;
 	ENVIRONMENT: "production";
-	STALWART_URL: "https://mx.xstate.com";
+	STALWART_URL: "https://mx.xstate.io";
 	APP_ORIGINS: "https://xstate.com,https://www.xstate.com,app://xstate";
 	CLOUDFLARE_ACCOUNT_ID: "99322c1871edd6eb7fba729f872c1832";
 	SES_SNS_TOPIC_ARNS: "arn:aws:sns:us-east-2:881901370832:xstate-ses-events";
