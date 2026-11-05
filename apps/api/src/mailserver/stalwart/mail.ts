@@ -226,6 +226,123 @@ export async function getAttachmentParts(env: StalwartEnv, accountId: string, id
   return (result!.list as JmapAttachmentMessage[]) ?? []
 }
 
+export type JmapIdentity = { id: string; name: string; email: string }
+
+/** The account's sending identities (each one a From address it may use). */
+export async function getIdentities(env: StalwartEnv, accountId: string): Promise<JmapIdentity[]> {
+  const [result] = await mail(env, [['Identity/get', { accountId }]])
+  return (result!.list as JmapIdentity[]) ?? []
+}
+
+export async function createIdentity(env: StalwartEnv, accountId: string, identity: { name: string; email: string }): Promise<string> {
+  const [result] = await mail(env, [['Identity/set', { accountId, create: { i: identity } }]])
+  const id = (result!.created as Record<string, { id: string }> | undefined)?.i?.id
+  if (!id) throw setFailure('identity', (result!.notCreated as Record<string, SetError> | undefined)?.i)
+  return id
+}
+
+/** Uploads bytes to the account (an attachment for a message about to be sent). The blob expires if unused. */
+export async function uploadBlob(
+  env: StalwartEnv,
+  accountId: string,
+  body: ReadableStream | ArrayBuffer,
+  contentType: string,
+  size?: number,
+): Promise<{ blobId: string; type: string; size: number }> {
+  const headers = new Headers({ Authorization: `Bearer ${env.STALWART_API_KEY}`, 'Content-Type': contentType })
+  if (size !== undefined) headers.set('Content-Length', String(size))
+  const res = await fetch(new URL(`/jmap/upload/${encodeURIComponent(accountId)}/`, env.STALWART_URL), {
+    method: 'POST',
+    headers,
+    body,
+  })
+  if (res.status === 413) throw new EmailError('attachment_too_large', 'That file is larger than the mail server accepts', 400)
+  if (!res.ok) throw new EmailError('mail_server_error', `Upload failed with HTTP ${res.status}`, 502)
+  return (await res.json()) as { blobId: string; type: string; size: number }
+}
+
+export type ReplySource = {
+  id: string
+  messageId: string[] | null
+  references: string[] | null
+  subject: string | null
+  from: JmapAddress[] | null
+  replyTo: JmapAddress[] | null
+  to: JmapAddress[] | null
+  cc: JmapAddress[] | null
+  receivedAt: string
+  attachments: JmapBodyPart[]
+}
+
+/** What a reply or forward needs from the original message, or null if it no longer exists. */
+export async function getReplySource(env: StalwartEnv, accountId: string, emailId: string): Promise<ReplySource | null> {
+  const [result] = await mail(env, [
+    [
+      'Email/get',
+      {
+        accountId,
+        ids: [emailId],
+        properties: ['id', 'messageId', 'references', 'subject', 'from', 'replyTo', 'to', 'cc', 'receivedAt', 'attachments'],
+        bodyProperties: PART,
+      },
+    ],
+  ])
+  return ((result!.list as ReplySource[]) ?? [])[0] ?? null
+}
+
+/**
+ * Creates the message in Drafts and submits it in one request. On success Stalwart moves it to Sent and clears
+ * $draft. Returns the new message and thread ids.
+ */
+export async function submitEmail(
+  env: StalwartEnv,
+  accountId: string,
+  options: { identityId: string; draftsId: string; sentId: string; email: JmapArgs },
+): Promise<{ id: string; threadId: string }> {
+  const results = await mail(env, [
+    ['Email/set', { accountId, create: { m: { ...options.email, mailboxIds: { [options.draftsId]: true }, keywords: { $draft: true, $seen: true } } } }],
+    [
+      'EmailSubmission/set',
+      {
+        accountId,
+        create: { s: { identityId: options.identityId, emailId: '#m' } },
+        onSuccessUpdateEmail: {
+          '#s': { [`mailboxIds/${options.draftsId}`]: null, [`mailboxIds/${options.sentId}`]: true, 'keywords/$draft': null },
+        },
+      },
+    ],
+  ])
+  const created = (results[0]!.created as Record<string, { id: string; threadId: string }> | undefined)?.m
+  if (!created) throw setFailure('message', (results[0]!.notCreated as Record<string, SetError> | undefined)?.m)
+  const submitted = (results[1]!.created as Record<string, unknown> | undefined)?.s
+  if (!submitted) {
+    const err = (results[1]!.notCreated as Record<string, SetError> | undefined)?.s
+    // Leave nothing behind in Drafts that the person didn't write as a draft.
+    await mail(env, [['Email/set', { accountId, destroy: [created.id] }]]).catch(() => null)
+    throw setFailure('submission', err)
+  }
+  return { id: created.id, threadId: created.threadId }
+}
+
+/** Adds a keyword ($answered, $forwarded) to a message; a missing message is ignored. */
+export async function addKeyword(env: StalwartEnv, accountId: string, emailId: string, keyword: string): Promise<void> {
+  await mail(env, [['Email/set', { accountId, update: { [emailId]: { [`keywords/${keyword}`]: true } } }]])
+}
+
+type SetError = { type?: string; description?: string; properties?: string[] }
+
+function setFailure(what: string, error: SetError | undefined): EmailError {
+  const detail = error?.description ?? error?.type ?? 'unknown error'
+  const props = error?.properties?.length ? ` (${error.properties.join(', ')})` : ''
+  if (error?.type === 'forbiddenFrom') return new EmailError('forbidden_from', 'This mailbox may not send from that address', 403)
+  if (error?.type === 'tooManyRecipients') return new EmailError('too_many_recipients', 'Too many recipients', 400)
+  if (error?.type === 'noRecipients') return new EmailError('no_recipients', 'Add at least one recipient', 400)
+  if (error?.type === 'invalidRecipients') return new EmailError('invalid_recipients', `Invalid recipients${props}`, 400)
+  if (error?.type === 'tooLarge') return new EmailError('message_too_large', 'The message is too large to send', 400)
+  if (error?.type === 'invalidProperties') return new EmailError('invalid_message', `${detail}${props}`, 400)
+  return new EmailError('mail_server_error', `Mail server rejected the ${what}: ${detail}${props}`, 502)
+}
+
 /** Streams a blob (an attachment) from the account. */
 export async function downloadBlob(env: StalwartEnv, accountId: string, blobId: string, name: string, type: string) {
   const url = new URL(

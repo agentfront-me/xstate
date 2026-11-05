@@ -58,10 +58,33 @@ const live = {
     })
   },
 
-  canSend: false,
+  canSend: true,
 
-  send() {
-    throw new Error("Sending from xstate isn't available yet.")
+  /**
+   * `message`: { mailboxId, to, cc, bcc (arrays of addresses), subject, text, inReplyTo?, forwardOf?,
+   * attachments? [{ blobId, name, type }] }. inReplyTo and forwardOf are message ids in the same mailbox.
+   */
+  async send(message) {
+    const list = (emails) => (emails ?? []).map((email) => ({ email }))
+    const { message: sent } = await api('POST', `/email/mailboxes/${message.mailboxId}/send`, {
+      to: list(message.to),
+      cc: list(message.cc),
+      bcc: list(message.bcc),
+      subject: message.subject,
+      text: message.text,
+      ...(message.inReplyTo && { inReplyTo: message.inReplyTo }),
+      ...(message.forwardOf && { forwardOf: message.forwardOf }),
+      ...(message.attachments?.length && { attachments: message.attachments }),
+    })
+    return sent
+  },
+
+  /** Uploads a File for a message about to be sent from the mailbox. */
+  async upload(mailboxId, file) {
+    const { attachment } = await api('POST', `/email/mailboxes/${mailboxId}/uploads?name=${encodeURIComponent(file.name)}`, undefined, {
+      file,
+    })
+    return attachment
   },
 
   clearDraft() {},
@@ -156,32 +179,39 @@ const demo = {
 
   canSend: true,
 
-  /** Demo only: adds a reply to the conversation, or a new message to Sent. */
-  send({ inReplyTo, from, to, subject, text }) {
+  /** Adds a reply to the conversation, or a new message to Sent. Same `message` shape as live.send. */
+  async send(message) {
     const now = new Date().toISOString()
-    const parent = inReplyTo && demoData().find((x) => x.id === inReplyTo.id)
-    const message = {
+    const id = message.inReplyTo
+    const parent = id && demoData().find((x) => x.id === id || x.replies.some((r) => r.id === id))
+    const from = store.mailboxes.find((mb) => mb.id === message.mailboxId)?.address ?? ''
+    const sent = {
       id: `msg_${Date.now()}`,
-      mailboxId: store.mailboxes.find((mb) => mb.address === from)?.id ?? parent?.mailboxId,
+      mailboxId: message.mailboxId,
       threadId: parent?.threadId ?? `msg_${Date.now()}`,
       folder: 'sent',
       from: [{ name: store.user.name, email: from }],
-      to: [{ name: null, email: to }],
-      cc: [],
-      subject,
-      preview: text,
+      to: message.to.map((email) => ({ name: null, email })),
+      cc: (message.cc ?? []).map((email) => ({ name: null, email })),
+      subject: message.subject,
+      preview: message.text,
       receivedAt: now,
       seen: true,
       pinned: false,
-      hasAttachment: false,
-      text,
+      hasAttachment: !!message.attachments?.length,
+      text: message.text,
       html: null,
-      attachments: [],
+      attachments: (message.attachments ?? []).map((a) => ({ ...a, size: a.size ?? 0, inline: false, cid: null })),
     }
     if (parent) {
-      parent.replies.push(message)
+      parent.replies.push(sent)
       parent.seen = true
-    } else demoData().push({ ...message, draft: null, replies: [] })
+    } else demoData().push({ ...sent, draft: null, replies: [] })
+    return { id: sent.id, threadId: sent.threadId }
+  },
+
+  async upload(_mailboxId, file) {
+    return { blobId: `demo-${Date.now()}`, name: file.name, type: file.type || 'application/octet-stream', size: file.size }
   },
 
   clearDraft(summary) {

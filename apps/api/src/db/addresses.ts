@@ -59,3 +59,11 @@ export async function listAliases(db: D1Database, mailboxId: string) {
     .all<{ id: string; local_part: string; domain_stalwart_id: string }>()
   return results
 }
+
+/** The mailbox and organization an address delivers to, or null if it isn't an xstate address. */
+export function findByAddress(db: D1Database, address: string) {
+  return db
+    .prepare('SELECT mailbox_id, organization_id FROM addresses WHERE address = ?')
+    .bind(address.toLowerCase())
+    .first<{ mailbox_id: string; organization_id: string }>()
+}

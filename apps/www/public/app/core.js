@@ -53,8 +53,11 @@ export class ApiError extends Error {
   }
 }
 
-/** Calls the API. With `{ raw: true }` a successful response comes back as a Blob (downloads). */
-export async function api(method, path, body, { raw = false } = {}) {
+/**
+ * Calls the API. With `{ raw: true }` a successful response comes back as a Blob (downloads). With `{ file }` the
+ * file itself is the request body (attachment uploads).
+ */
+export async function api(method, path, body, { raw = false, file = null } = {}) {
   const token = session()?.token
   let res
   try {
@@ -63,8 +66,9 @@ export async function api(method, path, body, { raw = false } = {}) {
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
         ...(body && { 'Content-Type': 'application/json' }),
+        ...(file && { 'Content-Type': file.type || 'application/octet-stream' }),
       },
-      body: body && JSON.stringify(body),
+      body: file ?? (body && JSON.stringify(body)),
     })
   } catch {
     throw new ApiError('network', "Couldn't reach xstate. Check your connection and try again.", 0)

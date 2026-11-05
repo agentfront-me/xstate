@@ -16,7 +16,9 @@
     // desktop app, which serves the dashboard from app://xstate.
     "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate",
     // Cloudflare account that holds the organizations' R2 buckets (xstate-org-<id>).
-    "CLOUDFLARE_ACCOUNT_ID": "99322c1871edd6eb7fba729f872c1832"
+    "CLOUDFLARE_ACCOUNT_ID": "99322c1871edd6eb7fba729f872c1832",
+    // SNS topics allowed to post SES bounces and complaints to /webhooks/ses (comma-separated).
+    "SES_SNS_TOPIC_ARNS": "arn:aws:sns:us-east-2:881901370832:xstate-ses-events"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [

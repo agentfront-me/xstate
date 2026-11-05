@@ -290,11 +290,21 @@ deliver until one of these is done:
    `jm3h29ayaaaa` → `https://api.xstate.com/webhooks/stalwart`. Stalwart restarted, and a real delivery was accepted
    (no `telemetry.webhook-error`). Not yet seen in production: an attachment stored in R2, since production has no
    organizations yet. Purge of deleted files after 30 days added and tested locally (2026-11-05).
-5. Files operations (upload, complete, get, list) and `email_send` with attachments (internal delivery).
+5. **Done 2026-11-05: sending.** `email_send` (new mail, reply with In-Reply-To/References so it threads, forward
+   with the original's attachments, Cc/Bcc, at most 50 recipients; created in Drafts and submitted in one JMAP
+   request, then moved to Sent). Attachments upload to `POST /v1/email/mailboxes/:id/uploads` (raw body, at most
+   25 MB). That streams to Stalwart, so it also works from the desktop app; sent attachments reach R2 through the
+   mail sync like any other. Dashboard: composer with Cc/Bcc and attachments, reply box with attachments, and
+   Forward. Tested between xstate mailboxes, including a shared mailbox sending. Not built: presigned uploads
+   straight to R2, a files list.
 6. Dashboard: live inbox, thread view, attachment downloads, 30 s polling and sandboxed HTML are **done
    2026-11-05** (`apps/www/public/app/mail-data.js`, `mail.js`). Left: composer uploads and sending, once
    `email_send` exists.
-7. Outbound relay (SES) so mail reaches outside addresses.
+7. **Outbound through Amazon SES** (decided 2026-11-05; see `docs/stalwart-api.md` §8). Done: SES in us-east-2,
+   xstate.com verified, production access requested, and bounce and complaint handling (`POST /webhooks/ses`:
+   SNS signature check, `email_events`, `suppressions`, and `email_send` refuses suppressed recipients). Left:
+   SMTP credentials and Stalwart's relay config, the SNS topic and subscription, automatic SES registration for
+   customer domains, and auto-suspending abusive senders (today they're only logged).
 8. Later: assignments, push through a Durable Object instead of the cron, search across mailboxes, agent drafts.
 
 ## Verify

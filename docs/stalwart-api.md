@@ -333,6 +333,24 @@ List them with `x:WebHook/query` + `x:WebHook/get`; remove one with `x:WebHook/s
 deleting one. Tested 2026-11-05: a webhook created at runtime sent nothing until the restart, then posted
 `message-ingest.ham` and `message-ingest.jmap-append` within a second of delivery.
 
+## 8. Outbound through Amazon SES
+
+AWS blocks outbound port 25 on EC2, so Stalwart hands mail for outside addresses to Amazon SES, at
+`email-smtp.us-east-2.amazonaws.com:587` (reachable from deepo). Mail between xstate addresses stays local.
+
+- **SES (us-east-2, account 881901370832):** pay-as-you-go plan, with engagement tracking, VDM and Auto Validation
+  off. Verified: xstate.com (Easy DKIM, three CNAMEs in Cloudflare) and asif@xstate.com. Production access was
+  requested 2026-11-05; until it's granted, SES only delivers to verified addresses.
+- **Each customer domain** must be a verified SES identity before mail from it can go through SES. To do: register
+  it from the API when the domain is added, ideally reusing Stalwart's RSA DKIM key ("bring your own DKIM") so
+  customers add no extra records.
+- **Bounces and complaints:** SES identity notifications → SNS topic `xstate-ses-events` → `POST
+  https://api.xstate.com/webhooks/ses`. The API verifies the SNS signature, accepts only topics in
+  `SES_SNS_TOPIC_ARNS`, and confirms the subscription itself. It records `email_events` and suppresses
+  hard-bounced addresses for everyone, and complainers for the sending organization.
+- **Testing:** SES's mailbox simulator (`bounce@simulator.amazonses.com`, `complaint@simulator.amazonses.com`)
+  produces real notifications without hurting reputation.
+
 ## Permissions for xstate's API key
 
 If you narrow the key instead of letting it inherit full admin rights, it needs:

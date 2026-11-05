@@ -306,6 +306,42 @@ export const emailGetAttachment = defineOperation({
     mailserver.getAttachment(env, actor, input.mailboxId, input.blobId, input.name, input.type),
 })
 
+const address = z.object({ email: z.email().max(254), name: z.string().trim().max(200).nullish() })
+const addresses = z.array(address).max(50)
+
+export const emailSend = defineOperation({
+  name: 'email_send',
+  description:
+    "Send a message from a mailbox's address. Needs write access to the mailbox. For a reply pass inReplyTo (the " +
+    "message id) so mail apps keep it in the same conversation; for a forward pass forwardOf, which brings the " +
+    'original attachments along. attachments are blobs from the upload endpoint. The sent copy lands in Sent. ' +
+    'At most 50 recipients in total.',
+  input: z.object({
+    mailboxId: id,
+    to: addresses.default([]),
+    cc: addresses.optional(),
+    bcc: addresses.optional(),
+    subject: z.string().max(998).default(''),
+    text: z.string().max(1_000_000),
+    html: z.string().max(2_000_000).optional(),
+    inReplyTo: z.string().min(1).max(64).optional(),
+    forwardOf: z.string().min(1).max(64).optional(),
+    attachments: z
+      .array(z.object({ blobId: z.string().min(1).max(256), name: z.string().min(1).max(255), type: z.string().min(1).max(255) }))
+      .max(20)
+      .optional(),
+  }),
+  http: { method: 'POST', path: '/email/mailboxes/:mailboxId/send', status: 201 },
+  run: async ({ env, actor }, input) => ({
+    message: await mailserver.sendMessage(env, actor, input.mailboxId, {
+      ...input,
+      to: input.to.map((a) => ({ email: a.email, name: a.name ?? null })),
+      cc: input.cc?.map((a) => ({ email: a.email, name: a.name ?? null })),
+      bcc: input.bcc?.map((a) => ({ email: a.email, name: a.name ?? null })),
+    }),
+  }),
+})
+
 export const emailOperations = [
   emailAddDomain,
   emailCheckDomain,
@@ -332,4 +368,5 @@ export const emailOperations = [
   emailUpdateMessage,
   emailGetMailState,
   emailGetAttachment,
+  emailSend,
 ]

@@ -411,6 +411,8 @@ function renderReader() {
       <button class="btn-tool" data-act="pin" aria-pressed="${summary.pinned}">${icon(summary.pinned ? 'pin-off' : 'pin', 15)}${summary.pinned ? 'Unpin' : 'Pin'}</button>
       <button class="btn-tool" data-act="archive">${icon(archived ? 'inbox' : 'archive', 15)}${archived ? 'Move to inbox' : 'Archive'}</button>
       <button class="btn-tool" data-act="unread">${icon('circle', 15)}${summary.seen ? 'Mark unread' : 'Mark read'}</button>
+      <span style="flex:1"></span>
+      ${data().canSend && t && !t.loading && !t.error ? `<button class="btn-tool" data-act="forward-mail">${icon('forward', 15)}Forward</button>` : ''}
     </div>
     <div class="reader-scroll">
       <article class="reader-body">
@@ -479,21 +481,74 @@ function draftHtml(draft) {
 }
 
 const fromAddresses = () => view.mailboxes.map((mb) => mb.address)
+const addressOf = (mailboxId) => view.mailboxes.find((mb) => mb.mailboxId === mailboxId)?.address ?? ''
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+/** Splits "a@x.com, b@y.com" into addresses; returns the invalid ones separately. */
+function parseRecipients(value) {
+  const all = value.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean)
+  return { valid: all.filter(isEmail), invalid: all.filter((a) => !isEmail(a)) }
+}
+
+/**
+ * Who a reply goes to: the latest message's Reply-To or sender. If the latest message is one we sent, reply to
+ * its recipients instead.
+ */
+function replyTarget(latest, ownAddress) {
+  if (!latest) return []
+  const fromSelf = latest.from[0]?.email?.toLowerCase() === ownAddress.toLowerCase()
+  const list = fromSelf ? latest.to : latest.replyTo?.length ? latest.replyTo : latest.from
+  return list.map((a) => a.email)
+}
+
+/** Attachment chips with upload state. `files`: [{ id, name, size, status: 'uploading'|'ready'|'error', attachment }] */
+function filesHtml(files) {
+  if (!files.length) return ''
+  return `<div class="attachments files">${files
+    .map(
+      (f) => `<span class="attachment${f.status === 'error' ? ' is-error' : ''}" data-file="${f.id}" title="${esc(f.error ?? f.name)}">
+        ${f.status === 'uploading' ? '<span class="spinner"></span>' : icon(f.status === 'error' ? 'circle-alert' : 'paperclip', 14)}
+        <span class="ellipsis">${esc(f.name)}</span><span class="muted small">${esc(formatSize(f.size))}</span>
+        <button type="button" class="x-btn" data-remove-file="${f.id}" aria-label="Remove ${esc(f.name)}">${icon('x', 12)}</button></span>`,
+    )
+    .join('')}</div>`
+}
+
+/** Uploads picked files for a message from `mailboxId`, updating `files` and calling `onChange` as they finish. */
+function addFiles(mailboxId, fileList, files, onChange) {
+  for (const file of fileList) {
+    const entry = { id: `f${Date.now()}${Math.random().toString(36).slice(2, 6)}`, name: file.name, size: file.size, status: 'uploading' }
+    files.push(entry)
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      Object.assign(entry, { status: 'error', error: 'Larger than 25 MB' })
+      continue
+    }
+    data()
+      .upload(mailboxId, file)
+      .then((attachment) => Object.assign(entry, { status: 'ready', attachment }))
+      .catch((err) => Object.assign(entry, { status: 'error', error: err.message }))
+      .finally(onChange)
+  }
+  onChange()
+}
+
+function readyAttachments(files) {
+  if (files.some((f) => f.status === 'uploading')) return { error: 'Wait for attachments to finish uploading.' }
+  if (files.some((f) => f.status === 'error')) return { error: 'Remove the attachments that failed to upload.' }
+  return { attachments: files.map((f) => f.attachment) }
+}
 
 function replyHtml(summary) {
-  const addresses = fromAddresses()
-  const own = view.mailboxes.find((mb) => mb.mailboxId === summary.mailboxId)?.address
-  const reply = (view.replies[keyOf(summary)] ??= { text: '', from: own ?? addresses[0] ?? '' })
+  const reply = (view.replies[keyOf(summary)] ??= { text: '', files: [], sending: false, error: '' })
   const canSend = data().canSend
   return `<div class="reply-wrap"><form class="reply" id="reply">
-    <div class="reply-from">From
-      <span class="select-chip"><span id="from-label">${esc(reply.from)}</span>${icon('chevron-down', 12)}
-        <select id="reply-from" aria-label="Send from">${addresses.map((a) => `<option ${a === reply.from ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select></span>
-    </div>
+    <div class="reply-from">From <span class="select-chip">${esc(addressOf(summary.mailboxId))}</span></div>
     <textarea id="reply-text" rows="2" placeholder="${canSend ? 'Write a reply…' : 'Replying from xstate is coming soon'}" aria-label="Reply" ${canSend ? '' : 'disabled'}>${esc(reply.text)}</textarea>
+    <div id="reply-files">${filesHtml(reply.files)}</div>
     <div class="reply-foot">
-      <button type="button" class="attach" aria-label="Attach a file" title="Attachments are coming soon" disabled>${icon('paperclip', 15)}</button>
-      <button class="btn btn-primary" type="submit" ${canSend ? '' : 'disabled title="Sending is coming soon"'}>Send</button>
+      <label class="attach" title="Attach files" ${canSend ? '' : 'hidden'}>${icon('paperclip', 15)}<input type="file" id="reply-attach" multiple hidden></label>
+      <span class="reply-err" id="reply-err" role="alert">${esc(reply.error)}</span>
+      <button class="btn btn-primary" type="submit" ${canSend && !reply.sending ? '' : 'disabled'}>${reply.sending ? '<span class="spinner"></span>' : ''}Send</button>
     </div></form></div>`
 }
 
@@ -537,6 +592,8 @@ function bindReader(el, summary, t) {
   if (!form) return
   const text = form.querySelector('#reply-text')
   const reply = view.replies[keyOf(summary)]
+  const filesEl = form.querySelector('#reply-files')
+  const refreshFiles = () => (filesEl.innerHTML = filesHtml(reply.files))
   text.addEventListener('input', () => {
     reply.text = text.value
     text.style.height = 'auto'
@@ -545,30 +602,49 @@ function bindReader(el, summary, t) {
   text.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) form.requestSubmit()
   })
-  form.querySelector('#reply-from').addEventListener('change', (event) => {
-    reply.from = event.target.value
-    form.querySelector('#from-label').textContent = event.target.value
+  form.querySelector('#reply-attach')?.addEventListener('change', (event) => {
+    addFiles(summary.mailboxId, [...event.target.files], reply.files, refreshFiles)
+    event.target.value = ''
+  })
+  filesEl.addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-remove-file]')
+    if (!remove) return
+    reply.files = reply.files.filter((f) => f.id !== remove.dataset.removeFile)
+    refreshFiles()
   })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
     const body = reply.text.trim()
     if (!body) return text.focus()
-    reply.text = ''
-    await sendReply(summary, reply.from, body)
-    toast('Reply sent')
+    const { attachments, error } = readyAttachments(reply.files)
+    if (error) {
+      reply.error = error
+      return (form.querySelector('#reply-err').textContent = error)
+    }
+    reply.sending = true
+    reply.error = ''
+    renderReader()
+    try {
+      await sendReply(summary, body, attachments)
+      view.replies[keyOf(summary)] = { text: '', files: [], sending: false, error: '' }
+      toast('Reply sent')
+    } catch (err) {
+      Object.assign(reply, { sending: false, error: err.message })
+    }
+    renderReader()
   })
 }
 
-async function sendReply(summary, from, text) {
-  const latest = view.thread?.messages[view.thread.messages.length - 1]
-  data().send({
-    inReplyTo: summary,
-    from,
-    to: (latest?.from[0] ?? summary.from[0])?.email,
-    subject: summary.subject.startsWith('Re:') ? summary.subject : `Re: ${summary.subject}`,
-    text,
-  })
+/** Replies to the latest message in the open conversation, from the conversation's own mailbox. */
+async function sendReply(summary, text, attachments = []) {
+  const messages = view.thread?.messages ?? []
+  const latest = messages[messages.length - 1]
+  const to = replyTarget(latest, addressOf(summary.mailboxId))
+  if (!to.length) throw new Error('No one to reply to.')
+  const subject = /^re:/i.test(summary.subject) ? summary.subject : `Re: ${summary.subject}`
+  await data().send({ mailboxId: summary.mailboxId, to, subject, text, inReplyTo: latest?.id, attachments })
   await openThread(keyOf(summary), { markRead: false })
+  loadFolders().then(() => (renderFolders(), ctx.refreshRail?.()))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -618,13 +694,18 @@ function onClick(event) {
       return renderReader()
     case 'send-draft': {
       const latest = view.thread.messages[view.thread.messages.length - 1]
-      const { from, body } = latest.draft
+      const { body } = latest.draft
       data().clearDraft(summary)
-      return sendReply(summary, from, body).then(() => toast('Draft sent'))
+      latest.draft = null
+      return sendReply(summary, body)
+        .then(() => toast('Draft sent'))
+        .catch((err) => toast(err.message))
     }
+    case 'forward-mail':
+      return openComposer({ forward: summary })
     case 'edit-draft': {
       const latest = view.thread.messages[view.thread.messages.length - 1]
-      view.replies[keyOf(summary)] = { text: latest.draft.body, from: latest.draft.from }
+      view.replies[keyOf(summary)] = { text: latest.draft.body, files: [], sending: false, error: '' }
       data().clearDraft(summary)
       latest.draft = null
       renderReader()
@@ -688,27 +769,45 @@ async function download(button) {
 // ---------------------------------------------------------------------------------------------------------------
 // Composer
 
-function openComposer() {
-  const addresses = fromAddresses()
+/**
+ * The New mail window, also used to forward (`{ forward: summary }`): a forward keeps the original's attachments
+ * and is sent from the conversation's own mailbox.
+ */
+function openComposer({ forward = null } = {}) {
+  const canSend = data().canSend
+  const mailboxes = forward ? view.mailboxes.filter((mb) => mb.mailboxId === forward.mailboxId) : view.mailboxes
+  const files = []
+  const original = forward ? view.thread?.messages[view.thread.messages.length - 1] : null
+  const forwardText = original
+    ? `\n\n---------- Forwarded message ----------\nFrom: ${original.from.map((a) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(', ')}\n` +
+      `Date: ${new Date(original.receivedAt).toLocaleString()}\nSubject: ${original.subject}\nTo: ${original.to.map((a) => a.email).join(', ')}\n\n${original.text}`
+    : ''
+  const kept = original?.attachments.filter((a) => !a.inline) ?? []
   const scrim = document.createElement('div')
   scrim.className = 'scrim'
   scrim.innerHTML = `
     <form class="modal" role="dialog" aria-modal="true" aria-labelledby="compose-title" novalidate>
-      <div class="modal-head"><span id="compose-title">New mail</span><button type="button" class="x-btn" data-close aria-label="Close">${icon('x', 16)}</button></div>
+      <div class="modal-head"><span id="compose-title">${forward ? 'Forward' : 'New mail'}</span><button type="button" class="x-btn" data-close aria-label="Close">${icon('x', 16)}</button></div>
       <div class="modal-row"><label for="c-from">From</label>
-        <select id="c-from">${addresses.map((a) => `<option>${esc(a)}</option>`).join('') || '<option value="">Add an address in Settings first</option>'}</select></div>
-      <div class="modal-row"><label for="c-to">To</label><input id="c-to" type="email" placeholder="name@example.com" autocomplete="off"></div>
-      <div class="modal-row"><label for="c-subject">Subject</label><input id="c-subject" autocomplete="off"></div>
-      <textarea id="c-body" placeholder="Write your message…" aria-label="Message"></textarea>
+        <select id="c-from" ${forward ? 'disabled' : ''}>${mailboxes.map((mb) => `<option value="${mb.mailboxId}">${esc(mb.address)}</option>`).join('') || '<option value="">Add an address in Settings first</option>'}</select></div>
+      <div class="modal-row"><label for="c-to">To</label><input id="c-to" placeholder="name@example.com, …" autocomplete="off">
+        <button type="button" class="btn-quiet small" id="c-show-cc">Cc / Bcc</button></div>
+      <div class="modal-row" id="c-cc-row" hidden><label for="c-cc">Cc</label><input id="c-cc" autocomplete="off"></div>
+      <div class="modal-row" id="c-bcc-row" hidden><label for="c-bcc">Bcc</label><input id="c-bcc" autocomplete="off"></div>
+      <div class="modal-row"><label for="c-subject">Subject</label><input id="c-subject" autocomplete="off" value="${esc(forward ? (/^fwd?:/i.test(forward.subject) ? forward.subject : `Fwd: ${forward.subject}`) : '')}"></div>
+      <textarea id="c-body" placeholder="Write your message…" aria-label="Message">${esc(forwardText)}</textarea>
+      ${kept.length ? `<div class="modal-note">${icon('paperclip', 13)}${kept.length} ${kept.length === 1 ? 'attachment' : 'attachments'} from the original will be included.</div>` : ''}
+      <div id="c-files" style="padding:0 16px"></div>
       <div class="modal-foot">
-        <button type="button" class="btn" disabled title="Agents can draft for you once the Agents page ships">${icon('sparkles', 14)}Draft with agent</button>
+        <label class="btn" title="Attach files">${icon('paperclip', 14)}Attach<input type="file" id="c-attach" multiple hidden></label>
         <span class="err" id="c-err" role="alert"></span>
-        <button class="btn btn-primary" type="submit">${icon('send', 14)}Send</button>
+        <button class="btn btn-primary" type="submit" id="c-send">${icon('send', 14)}Send</button>
       </div>
     </form>`
   document.body.append(scrim)
   const form = scrim.querySelector('form')
-  const $ = (s) => form.querySelector(s)
+  const $ = (sel) => form.querySelector(sel)
+  const refreshFiles = () => ($('#c-files').innerHTML = filesHtml(files))
   $('#c-to').focus()
 
   const close = () => {
@@ -723,21 +822,71 @@ function openComposer() {
     if (event.target === scrim) close()
   })
   $('[data-close]').addEventListener('click', close)
+  $('#c-show-cc').addEventListener('click', (event) => {
+    $('#c-cc-row').hidden = false
+    $('#c-bcc-row').hidden = false
+    event.target.remove()
+    $('#c-cc').focus()
+  })
+  $('#c-attach').addEventListener('change', (event) => {
+    addFiles($('#c-from').value, [...event.target.files], files, refreshFiles)
+    event.target.value = ''
+  })
+  $('#c-files').addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-remove-file]')
+    if (!remove) return
+    files.splice(files.findIndex((f) => f.id === remove.dataset.removeFile), 1)
+    refreshFiles()
+  })
+  // Uploads belong to the mailbox they were made for; switching From starts the attachments over.
+  $('#c-from').addEventListener('change', () => {
+    if (!files.length) return
+    files.length = 0
+    refreshFiles()
+    $('#c-err').textContent = 'Attachments were removed because you changed the From address. Attach them again.'
+  })
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault()
-    const to = $('#c-to').value.trim()
     const err = $('#c-err')
-    if (!$('#c-from').value) return (err.textContent = 'Add an address first.')
-    if (!isEmail(to)) {
-      err.textContent = 'Enter a valid email address.'
+    err.textContent = ''
+    const mailboxId = $('#c-from').value
+    if (!mailboxId) return (err.textContent = 'Add an address first.')
+    if (!canSend) return (err.textContent = "Sending from xstate isn't available yet.")
+    const to = parseRecipients($('#c-to').value)
+    const cc = parseRecipients($('#c-cc').value)
+    const bcc = parseRecipients($('#c-bcc').value)
+    const invalid = [...to.invalid, ...cc.invalid, ...bcc.invalid]
+    if (invalid.length) return (err.textContent = `Not a valid address: ${invalid.join(', ')}`)
+    if (!to.valid.length && !cc.valid.length && !bcc.valid.length) {
+      err.textContent = 'Add at least one recipient.'
       return $('#c-to').focus()
     }
-    if (!data().canSend) return (err.textContent = "Sending from xstate isn't available yet.")
-    data().send({ from: $('#c-from').value, to, subject: $('#c-subject').value.trim(), text: $('#c-body').value.trim() })
-    close()
-    toast('Sent')
-    if (view.folder === 'sent') loadList()
+    const { attachments, error } = readyAttachments(files)
+    if (error) return (err.textContent = error)
+    const send = $('#c-send')
+    send.disabled = true
+    send.setAttribute('aria-busy', 'true')
+    try {
+      await data().send({
+        mailboxId,
+        to: to.valid,
+        cc: cc.valid,
+        bcc: bcc.valid,
+        subject: $('#c-subject').value.trim(),
+        text: $('#c-body').value,
+        forwardOf: original?.id,
+        attachments,
+      })
+      close()
+      toast('Sent')
+      loadFolders().then(() => (renderFolders(), ctx.refreshRail?.()))
+      if (view.folder === 'sent') loadList()
+    } catch (e) {
+      err.textContent = e.message
+      send.disabled = false
+      send.removeAttribute('aria-busy')
+    }
   })
 }
 

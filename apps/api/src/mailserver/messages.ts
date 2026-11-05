@@ -2,7 +2,9 @@
 // only for its owner, shared and agent mailboxes for the people allowed in. Everything else is JMAP mail calls in
 // ./stalwart/mail, made with the admin key and the mailbox's Stalwart account id.
 
+import * as eventsDb from '../db/email-events'
 import type { MailboxRow } from '../db/mailboxes'
+import * as usersDb from '../db/users'
 import { mailContext, readableMailboxes } from './access'
 import { EmailError } from './errors'
 import * as jmap from './stalwart/mail'
@@ -273,4 +275,139 @@ function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Mess
         cid: p.cid?.replace(/^<|>$/g, '') ?? null,
       })),
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Sending
+
+/** At most this many To + Cc + Bcc recipients per message. Bulk mail isn't what xstate is for. */
+export const MAX_RECIPIENTS = 50
+/** Largest attachment upload, matching what most mail servers accept for a whole message. */
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+export type SendInput = {
+  to: Address[]
+  cc?: Address[]
+  bcc?: Address[]
+  subject: string
+  text: string
+  html?: string
+  /** Message being replied to: sets In-Reply-To and References, so mail apps thread it, and marks it $answered. */
+  inReplyTo?: string
+  /** Message being forwarded: its attachments come along, and it's marked $forwarded. */
+  forwardOf?: string
+  /** Files from email_upload_attachment, plus (for a forward) any of the original's attachments to keep. */
+  attachments?: { blobId: string; name: string; type: string }[]
+}
+
+/**
+ * Sends a message from the mailbox's primary address. The message is created in Drafts and submitted in one
+ * step; Stalwart moves it to Sent. Mail to other xstate addresses is delivered at once; outside addresses go
+ * through Stalwart's outbound route (Amazon SES).
+ */
+export async function sendMessage(
+  env: EmailEnv,
+  actor: Actor,
+  mailboxId: string,
+  input: SendInput,
+): Promise<{ id: string; threadId: string }> {
+  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  const accountId = mailbox.stalwart_id
+
+  const recipients = [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])]
+  if (!recipients.length) throw new EmailError('no_recipients', 'Add at least one recipient')
+  if (recipients.length > MAX_RECIPIENTS) {
+    throw new EmailError('too_many_recipients', `A message can have at most ${MAX_RECIPIENTS} recipients`)
+  }
+
+  // Addresses that hard-bounced before, or complained about this organization's mail (from SES notifications).
+  const blocked = await eventsDb.suppressedFor(env.DB, mailbox.organization_id, recipients.map((r) => r.email))
+  if (blocked.length) {
+    const list = blocked.map((b) => `${b.address} (${b.reason === 'bounce' ? 'address does not exist' : 'marked your mail as spam'})`)
+    throw new EmailError('recipient_suppressed', `Not sending to ${list.join(', ')}. Remove them and try again.`, 409)
+  }
+
+  const [folders, identities, user] = await Promise.all([
+    jmap.getFolders(env, [accountId]).then((m) => m.get(accountId) ?? []),
+    jmap.getIdentities(env, accountId),
+    usersDb.findById(env.DB, actor.userId),
+  ])
+  const draftsId = folders.find((f) => f.role === 'drafts')?.id
+  const sentId = folders.find((f) => f.role === 'sent')?.id
+  if (!draftsId || !sentId) throw new EmailError('folder_not_found', 'This mailbox has no Drafts or Sent folder', 409)
+
+  // The display name people see: your own name on your personal mailbox, otherwise the mailbox's name.
+  const fromName = (mailbox.kind === 'personal' ? user?.name : mailbox.display_name) ?? mailbox.display_name ?? null
+  const identityId =
+    identities.find((i) => i.email.toLowerCase() === mailbox.address)?.id ??
+    (await jmap.createIdentity(env, accountId, { name: fromName ?? '', email: mailbox.address }))
+
+  const email: Record<string, unknown> = {
+    from: [{ name: fromName, email: mailbox.address }],
+    to: input.to,
+    subject: input.subject,
+  }
+  if (input.cc?.length) email.cc = input.cc
+  if (input.bcc?.length) email.bcc = input.bcc
+
+  let original: jmap.ReplySource | null = null
+  const sourceId = input.inReplyTo ?? input.forwardOf
+  if (sourceId) {
+    original = await jmap.getReplySource(env, accountId, sourceId)
+    if (!original) throw new EmailError('message_not_found', 'The message you are replying to no longer exists', 404)
+    if (input.inReplyTo && original.messageId?.length) {
+      email.inReplyTo = original.messageId
+      email.references = [...(original.references ?? []), ...original.messageId]
+    }
+  }
+
+  // Attachments may only come from this account: uploads to it, or the forwarded message's own parts.
+  const attachments = input.attachments ?? []
+  if (input.forwardOf && original) {
+    for (const part of original.attachments) {
+      if (part.blobId && !attachments.some((a) => a.blobId === part.blobId)) {
+        attachments.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type })
+      }
+    }
+  }
+
+  const body: Record<string, unknown> = input.html
+    ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, { partId: 'html', type: 'text/html' }] }
+    : { partId: 'text', type: 'text/plain' }
+  email.bodyValues = { text: { value: input.text }, ...(input.html && { html: { value: input.html } }) }
+  email.bodyStructure = attachments.length
+    ? {
+        type: 'multipart/mixed',
+        subParts: [
+          body,
+          ...attachments.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'attachment' })),
+        ],
+      }
+    : body
+
+  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email })
+  if (original) {
+    await jmap
+      .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')
+      .catch((err) => console.error('send: marking original failed', err))
+  }
+  return sent
+}
+
+/** Stores an attachment for a message about to be sent. Returns the blob id to pass to sendMessage. */
+export async function uploadAttachment(
+  env: EmailEnv,
+  actor: Actor,
+  mailboxId: string,
+  body: ReadableStream,
+  options: { contentType: string; size: number },
+) {
+  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  if (!Number.isFinite(options.size) || options.size <= 0) {
+    throw new EmailError('invalid_upload', 'Send the file as the request body with a Content-Length')
+  }
+  if (options.size > MAX_UPLOAD_BYTES) {
+    throw new EmailError('attachment_too_large', `Attachments can be at most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`)
+  }
+  return jmap.uploadBlob(env, mailbox.stalwart_id, body, options.contentType, options.size)
 }

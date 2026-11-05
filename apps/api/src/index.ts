@@ -1,7 +1,10 @@
 import { Hono } from 'hono'
 import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
+import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
+import { requireAuth } from './auth/middleware'
+import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
 import type { AppEnv } from './http/types'
 import { operations } from './operations'
@@ -22,11 +25,15 @@ v1.use('*', (c, next) =>
     maxAge: 600,
   })(c, next),
 )
+// Attachment uploads take the file itself as the body, not JSON, so they get their own route.
+v1.post('/email/mailboxes/:mailboxId/uploads', requireAuth, handleAttachmentUpload)
 mountOperations(v1, operations)
 app.route('/v1', v1)
 
 // Stalwart calls this when mail arrives in any account (signed; not part of the public /v1 API).
 app.post('/webhooks/stalwart', handleStalwartWebhook)
+// Amazon SES bounces and complaints, delivered by SNS (signed by SNS; not part of the public /v1 API).
+app.post('/webhooks/ses', handleSesWebhook)
 
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))
