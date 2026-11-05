@@ -21,6 +21,15 @@ export async function list(db: D1Database, mailboxId: string) {
   return results
 }
 
+/** The member's access to every mailbox they have a row for, keyed by mailbox id. */
+export async function forMember(db: D1Database, memberId: string): Promise<Map<string, AccessLevel>> {
+  const { results } = await db
+    .prepare('SELECT mailbox_id, access FROM mailbox_access WHERE member_id = ?')
+    .bind(memberId)
+    .all<{ mailbox_id: string; access: AccessLevel }>()
+  return new Map(results.map((r) => [r.mailbox_id, r.access]))
+}
+
 export async function memberIds(db: D1Database, mailboxId: string): Promise<string[]> {
   const { results } = await db
     .prepare('SELECT member_id FROM mailbox_access WHERE mailbox_id = ?')

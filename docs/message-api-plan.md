@@ -124,8 +124,8 @@ so the server keeps only the data store (accounts, folders, flags, the search in
      maintenance task. Restricting the export to blobs alone isn't safe: the docs say to always include `data`, and
      importing needs an empty target.
   - Doing this now, before customers have mail, keeps it to a few minutes of downtime.
-- **Still on the server:** the Postgres data store. Moving it to managed Postgres would leave the mail server with no
-  state of its own, so it can be rebuilt or scaled freely. That's a separate step.
+- **Still on the server:** the Postgres data store (accounts, folders, flags, search index). Decision
+  (2026-11-05): it stays on deepo and does not move to managed Postgres.
 
 ### Why a copy, not stripping attachments out of mail
 
@@ -142,19 +142,25 @@ later, for example with a retention rule on one side.
 
 ### Ingesting attachments
 
-Ingestion is driven by JMAP changes, so it covers every path the same way: inbound mail, mail sent from the
-dashboard, and mail sent from Apple Mail or other clients.
+Ingestion is triggered by Stalwart's webhook and driven by JMAP changes, so it covers every path the same way:
+inbound mail, mail sent from the dashboard, and mail sent from Apple Mail, Spark or other clients.
 
-1. A Cron Trigger (every minute) calls `Email/changes` for each mailbox from its last saved state. One JMAP request
-   can carry calls for many accounts. Later, a Durable Object holding Stalwart's `/jmap/eventsource` can replace the
-   cron to make it close to real time.
-2. For each new message, `Email/get` with `bodyStructure` lists the attachment parts: blob id, name, type, size,
-   disposition and `cid`.
-3. Each part becomes a Cloudflare Queue job. The consumer streams the part from
-   `/jmap/download/<accountId>/<blobId>/<name>` into the organization's bucket and writes the `files` row.
-   Retries are idempotent because a mailbox, message and part combination is unique.
-4. Destroyed messages from `Email/changes` mark their files deleted. R2 objects are removed after a grace period, so
-   an accidental delete is recoverable.
+1. Stalwart's webhook (see `docs/stalwart-api.md` §7) posts `message-ingest.*` events to `POST /webhooks/stalwart`.
+   The API checks the signature, converts each event's numeric `accountId` to the JMAP id, and queues a
+   `MAIL_SYNC` job for each matching mailbox.
+2. The queue consumer (`jobs/mail-sync.ts` → `storage/mail-sync.ts`) calls `Email/changes` from the mailbox's saved
+   state. Each created message's attachment parts are claimed in `files` (status `pending`), streamed from
+   `/jmap/download/...` into the organization's bucket while being hashed, then marked `ready`. Inline parts under
+   20 KB (logos, tracking pixels) are skipped.
+3. Destroyed messages mark their files `deleted`. R2 objects are removed after a grace period, so an accidental
+   delete is recoverable. That cleanup is still to build.
+4. A mailbox seen for the first time, or whose saved state is too old to diff from, is backfilled. Its current
+   state is noted, every message with attachments is copied, then the state is saved.
+5. An hourly Cron Trigger queues every mailbox, because webhooks aren't guaranteed and deletions send none.
+   Mailboxes with nothing new finish in one JMAP call.
+
+Every step can be repeated safely: the unique `(mailbox_id, email_id, part_id)` index plus the claim-then-upload
+order mean a retried or duplicated job never stores a second copy.
 
 Small inline images, such as signature logos and tracking pixels, are skipped below a size threshold (proposed:
 inline parts under 20 KB). They aren't stored or listed.
@@ -263,12 +269,28 @@ deliver until one of these is done:
 1. **Spike.** The Stalwart half is answered: the admin key works with `accountId` = `stalwart_id` (see Verified
    claims). Left to do: create an R2 bucket through the Cloudflare API, and put an object into it from a Worker with
    `aws4fetch`.
-2. Migration `0002_files.sql`, bucket creation for new organizations and a backfill for existing ones,
-   `mailContext` and its tests.
-3. Read operations: folders, messages, thread, changes.
-4. Attachment ingestion: cron, queue consumer, `files` rows, deletes.
+2. **Done 2026-11-05:** migration `0002_files.sql`; `storage/r2.ts` (S3 API via aws4fetch: put, get, head,
+   list, delete, delete folder, presigned GET/PUT); `storage/buckets.ts` (create with CORS through the Cloudflare
+   API, `xstate-dev-org-<id>` outside production). Buckets are created in the background at sign-up, for existing
+   organizations at the owner's next sign-in, or lazily when the first file is stored. Deleting a mailbox deletes
+   its R2 folder. Secrets: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_API_TOKEN` (one R2 "Admin
+   Read & Write" token). Known gap: bucket CORS only accepts http(s) origins, so the desktop app (`app://xstate`)
+   will need uploads to go through its main process or the API.
+3. **Done 2026-11-05: read operations.** `email_list_folders`, `email_list_messages`, `email_get_thread`,
+   `email_update_message` (read, pinned, move; creates Archive on first use), `email_get_mail_state` (polling
+   token) and `email_get_attachment` (streams from Stalwart until R2 copies exist), with `mailContext` in
+   `mailserver/access.ts`. JMAP message ids are only unique within one account, so clients key messages by
+   mailbox id and message id together.
+4. **Done 2026-11-05: attachment ingestion.** Webhook endpoint, `MAIL_SYNC` queue, sync, hourly cron. Tested
+   locally with signed webhooks: first sync, new mail (PDF stored with a matching SHA-256, inline logo skipped),
+   replay (no duplicates), delete (file marked deleted), and cron. Live test the same day, with a temporary
+   Stalwart webhook to a tunnel (removed afterwards): real deliveries reached the API within a second, and their
+   attachments landed in R2. Left: the production setup (queue, secret, WebHook object, then restart Stalwart) and
+   purging deleted files after the grace period.
 5. Files operations (upload, complete, get, list) and `email_send` with attachments (internal delivery).
-6. Dashboard: live inbox, thread view, attachments, composer uploads, polling, safe HTML.
+6. Dashboard: live inbox, thread view, attachment downloads, 30 s polling and sandboxed HTML are **done
+   2026-11-05** (`apps/www/public/app/mail-data.js`, `mail.js`). Left: composer uploads and sending, once
+   `email_send` exists.
 7. Outbound relay (SES) so mail reaches outside addresses.
 8. Later: assignments, push through a Durable Object instead of the cron, search across mailboxes, agent drafts.
 

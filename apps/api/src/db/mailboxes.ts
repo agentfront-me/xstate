@@ -112,3 +112,19 @@ export function update(
 export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM mailboxes WHERE id = ?').bind(id)
 }
+
+/** Our mailbox ids for the given Stalwart account ids; accounts that aren't xstate mailboxes are left out. */
+export async function idsByStalwartIds(db: D1Database, stalwartIds: string[]): Promise<string[]> {
+  if (!stalwartIds.length) return []
+  const { results } = await db
+    .prepare('SELECT id FROM mailboxes WHERE stalwart_id IN (SELECT value FROM json_each(?))')
+    .bind(JSON.stringify(stalwartIds))
+    .all<{ id: string }>()
+  return results.map((r) => r.id)
+}
+
+/** Every mailbox id, for the hourly safety check. */
+export async function allIds(db: D1Database): Promise<string[]> {
+  const { results } = await db.prepare('SELECT id FROM mailboxes ORDER BY created_at').all<{ id: string }>()
+  return results.map((r) => r.id)
+}

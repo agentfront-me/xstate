@@ -7,7 +7,7 @@
 
 import { applyTheme, desktop, esc, initials, signOut, themeChoice } from './core.js'
 import { icon } from './icons.js'
-import { renderMail, unreadCount } from './mail.js'
+import { prefetchMail, renderMail, unreadCount } from './mail.js'
 import { renderSettings } from './settings.js'
 import { load, onChange, store } from './store.js'
 
@@ -187,6 +187,7 @@ async function start() {
   }
   if (!history.state) history.replaceState({ i: 0 }, '', location.hash || '#/mail')
   render()
+  prefetchMail({ navigate, refreshRail: renderRail })
 }
 
 start()

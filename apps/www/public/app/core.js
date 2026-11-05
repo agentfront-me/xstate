@@ -53,7 +53,8 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(method, path, body) {
+/** Calls the API. With `{ raw: true }` a successful response comes back as a Blob (downloads). */
+export async function api(method, path, body, { raw = false } = {}) {
   const token = session()?.token
   let res
   try {
@@ -69,6 +70,7 @@ export async function api(method, path, body) {
     throw new ApiError('network', "Couldn't reach xstate. Check your connection and try again.", 0)
   }
   if (res.status === 204) return undefined
+  if (raw && res.ok) return res.blob()
   const data = await res.json().catch(() => ({}))
   if (res.ok) return data
   if (res.status === 401 && token) {

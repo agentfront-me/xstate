@@ -1,6 +1,6 @@
 // What the dashboard knows. `mode` is 'live' when signed in (account, domains and mailboxes come from the API) or
-// 'demo' at /app/?demo without a session (everything from sample.js). Views read `store` and call `emit()` after
-// changing it; the shell re-renders on 'change'.
+// 'demo' at /app/?demo (everything from sample.js). Mail is loaded by mail-data.js, not kept here. Views read
+// `store` and call `emit()` after changing it; the shell re-renders on 'change'.
 
 import { api, session } from './core.js'
 import * as sample from './sample.js'
@@ -13,7 +13,6 @@ export const store = {
   mailboxes: [],
   /** DNS records per pending domain id, from the last verify call. */
   records: {},
-  messages: [],
   members: [],
   secrets: [],
   billing: null,
@@ -42,7 +41,6 @@ export async function load() {
     store.domains = sample.sampleDomains.map((d) => ({ ...d }))
     store.mailboxes = sample.sampleMailboxes.map((m) => ({ ...m }))
     store.records = { dom_3: sample.sampleRecords }
-    store.messages = sample.sampleMessages()
     store.members = sample.sampleMembers.map((m) => ({ ...m }))
     return true
   }
@@ -52,8 +50,7 @@ export async function load() {
   store.user = me.user
   store.org = me.organizations.find((o) => o.role === 'owner') ?? me.organizations[0]
   await refreshDomains()
-  // No message API yet: a signed-in inbox starts empty rather than showing someone else's mail.
-  store.messages = []
+  // Mail itself loads in the Email view (mail-data.js). Members have no API yet.
   store.members = []
   return true
 }

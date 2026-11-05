@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
+import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
 import { mountOperations, onError } from './http/router'
 import type { AppEnv } from './http/types'
@@ -23,7 +25,16 @@ v1.use('*', (c, next) =>
 mountOperations(v1, operations)
 app.route('/v1', v1)
 
+// Stalwart calls this when mail arrives in any account (signed; not part of the public /v1 API).
+app.post('/webhooks/stalwart', handleStalwartWebhook)
+
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))
 
-export default app
+export default {
+  fetch: app.fetch,
+  // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
+  queue: (batch, env) => consume(batch, env),
+  // Hourly safety check in case webhooks were lost.
+  scheduled: (_controller, env, ctx) => ctx.waitUntil(hourly(env)),
+} satisfies ExportedHandler<Env, MailSyncJob>

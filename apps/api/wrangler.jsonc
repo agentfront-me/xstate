@@ -14,7 +14,9 @@
     "STALWART_URL": "https://mx.xstate.com",
     // Browser origins allowed to call the API (comma-separated): the site's sign-up pages and dashboard, and the
     // desktop app, which serves the dashboard from app://xstate.
-    "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate"
+    "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate",
+    // Cloudflare account that holds the organizations' R2 buckets (xstate-org-<id>).
+    "CLOUDFLARE_ACCOUNT_ID": "99322c1871edd6eb7fba729f872c1832"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -25,6 +27,26 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Mail sync jobs: Stalwart's webhook (POST /webhooks/stalwart) and the hourly check queue one job per mailbox;
+  // the consumer copies new attachments to the organization's R2 bucket. Create once: wrangler queues create xstate-mail-sync
+  "queues": {
+    "producers": [{ "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" }],
+    "consumers": [{ "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 }]
+  },
+  // Hourly safety check, in case Stalwart's webhooks were lost.
+  "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
-  "secrets": { "required": ["STALWART_API_KEY", "JWT_SECRET"] }
+  // STALWART_WEBHOOK_SECRET: HMAC key shared with the WebHook object on Stalwart (signatureKey).
+  // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY: an R2 API token's S3 keys, Object Read & Write on all buckets.
+  // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
+  "secrets": {
+    "required": [
+      "STALWART_API_KEY",
+      "JWT_SECRET",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY",
+      "CLOUDFLARE_API_TOKEN",
+      "STALWART_WEBHOOK_SECRET"
+    ]
+  }
 }

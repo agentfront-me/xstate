@@ -1,0 +1,240 @@
+// JMAP mail (RFC 8621) against any Stalwart account. The admin API key holds the `impersonate` permission, so a
+// call reaches another account's mail by setting `accountId` to that account's x:Account id (our stalwart_id).
+// See docs/stalwart-api.md §5. Folders are JMAP "Mailbox" objects; we call them folders so they aren't confused
+// with xstate mailboxes (which are Stalwart accounts).
+
+import { EmailError } from '../errors'
+import { jmap, MAIL_CAPABILITIES, type StalwartEnv } from './client'
+
+type JmapArgs = Record<string, unknown>
+
+export type FolderRole = 'inbox' | 'sent' | 'drafts' | 'archive' | 'junk' | 'trash'
+export type JmapFolder = { id: string; name: string; role: string | null; unreadEmails: number; totalEmails: number }
+export type JmapAddress = { name: string | null; email: string }
+export type JmapEmailSummary = {
+  id: string
+  threadId: string
+  mailboxIds: Record<string, true>
+  keywords: Record<string, true>
+  from: JmapAddress[] | null
+  to: JmapAddress[] | null
+  subject: string | null
+  preview: string
+  receivedAt: string
+  hasAttachment: boolean
+  size: number
+}
+export type JmapBodyPart = {
+  partId: string | null
+  blobId: string | null
+  name: string | null
+  type: string
+  size: number
+  disposition: string | null
+  cid: string | null
+}
+export type JmapEmail = JmapEmailSummary & {
+  cc: JmapAddress[] | null
+  replyTo: JmapAddress[] | null
+  sentAt: string | null
+  messageId: string[] | null
+  textBody: JmapBodyPart[]
+  htmlBody: JmapBodyPart[]
+  attachments: JmapBodyPart[]
+  bodyValues: Record<string, { value: string; isTruncated: boolean }>
+}
+
+const SUMMARY = ['id', 'threadId', 'mailboxIds', 'keywords', 'from', 'to', 'subject', 'preview', 'receivedAt', 'hasAttachment', 'size']
+const FULL = [...SUMMARY, 'cc', 'replyTo', 'sentAt', 'messageId', 'textBody', 'htmlBody', 'attachments', 'bodyValues']
+const PART = ['partId', 'blobId', 'name', 'type', 'size', 'disposition', 'cid']
+/** Bodies over this size come back truncated; mail that long is rare and still readable as the raw message. */
+const MAX_BODY_BYTES = 1_000_000
+
+function mail(env: StalwartEnv, calls: [string, JmapArgs][]) {
+  return jmap(env, calls, MAIL_CAPABILITIES)
+}
+
+/** Every folder of each account, in one request. */
+export async function getFolders(env: StalwartEnv, accountIds: string[]): Promise<Map<string, JmapFolder[]>> {
+  if (!accountIds.length) return new Map()
+  const results = await mail(
+    env,
+    accountIds.map((accountId) => [
+      'Mailbox/get',
+      { accountId, properties: ['name', 'role', 'unreadEmails', 'totalEmails'] },
+    ]),
+  )
+  return new Map(accountIds.map((id, i) => [id, (results[i]!.list as JmapFolder[]) ?? []]))
+}
+
+/** Creates a top-level folder with a role (e.g. Archive) and returns its id. */
+export async function createFolder(env: StalwartEnv, accountId: string, name: string, role: FolderRole): Promise<string> {
+  const [result] = await mail(env, [['Mailbox/set', { accountId, create: { f: { name, role, parentId: null } } }]])
+  const id = (result!.created as Record<string, { id: string }> | undefined)?.f?.id
+  if (!id) throw new EmailError('mail_server_error', `Couldn't create the ${name} folder`, 502)
+  return id
+}
+
+export type EmailQuery = {
+  /** Folder ids to look in, or omit for every folder. */
+  inFolders?: string[]
+  /** Folder ids to leave out. */
+  notInFolders?: string[]
+  unreadOnly?: boolean
+  pinnedOnly?: boolean
+  text?: string
+  /** Only mail received strictly before this time, for paging. */
+  before?: string
+  limit: number
+}
+
+function emailFilter(q: EmailQuery): JmapArgs {
+  const conditions: JmapArgs[] = []
+  if (q.inFolders?.length === 1) conditions.push({ inMailbox: q.inFolders[0] })
+  else if (q.inFolders?.length) conditions.push({ operator: 'OR', conditions: q.inFolders.map((id) => ({ inMailbox: id })) })
+  if (q.notInFolders?.length) conditions.push({ inMailboxOtherThan: q.notInFolders })
+  if (q.unreadOnly) conditions.push({ notKeyword: '$seen' })
+  if (q.pinnedOnly) conditions.push({ hasKeyword: '$flagged' })
+  if (q.text) conditions.push({ text: q.text })
+  if (q.before) conditions.push({ before: q.before })
+  return conditions.length === 1 ? conditions[0]! : { operator: 'AND', conditions }
+}
+
+/** Runs one query per account in a single request and returns each account's newest matching messages. */
+export async function queryEmails(
+  env: StalwartEnv,
+  queries: { accountId: string; query: EmailQuery }[],
+): Promise<Map<string, JmapEmailSummary[]>> {
+  if (!queries.length) return new Map()
+  const calls: [string, JmapArgs][] = []
+  queries.forEach(({ accountId, query }, i) => {
+    calls.push([
+      'Email/query',
+      { accountId, filter: emailFilter(query), sort: [{ property: 'receivedAt', isAscending: false }], limit: query.limit },
+    ])
+    calls.push([
+      'Email/get',
+      { accountId, '#ids': { resultOf: `c${i * 2}`, name: 'Email/query', path: '/ids' }, properties: SUMMARY },
+    ])
+  })
+  const results = await mail(env, calls)
+  return new Map(queries.map(({ accountId }, i) => [accountId, (results[i * 2 + 1]!.list as JmapEmailSummary[]) ?? []]))
+}
+
+/** Every message in a thread, oldest first, with bodies and attachment parts. */
+export async function getThread(env: StalwartEnv, accountId: string, threadId: string): Promise<JmapEmail[]> {
+  const [thread, emails] = await mail(env, [
+    ['Thread/get', { accountId, ids: [threadId] }],
+    [
+      'Email/get',
+      {
+        accountId,
+        '#ids': { resultOf: 'c0', name: 'Thread/get', path: '/list/*/emailIds' },
+        properties: FULL,
+        bodyProperties: PART,
+        fetchTextBodyValues: true,
+        fetchHTMLBodyValues: true,
+        maxBodyValueBytes: MAX_BODY_BYTES,
+      },
+    ],
+  ])
+  if (!(thread!.list as unknown[]).length) throw new EmailError('thread_not_found', 'Conversation not found', 404)
+  return ((emails!.list as JmapEmail[]) ?? []).sort((a, b) => Date.parse(a.receivedAt) - Date.parse(b.receivedAt))
+}
+
+/** Sets keywords and/or replaces the folders of one message. */
+export async function updateEmail(
+  env: StalwartEnv,
+  accountId: string,
+  emailId: string,
+  patch: { seen?: boolean; pinned?: boolean; folderId?: string },
+): Promise<void> {
+  const update: JmapArgs = {}
+  if (patch.seen !== undefined) update['keywords/$seen'] = patch.seen || null
+  if (patch.pinned !== undefined) update['keywords/$flagged'] = patch.pinned || null
+  if (patch.folderId) update.mailboxIds = { [patch.folderId]: true }
+  const [result] = await mail(env, [['Email/set', { accountId, update: { [emailId]: update } }]])
+  const failed = (result!.notUpdated as Record<string, { type?: string; description?: string }> | undefined)?.[emailId]
+  if (failed?.type === 'notFound') throw new EmailError('message_not_found', 'Message not found', 404)
+  if (failed) throw new EmailError('mail_server_error', `Mail server rejected the change: ${failed.description ?? failed.type}`, 502)
+}
+
+/** The current Email state string of each account. It changes whenever any message in the account changes. */
+export async function getEmailStates(env: StalwartEnv, accountIds: string[]): Promise<Map<string, string>> {
+  if (!accountIds.length) return new Map()
+  const results = await mail(env, accountIds.map((accountId) => ['Email/get', { accountId, ids: [] }]))
+  return new Map(accountIds.map((id, i) => [id, String(results[i]!.state ?? '')]))
+}
+
+export type EmailChanges = {
+  oldState: string
+  newState: string
+  hasMoreChanges: boolean
+  created: string[]
+  updated: string[]
+  destroyed: string[]
+}
+
+/**
+ * What changed in an account's mail since `sinceState`, at most `maxChanges` ids per call (call again while
+ * hasMoreChanges). Returns null when the server can no longer calculate changes from that state (too old), so
+ * the caller has to resync from scratch.
+ */
+export async function emailChanges(
+  env: StalwartEnv,
+  accountId: string,
+  sinceState: string,
+  maxChanges = 200,
+): Promise<EmailChanges | null> {
+  try {
+    const [result] = await mail(env, [['Email/changes', { accountId, sinceState, maxChanges }]])
+    return result as unknown as EmailChanges
+  } catch (err) {
+    if (err instanceof EmailError && /cannotCalculateChanges/i.test(err.message)) return null
+    throw err
+  }
+}
+
+/** Ids of every message with attachments in the account, newest first, a page at a time (for the first sync). */
+export async function queryEmailsWithAttachments(env: StalwartEnv, accountId: string, position: number, limit: number) {
+  const [result] = await mail(env, [
+    [
+      'Email/query',
+      { accountId, filter: { hasAttachment: true }, sort: [{ property: 'receivedAt', isAscending: false }], position, limit },
+    ],
+  ])
+  return { ids: (result!.ids as string[]) ?? [], total: Number(result!.total ?? 0) }
+}
+
+export type JmapAttachmentMessage = {
+  id: string
+  threadId: string
+  mailboxIds: Record<string, true>
+  receivedAt: string
+  attachments: JmapBodyPart[]
+}
+
+/** Messages with just what attachment copying needs. Missing ids (deleted meanwhile) are left out. */
+export async function getAttachmentParts(env: StalwartEnv, accountId: string, ids: string[]): Promise<JmapAttachmentMessage[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [
+    [
+      'Email/get',
+      { accountId, ids, properties: ['id', 'threadId', 'mailboxIds', 'receivedAt', 'attachments'], bodyProperties: PART },
+    ],
+  ])
+  return (result!.list as JmapAttachmentMessage[]) ?? []
+}
+
+/** Streams a blob (an attachment) from the account. */
+export async function downloadBlob(env: StalwartEnv, accountId: string, blobId: string, name: string, type: string) {
+  const url = new URL(
+    `/jmap/download/${encodeURIComponent(accountId)}/${encodeURIComponent(blobId)}/${encodeURIComponent(name)}`,
+    env.STALWART_URL,
+  )
+  url.searchParams.set('accept', type)
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` } })
+  if (res.status === 404) throw new EmailError('attachment_not_found', 'Attachment not found', 404)
+  if (!res.ok || !res.body) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status}`, 502)
+  return res
+}

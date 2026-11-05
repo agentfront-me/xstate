@@ -293,6 +293,46 @@ The `x:BlobStore` singleton:
   done in place because the server held only test mail. The 7 messages written before it were deleted, because their
   contents stayed behind in Postgres.
 
+## 7. Webhook: tell the API when mail arrives
+
+One server-wide `x:WebHook` posts delivery events to the API, which queues a sync of that mailbox (copy new
+attachments to R2, mark files of deleted messages). See [Webhooks](https://stalw.art/docs/telemetry/webhooks/) and
+the [event reference](https://stalw.art/docs/ref/events).
+
+- **Events:** `message-ingest.ham` (delivered), `message-ingest.spam` (delivered to Junk), and
+  `message-ingest.imap-append` and `message-ingest.jmap-append` (saved by a mail app or the API, e.g. sent copies).
+- **Identifying the account:** `data.accountId` is Stalwart's internal number, not the JMAP id. Convert it with
+  base32, most significant symbol first, alphabet `abcdefghijklmnopqrstuvwxyz792013` (10 → `k`). See
+  `apps/api/src/mailserver/stalwart/ids.ts`.
+- **Signing:** `X-Signature` is base64 HMAC-SHA256 of the raw body, keyed with `STALWART_WEBHOOK_SECRET`.
+- **Delivery isn't guaranteed:** undelivered events are dropped after `discardAfter`, or past a 65,536-event queue,
+  and message deletions send no event. The API therefore treats a webhook only as "this mailbox changed". It reads
+  `Email/changes` from the last saved state, and an hourly cron syncs every mailbox anyway.
+
+Create it (production URL; use the same secret as the Worker's `STALWART_WEBHOOK_SECRET`):
+
+```json
+["x:WebHook/set", { "create": { "w": {
+  "url": "https://api.xstate.com/webhooks/stalwart",
+  "enable": true,
+  "level": "info",
+  "eventsPolicy": "include",
+  "events": { "message-ingest.ham": true, "message-ingest.spam": true,
+              "message-ingest.imap-append": true, "message-ingest.jmap-append": true },
+  "signatureKey": { "@type": "Value", "secret": "<STALWART_WEBHOOK_SECRET>" },
+  "throttle": 1000,
+  "discardAfter": 3600000,
+  "lossy": false,
+  "timeout": 10000
+} } }, "c1"]
+```
+
+List them with `x:WebHook/query` + `x:WebHook/get`; remove one with `x:WebHook/set` `destroy`.
+
+**Webhook changes take effect only after `systemctl restart stalwart`.** That applies to creating, changing and
+deleting one. Tested 2026-11-05: a webhook created at runtime sent nothing until the restart, then posted
+`message-ingest.ham` and `message-ingest.jmap-append` within a second of delivery.
+
 ## Permissions for xstate's API key
 
 If you narrow the key instead of letting it inherit full admin rights, it needs:

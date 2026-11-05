@@ -16,8 +16,12 @@ export function mountOperations(app: Hono<AppEnv>, operations: readonly AnyOpera
       const body = method === 'GET' || method === 'DELETE' ? {} : await readJsonObject(c.req.raw)
       // Path params win, so a body can't point the operation at a different organization or object.
       const input = operation.input.parse({ ...body, ...c.req.query(), ...c.req.param() })
-      const result = await operation.run({ env: c.env, actor: c.get('actor') }, input)
-      return result === undefined ? c.body(null, 204) : c.json(result, status)
+      const waitUntil = (promise: Promise<unknown>) => c.executionCtx.waitUntil(promise)
+      const result = await operation.run({ env: c.env, actor: c.get('actor'), waitUntil }, input)
+      if (result === undefined) return c.body(null, 204)
+      // Downloads (attachments) return a Response as is.
+      if (result instanceof Response) return result
+      return c.json(result, status)
     }
 
     if (operation.public) app.on(method, path, handler)

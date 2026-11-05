@@ -7,12 +7,20 @@ export type StalwartType = 'x:Domain' | 'x:Account' | 'x:DkimSignature'
 type JmapArgs = Record<string, unknown>
 type SetError = { type?: string; description?: string; properties?: string[] }
 
-export async function jmap(env: StalwartEnv, calls: [method: string, args: JmapArgs][]): Promise<JmapArgs[]> {
+/** Capabilities for the management API (x:Domain, x:Account). Mail calls pass MAIL_CAPABILITIES instead. */
+export const MANAGEMENT_CAPABILITIES = ['urn:ietf:params:jmap:core', 'urn:stalwart:jmap']
+export const MAIL_CAPABILITIES = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission']
+
+export async function jmap(
+  env: StalwartEnv,
+  calls: [method: string, args: JmapArgs][],
+  using: string[] = MANAGEMENT_CAPABILITIES,
+): Promise<JmapArgs[]> {
   const res = await fetch(new URL('/jmap/', env.STALWART_URL), {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.STALWART_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      using: ['urn:ietf:params:jmap:core', 'urn:stalwart:jmap'],
+      using,
       methodCalls: calls.map(([method, args], i) => [method, args, `c${i}`]),
     }),
   })
@@ -21,7 +29,9 @@ export async function jmap(env: StalwartEnv, calls: [method: string, args: JmapA
   }
   const { methodResponses } = (await res.json()) as { methodResponses: [string, JmapArgs, string][] }
   return methodResponses.map(([name, args]) => {
-    if (name === 'error') throw new EmailError('mail_server_error', `Mail server error: ${describe(args)}`, 502)
+    if (name === 'error') {
+      throw new EmailError('mail_server_error', `Mail server error (${String(args.type ?? 'unknown')}): ${describe(args)}`, 502)
+    }
     return args
   })
 }

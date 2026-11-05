@@ -1,11 +1,11 @@
-// Email: folders and domains, the message list, and the reader with agent drafts and a reply box.
-//
-// Messages have no API yet, so they live in `store.messages` (sample data in demo mode, empty when signed in) and
-// every action here changes them in memory. Domains and addresses are real when signed in.
+// Email: folders and domains, the message list, and the reader. Mail comes from mail-data.js: the email_* API when
+// signed in, sample data in demo mode. Reading, pinning, archiving and attachments work in both; sending is
+// demo-only until the API has email_send.
 
-import { esc, initials, isEmail, toast } from './core.js'
+import { desktop, esc, initials, isEmail, toast } from './core.js'
 import { icon } from './icons.js'
-import { isDemo, mailboxesOf, store } from './store.js'
+import { source } from './mail-data.js'
+import { store } from './store.js'
 
 const FOLDERS = [
   { id: 'inbox', label: 'Inbox', icon: 'inbox' },
@@ -13,80 +13,204 @@ const FOLDERS = [
   { id: 'sent', label: 'Sent', icon: 'send' },
   { id: 'drafts', label: 'Drafts', icon: 'file-pen' },
   { id: 'archive', label: 'Archive', icon: 'archive' },
-  { id: 'spam', label: 'Spam', icon: 'shield-alert' },
+  { id: 'junk', label: 'Spam', icon: 'shield-alert' },
 ]
+const POLL_MS = 30_000
 
-/** What the Email page is showing. Kept across page switches. */
+/** What the Email page shows. Kept across page switches. */
 const view = {
   folder: 'inbox',
-  /** null for all inboxes, or { domainId } or { address }. */
+  /** null for all inboxes, or { domainId } or { mailboxId }. */
   scope: null,
   unreadOnly: false,
   query: '',
   searching: false,
+  /** Mail folders per mailbox the user can read, from the source. */
+  mailboxes: [],
+  list: [],
+  nextCursor: null,
+  loading: false,
+  loadingMore: false,
+  error: null,
   selectedId: null,
-  /** Reply text and From address per message id, so a re-render doesn't lose what was typed. */
+  /** The open conversation: { id, messages, loading, error, showImages }. */
+  thread: null,
+  /** Reply text and From per message id, so re-rendering doesn't lose what was typed. */
   replies: {},
+  state: null,
+  loaded: false,
 }
 
 let root = null
 let ctx = null
+let listToken = 0
+let pollTimer = null
 
 // ---------------------------------------------------------------------------------------------------------------
-// Queries
+// Data
 
-const byTime = (a, b) => Date.parse(b.time) - Date.parse(a.time)
-const domainOf = (address) => address.split('@')[1] ?? ''
-
-function inScope(m) {
-  if (!view.scope) return true
-  const address = m.folder === 'sent' ? m.from.email : m.to
-  if (view.scope.address) return address === view.scope.address
-  const domain = store.domains.find((d) => d.id === view.scope.domainId)
-  return domain ? domainOf(address) === domain.name : true
-}
-
-function inFolder(m, folder) {
-  if (folder === 'pinned') return m.pinned && m.folder !== 'spam'
-  return m.folder === folder
-}
-
-function matches(m) {
-  const q = view.query.trim().toLowerCase()
-  if (!q) return true
-  return [m.from.name, m.from.email, m.to, m.subject, ...m.body].some((s) => s?.toLowerCase().includes(q))
-}
-
-function visible() {
-  return store.messages
-    .filter((m) => inFolder(m, view.folder) && inScope(m) && (!view.unreadOnly || m.unread) && matches(m))
-    .sort(byTime)
-}
-
-const unreadIn = (filter) => store.messages.filter((m) => m.folder === 'inbox' && m.unread && filter(m)).length
+const data = () => source()
+/** Message ids are only unique within one mailbox (JMAP account), so the list keys messages by both. */
+const keyOf = (m) => `${m.mailboxId}/${m.id}`
+const selectedSummary = () => view.list.find((m) => keyOf(m) === view.selectedId)
+const domainName = (address) => address.split('@')[1] ?? ''
 
 /** Unread messages across every inbox, for the rail. */
-export const unreadCount = () => unreadIn(() => true)
+export function unreadCount() {
+  return view.mailboxes.reduce((n, mb) => n + (mb.folders.find((f) => f.role === 'inbox')?.unread ?? 0), 0)
+}
 
 function folderCount(id) {
-  if (id === 'inbox') return unreadIn(() => true)
-  if (id === 'pinned') return store.messages.filter((m) => inFolder(m, 'pinned')).length
-  if (id === 'drafts') return store.messages.filter((m) => m.folder === 'drafts').length
+  const sum = (role, key) => view.mailboxes.reduce((n, mb) => n + (mb.folders.find((f) => f.role === role)?.[key] ?? 0), 0)
+  if (id === 'inbox') return sum('inbox', 'unread')
+  if (id === 'drafts') return sum('drafts', 'total')
   return 0
 }
 
-function formatTime(iso) {
-  const d = new Date(iso)
-  const now = new Date()
-  const days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400000)
-  if (days === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return d.toLocaleDateString([], { weekday: 'short' })
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+/** Mailboxes in the current scope, or undefined for all. */
+function scopeMailboxIds() {
+  if (!view.scope) return undefined
+  if (view.scope.mailboxId) return [view.scope.mailboxId]
+  const domain = store.domains.find((d) => d.id === view.scope.domainId)
+  return view.mailboxes.filter((mb) => domainName(mb.address) === domain?.name).map((mb) => mb.mailboxId)
 }
 
-const selected = () => store.messages.find((m) => m.id === view.selectedId) ?? null
-const fromAddresses = () => store.mailboxes.map((m) => m.address)
+async function loadFolders() {
+  view.mailboxes = await data().folders()
+}
+
+function listQuery(cursor) {
+  const ids = scopeMailboxIds()
+  return {
+    ids,
+    query: {
+      folder: view.folder,
+      mailboxId: ids?.length === 1 ? ids[0] : undefined,
+      unreadOnly: view.unreadOnly,
+      query: view.query,
+      cursor,
+    },
+  }
+}
+
+/** Loads the first page of the current view. */
+async function loadList() {
+  const token = ++listToken
+  view.loading = true
+  view.error = null
+  renderRows()
+  try {
+    const { ids, query } = listQuery()
+    // A domain with no readable mailboxes has nothing to show; the API takes one mailbox or all of them.
+    const result = ids && !ids.length ? { messages: [], nextCursor: null } : await data().list(query)
+    if (token !== listToken) return
+    view.list = ids ? result.messages.filter((m) => ids.includes(m.mailboxId)) : result.messages
+    view.nextCursor = result.nextCursor
+    if (!view.list.some((m) => keyOf(m) === view.selectedId)) {
+      view.selectedId = window.innerWidth > 680 && view.list[0] ? keyOf(view.list[0]) : null
+      view.thread = null
+    }
+  } catch (err) {
+    if (token !== listToken) return
+    view.error = err.message
+    view.list = []
+  }
+  view.loading = false
+  render()
+  if (view.selectedId && view.thread?.id !== view.selectedId) openThread(view.selectedId, { markRead: false })
+}
+
+async function loadMore() {
+  if (!view.nextCursor || view.loadingMore) return
+  view.loadingMore = true
+  const token = listToken
+  try {
+    const { ids, query } = listQuery(view.nextCursor)
+    const result = await data().list(query)
+    if (token !== listToken) return
+    const more = ids ? result.messages.filter((m) => ids.includes(m.mailboxId)) : result.messages
+    view.list.push(...more.filter((m) => !view.list.some((x) => keyOf(x) === keyOf(m))))
+    view.nextCursor = result.nextCursor
+  } catch (err) {
+    toast(err.message)
+  } finally {
+    view.loadingMore = false
+  }
+  renderRows()
+}
+
+async function openThread(id, { markRead = true } = {}) {
+  const summary = view.list.find((m) => keyOf(m) === id)
+  if (!summary) return
+  view.thread = { id, messages: [], loading: true, error: null, showImages: false }
+  renderReader()
+  try {
+    const messages = await data().thread(summary)
+    if (view.thread?.id !== id) return
+    view.thread.messages = messages
+  } catch (err) {
+    if (view.thread?.id !== id) return
+    view.thread.error = err.message
+  }
+  view.thread.loading = false
+  renderReader()
+  if (markRead && !summary.seen) setSeen(summary, true)
+}
+
+async function setSeen(summary, seen) {
+  summary.seen = seen
+  adjustUnread(summary, seen ? -1 : 1)
+  renderRows()
+  renderReader()
+  try {
+    await data().update(summary, { seen })
+  } catch (err) {
+    summary.seen = !seen
+    adjustUnread(summary, seen ? 1 : -1)
+    renderRows()
+    toast(err.message)
+  }
+}
+
+function adjustUnread(summary, delta) {
+  if (summary.folder !== 'inbox') return
+  const inbox = view.mailboxes.find((mb) => mb.mailboxId === summary.mailboxId)?.folders.find((f) => f.role === 'inbox')
+  if (inbox) inbox.unread = Math.max(0, inbox.unread + delta)
+  renderFolders()
+  ctx.refreshRail?.()
+}
+
+/** Reloads when the mail state token changes (new mail, or changes made in another app). */
+async function poll() {
+  clearTimeout(pollTimer)
+  pollTimer = setTimeout(poll, POLL_MS)
+  if (document.visibilityState !== 'visible') return
+  try {
+    const state = await data().state()
+    if (view.state && state !== view.state) {
+      const before = unreadCount()
+      await loadFolders()
+      ctx.refreshRail?.()
+      if (root?.isConnected && root.querySelector('.mail')) await loadList()
+      const after = unreadCount()
+      if (after > before) notifyNewMail(after - before)
+    }
+    view.state = state
+  } catch {
+    // Offline or signed out: try again next time.
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && view.loaded) poll()
+})
+
+async function notifyNewMail(count) {
+  if (!desktop || !('Notification' in window)) return
+  const settings = await desktop.getSettings().catch(() => ({}))
+  if (!settings.notifications || document.hasFocus()) return
+  new Notification('xstate', { body: count === 1 ? 'You have a new message.' : `You have ${count} new messages.` })
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Render
@@ -94,32 +218,62 @@ const fromAddresses = () => store.mailboxes.map((m) => m.address)
 export function renderMail(container, context) {
   root = container
   ctx = context
-  const list = visible()
-  if (!list.some((m) => m.id === view.selectedId) && window.innerWidth > 680) view.selectedId = list[0]?.id ?? null
-  const open = selected()
-
   root.innerHTML = `
-    <section class="mail${open ? ' has-open' : ''}">
-      <nav class="folders" aria-label="Mail folders">${foldersHtml()}</nav>
-      <div class="list">${listHeadHtml()}<div class="list-scroll" id="rows">${rowsHtml(list)}</div></div>
-      <div class="reader" id="reader">${readerHtml(open)}</div>
+    <section class="mail">
+      <nav class="folders" aria-label="Mail folders" id="folders"></nav>
+      <div class="list" id="list"></div>
+      <div class="reader" id="reader"></div>
     </section>`
-  bind()
-  if (view.searching) root.querySelector('#search')?.focus()
-  ctx.refreshRail?.()
+  root.querySelector('.mail').addEventListener('click', onClick)
+  render()
+  if (!view.loaded) {
+    view.loaded = true
+    start()
+  }
 }
 
-function foldersHtml() {
-  const scopeAll = !view.scope
-  return `
-    <div class="drag" style="padding-top:0"><button class="btn btn-primary btn-lg new-mail" data-act="compose">${icon('pencil', 15)}New mail</button></div>
+/** Loads folder counts and starts watching for new mail before the Email page is opened (for the rail badge). */
+export function prefetchMail(context) {
+  ctx ??= context
+  if (view.loaded) return
+  view.loaded = true
+  start()
+}
+
+async function start() {
+  view.loading = true
+  render()
+  try {
+    await loadFolders()
+    view.state = await data().state().catch(() => null)
+  } catch (err) {
+    view.error = err.message
+  }
+  ctx.refreshRail?.()
+  await loadList()
+  pollTimer = setTimeout(poll, POLL_MS)
+}
+
+function render() {
+  if (!root?.isConnected) return
+  renderFolders()
+  renderList()
+  renderReader()
+}
+
+function renderFolders() {
+  const el = root?.querySelector('#folders')
+  if (!el) return
+  const all = !view.scope
+  el.innerHTML = `
+    <div class="drag"><button class="btn btn-primary btn-lg new-mail" data-act="compose">${icon('pencil', 15)}New mail</button></div>
     ${FOLDERS.map((f) => {
       const n = folderCount(f.id)
-      return `<button class="folder" data-folder="${f.id}" ${view.folder === f.id && scopeAll ? 'aria-current="true"' : ''}>
+      return `<button class="folder" data-folder="${f.id}" ${view.folder === f.id && all ? 'aria-current="true"' : ''}>
         ${icon(f.icon, 15)}<span class="label">${f.label}</span>${n ? `<span class="count">${n}</span>` : ''}</button>`
     }).join('')}
     <div class="section-label"><span>Domains</span><button data-act="add-domain" aria-label="Add domain" title="Add domain">${icon('plus', 14)}</button></div>
-    <button class="folder" data-act="all-inboxes" ${scopeAll && view.folder === 'inbox' ? 'aria-current="true"' : ''}>
+    <button class="folder" data-act="all-inboxes" ${all && view.folder === 'inbox' ? 'aria-current="true"' : ''}>
       ${icon('layers', 15)}<span class="label">All inboxes</span>${unreadCount() ? `<span class="count">${unreadCount()}</span>` : ''}</button>
     ${store.domains.map(domainHtml).join('')}
     ${store.domains.length ? '' : `<div class="pending-note" style="padding-left:10px">No domains yet. <button data-act="add-domain">Add one</button></div>`}`
@@ -127,38 +281,39 @@ function foldersHtml() {
 
 function domainHtml(d) {
   const verified = d.status === 'verified'
-  const current = view.scope?.domainId === d.id
-  const boxes = mailboxesOf(d.id)
+  const boxes = view.mailboxes.filter((mb) => domainName(mb.address) === d.name)
   return `
-    <button class="domain-row" data-domain="${d.id}" ${current ? 'aria-current="true"' : ''} title="${esc(d.name)}">
+    <button class="domain-row" data-domain="${d.id}" ${view.scope?.domainId === d.id ? 'aria-current="true"' : ''} title="${esc(d.name)}">
       <span class="badge">${esc(d.name[0].toUpperCase())}</span><span class="label ellipsis">${esc(d.name)}</span>
       <span class="state" title="${verified ? 'Verified' : 'DNS records pending'}">${icon(verified ? 'circle-check' : 'info', 13)}</span>
     </button>
     ${boxes
-      .map((b) => {
-        const n = unreadIn((m) => m.to === b.address)
-        return `<button class="folder addr" data-address="${esc(b.address)}" ${view.scope?.address === b.address ? 'aria-current="true"' : ''}>
-          <span class="label ellipsis">${esc(b.address.split('@')[0])}@</span>${n ? `<span class="count">${n}</span>` : ''}</button>`
+      .map((mb) => {
+        const n = mb.folders.find((f) => f.role === 'inbox')?.unread ?? 0
+        return `<button class="folder addr" data-mailbox="${mb.mailboxId}" ${view.scope?.mailboxId === mb.mailboxId ? 'aria-current="true"' : ''} title="${esc(mb.address)}">
+          <span class="label ellipsis">${esc(mb.address.split('@')[0])}@</span>${n ? `<span class="count">${n}</span>` : ''}</button>`
       })
       .join('')}
-    ${verified ? '' : `<div class="pending-note">DNS records pending. <button data-act="verify" data-id="${d.id}">Verify domain</button></div>`}`
+    ${verified ? '' : `<div class="pending-note">DNS records pending. <button data-act="verify">Verify domain</button></div>`}`
 }
 
 function listTitle() {
-  if (view.scope?.address) return { title: view.scope.address, sub: FOLDERS.find((f) => f.id === view.folder).label }
+  const folder = FOLDERS.find((f) => f.id === view.folder).label
+  if (view.scope?.mailboxId) return { title: view.mailboxes.find((mb) => mb.mailboxId === view.scope.mailboxId)?.address ?? '', sub: folder }
   if (view.scope?.domainId) {
     const d = store.domains.find((x) => x.id === view.scope.domainId)
-    const n = mailboxesOf(d?.id).length
-    return { title: d?.name ?? '', sub: `${n} ${n === 1 ? 'address' : 'addresses'}` }
+    const n = scopeMailboxIds().length
+    return { title: d?.name ?? '', sub: `${folder} · ${n} ${n === 1 ? 'address' : 'addresses'}` }
   }
-  const folder = FOLDERS.find((f) => f.id === view.folder)
   const n = store.domains.length
-  return { title: folder.label, sub: `All inboxes · ${n} ${n === 1 ? 'domain' : 'domains'}` }
+  return { title: folder, sub: `All inboxes · ${n} ${n === 1 ? 'domain' : 'domains'}` }
 }
 
-function listHeadHtml() {
+function renderList() {
+  const el = root?.querySelector('#list')
+  if (!el) return
   const { title, sub } = listTitle()
-  return `
+  el.innerHTML = `
     <div class="col-head list-head drag">
       <div class="grow"><div class="title ellipsis">${esc(title)}</div><div class="sub ellipsis">${esc(sub)}</div></div>
       <div class="seg" role="group" aria-label="Filter">
@@ -168,94 +323,146 @@ function listHeadHtml() {
     </div>
     <div class="list-search" ${view.searching ? '' : 'hidden'}>
       <input id="search" type="search" placeholder="Search mail" value="${esc(view.query)}" aria-label="Search mail" autocomplete="off">
-    </div>`
+    </div>
+    <div class="list-scroll" id="rows"></div>`
+  renderRows()
+  const search = el.querySelector('#search')
+  let debounce
+  search.addEventListener('input', () => {
+    view.query = search.value
+    clearTimeout(debounce)
+    debounce = setTimeout(loadList, 300)
+  })
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    view.searching = false
+    view.query = ''
+    renderList()
+    loadList()
+  })
+  if (view.searching) search.focus()
+  el.querySelector('#rows').addEventListener('scroll', (event) => {
+    const r = event.target
+    if (r.scrollTop + r.clientHeight > r.scrollHeight - 200) loadMore()
+  })
 }
 
-function rowsHtml(list) {
-  if (!list.length) {
-    const searching = view.query.trim()
-    const live = !isDemo() && !store.messages.length
-    return `<div class="empty" style="height:100%">${icon(searching ? 'search' : 'inbox', 24)}
-      <strong>${searching ? 'No matches' : live ? 'No mail yet' : 'Nothing here'}</strong>
+function renderRows() {
+  const el = root?.querySelector('#rows')
+  if (!el) return
+  root.querySelector('.mail')?.classList.toggle('has-open', !!view.selectedId)
+  if (view.loading && !view.list.length) {
+    el.innerHTML = `<div class="empty" style="height:100%"><span class="spinner"></span></div>`
+    return
+  }
+  if (view.error) {
+    el.innerHTML = `<div class="empty" style="height:100%">${icon('circle-alert', 24)}<strong>Couldn't load mail</strong>
+      <span class="small">${esc(view.error)}</span><button class="btn" data-act="retry">Try again</button></div>`
+    return
+  }
+  if (!view.list.length) {
+    const q = view.query.trim()
+    const none = !view.mailboxes.length
+    el.innerHTML = `<div class="empty" style="height:100%">${icon(q ? 'search' : 'inbox', 24)}
+      <strong>${q ? 'No matches' : none ? 'No mailboxes yet' : 'Nothing here'}</strong>
       <span class="small">${
-        searching
-          ? `Nothing in ${esc(listTitle().title)} matches “${esc(searching)}”.`
-          : live
-            ? 'Mail sent to your addresses will show up here.'
+        q
+          ? `Nothing in ${esc(listTitle().title)} matches “${esc(q)}”.`
+          : none
+            ? 'Add an address in Settings › Domains to start getting mail.'
             : view.unreadOnly
               ? 'You have read everything.'
-              : 'No messages in this folder.'
+              : view.folder === 'inbox'
+                ? 'Mail sent to your addresses will show up here.'
+                : 'No messages in this folder.'
       }</span></div>`
+    return
   }
-  return list
-    .map((m) => {
-      const who = m.folder === 'sent' ? `To ${m.to}` : m.from.name || m.from.email
-      return `
-      <button class="row${m.unread ? ' is-unread' : ''}" data-id="${m.id}" aria-selected="${m.id === view.selectedId}">
+  el.innerHTML =
+    view.list
+      .map((m) => {
+        const who = m.folder === 'sent' ? `To ${m.to.map((a) => a.name || a.email).join(', ')}` : sender(m.from)
+        return `
+      <button class="row${m.seen ? '' : ' is-unread'}" data-id="${esc(keyOf(m))}" aria-selected="${keyOf(m) === view.selectedId}">
         <div class="row-top"><span class="who ellipsis">${esc(who)}</span>
-          <span class="meta">${m.pinned ? icon('pin', 12) : ''}${m.unread ? '<span class="dot" aria-label="Unread"></span>' : ''}${esc(formatTime(m.time))}</span></div>
+          <span class="meta">${m.hasAttachment ? icon('paperclip', 12) : ''}${m.pinned ? icon('pin', 12) : ''}${m.seen ? '' : '<span class="dot" aria-label="Unread"></span>'}${esc(formatTime(m.receivedAt))}</span></div>
         <div class="subject ellipsis">${esc(m.subject || '(no subject)')}</div>
-        <div class="preview ellipsis">${esc(m.body.join(' '))}</div>
+        <div class="preview ellipsis">${esc(m.preview)}</div>
       </button>`
-    })
-    .join('')
+      })
+      .join('') + (view.nextCursor ? `<div class="empty small" style="padding:14px">${view.loadingMore ? '<span class="spinner"></span>' : ''}</div>` : '')
 }
 
-function readerHtml(m) {
-  if (!m) {
-    return `<div class="col-head drag"></div><div class="empty">${icon('inbox', 28)}<strong>No message selected</strong></div>`
+function renderReader() {
+  const el = root?.querySelector('#reader')
+  if (!el) return
+  root.querySelector('.mail')?.classList.toggle('has-open', !!view.selectedId)
+  const summary = selectedSummary()
+  if (!summary) {
+    el.innerHTML = `<div class="col-head drag"></div><div class="empty">${icon('inbox', 28)}<strong>No message selected</strong></div>`
+    return
   }
-  const reply = (view.replies[m.id] ??= { text: '', from: defaultFrom(m) })
-  const assignee = m.assignee && assignees().find((a) => a.id === m.assignee)
-  const archived = m.folder === 'archive'
-  return `
+  const t = view.thread?.id === keyOf(summary) ? view.thread : null
+  const archived = summary.folder === 'archive'
+  const latest = t?.messages[t.messages.length - 1]
+  el.innerHTML = `
     <div class="col-head reader-tools drag">
-      <button class="ghost only-narrow" data-act="close" aria-label="Back to list" style="display:none">${icon('chevron-left', 16)}</button>
-      <button class="btn-tool" data-act="pin" aria-pressed="${!!m.pinned}">${icon(m.pinned ? 'pin-off' : 'pin', 15)}${m.pinned ? 'Unpin' : 'Pin'}</button>
+      <button class="ghost" data-act="close" aria-label="Back to list" style="display:${window.innerWidth <= 680 ? 'flex' : 'none'}">${icon('chevron-left', 16)}</button>
+      <button class="btn-tool" data-act="pin" aria-pressed="${summary.pinned}">${icon(summary.pinned ? 'pin-off' : 'pin', 15)}${summary.pinned ? 'Unpin' : 'Pin'}</button>
       <button class="btn-tool" data-act="archive">${icon(archived ? 'inbox' : 'archive', 15)}${archived ? 'Move to inbox' : 'Archive'}</button>
-      <span style="flex:1"></span>
-      <button class="btn" data-act="assign" aria-haspopup="menu">${icon('user-plus', 14)}${esc(assignee ? assignee.name : 'Assign')}</button>
+      <button class="btn-tool" data-act="unread">${icon('circle', 15)}${summary.seen ? 'Mark unread' : 'Mark read'}</button>
     </div>
     <div class="reader-scroll">
       <article class="reader-body">
-        <h1>${esc(m.subject || '(no subject)')}</h1>
-        ${senderHtml(m.from, m.to, m.time)}
-        <div class="message-text">${m.body.map((p) => `<p>${esc(p)}</p>`).join('')}</div>
-        ${(m.thread ?? [])
-          .map(
-            (r) => `<div class="thread-reply">${senderHtml({ name: store.user?.name ?? r.from, email: r.from }, m.from.email, r.time)}
-              <div class="message-text">${r.body.split(/\n{2,}/).map((p) => `<p>${esc(p)}</p>`).join('')}</div></div>`,
-          )
-          .join('')}
-        ${m.draft ? draftHtml(m.draft) : ''}
+        <h1>${esc(summary.subject || '(no subject)')}</h1>
+        ${
+          !t || t.loading
+            ? `<div class="empty"><span class="spinner"></span></div>`
+            : t.error
+              ? `<div class="empty">${icon('circle-alert', 22)}<strong>Couldn't open this conversation</strong><span class="small">${esc(t.error)}</span></div>`
+              : t.messages.map((m, i) => messageHtml(m, i, t)).join('')
+        }
+        ${latest?.draft ? draftHtml(latest.draft) : ''}
       </article>
     </div>
-    ${
-      m.folder === 'sent'
-        ? ''
-        : `<div class="reply-wrap"><form class="reply" id="reply">
-      <div class="reply-from">From
-        <span class="select-chip">${esc(reply.from)}${icon('chevron-down', 12)}
-          <select id="reply-from" aria-label="Send from">${fromAddresses()
-            .map((a) => `<option ${a === reply.from ? 'selected' : ''}>${esc(a)}</option>`)
-            .join('')}</select></span>
-      </div>
-      <textarea id="reply-text" rows="2" placeholder="Write a reply…" aria-label="Reply">${esc(reply.text)}</textarea>
-      <div class="reply-foot">
-        <button type="button" class="attach" aria-label="Attach a file" title="Attachments are coming soon" disabled>${icon('paperclip', 15)}</button>
-        <button class="btn btn-primary" type="submit">Send</button>
-      </div></form></div>`
-    }`
+    ${summary.folder === 'sent' || !t || t.loading || t.error ? '' : replyHtml(summary)}`
+  bindReader(el, summary, t)
 }
 
-function senderHtml(from, to, time) {
+function sender(list) {
+  const a = list[0]
+  return a ? a.name || a.email : '(no sender)'
+}
+
+function messageHtml(m, index, t) {
+  const from = m.from[0] ?? { name: null, email: '' }
+  const files = m.attachments.filter((a) => !a.inline)
+  const remote = !!m.html && /\bsrc\s*=\s*["']?https?:/i.test(m.html)
   return `
-    <div class="sender">
-      <span class="avatar lg">${esc(initials(from.name || from.email))}</span>
-      <div class="who"><div class="ellipsis"><span class="from">${esc(from.name || from.email)}</span>
-        ${from.name ? `<span class="email"> ${esc(from.email)}</span>` : ''}</div>
-        <div class="to ellipsis">To ${esc(to)}</div></div>
-      <span class="time">${esc(formatTime(time))}</span>
+    <div class="message${index ? ' thread-reply' : ''}">
+      <div class="sender">
+        <span class="avatar lg">${esc(initials(from.name || from.email))}</span>
+        <div class="who"><div class="ellipsis"><span class="from">${esc(from.name || from.email)}</span>
+          ${from.name ? `<span class="email"> ${esc(from.email)}</span>` : ''}</div>
+          <div class="to ellipsis">To ${esc(m.to.map((a) => a.email).join(', '))}${m.cc.length ? `, cc ${esc(m.cc.map((a) => a.email).join(', '))}` : ''}</div></div>
+        <span class="time">${esc(formatTime(m.receivedAt))}</span>
+      </div>
+      ${
+        m.html
+          ? `${remote && !t.showImages ? `<div class="images-note">${icon('info', 14)}<span>Remote images are hidden to protect your privacy.</span><button data-act="show-images">Show images</button></div>` : ''}
+             <iframe class="mail-html" data-index="${index}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Message"></iframe>`
+          : `<div class="message-text">${m.text.split(/\n{2,}/).map((p) => `<p>${esc(p)}</p>`).join('')}</div>`
+      }
+      ${
+        files.length
+          ? `<div class="attachments">${files
+              .map(
+                (a, j) => `<button class="attachment" data-download="${index}:${j}" title="Download ${esc(a.name)}">
+                  ${icon('paperclip', 14)}<span class="ellipsis">${esc(a.name)}</span><span class="muted small">${esc(formatSize(a.size))}</span>${icon('download', 14)}</button>`,
+              )
+              .join('')}</div>`
+          : ''
+      }
     </div>`
 }
 
@@ -271,181 +478,212 @@ function draftHtml(draft) {
     </div>`
 }
 
-function defaultFrom(m) {
+const fromAddresses = () => view.mailboxes.map((mb) => mb.address)
+
+function replyHtml(summary) {
   const addresses = fromAddresses()
-  return addresses.includes(m.to) ? m.to : (addresses[0] ?? '')
+  const own = view.mailboxes.find((mb) => mb.mailboxId === summary.mailboxId)?.address
+  const reply = (view.replies[keyOf(summary)] ??= { text: '', from: own ?? addresses[0] ?? '' })
+  const canSend = data().canSend
+  return `<div class="reply-wrap"><form class="reply" id="reply">
+    <div class="reply-from">From
+      <span class="select-chip"><span id="from-label">${esc(reply.from)}</span>${icon('chevron-down', 12)}
+        <select id="reply-from" aria-label="Send from">${addresses.map((a) => `<option ${a === reply.from ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select></span>
+    </div>
+    <textarea id="reply-text" rows="2" placeholder="${canSend ? 'Write a reply…' : 'Replying from xstate is coming soon'}" aria-label="Reply" ${canSend ? '' : 'disabled'}>${esc(reply.text)}</textarea>
+    <div class="reply-foot">
+      <button type="button" class="attach" aria-label="Attach a file" title="Attachments are coming soon" disabled>${icon('paperclip', 15)}</button>
+      <button class="btn btn-primary" type="submit" ${canSend ? '' : 'disabled title="Sending is coming soon"'}>Send</button>
+    </div></form></div>`
 }
 
-function assignees() {
-  const me = store.user ? [{ id: 'me', name: store.user.name || store.user.email }] : []
-  return [...me, ...store.members.filter((m) => !m.invited).map((m) => ({ id: m.id, name: m.name || m.email }))]
+/** Writes each HTML body into its sandboxed iframe. No scripts run; remote images load only after "Show images". */
+async function fillFrames(el, t) {
+  for (const frame of el.querySelectorAll('iframe.mail-html')) {
+    const m = t.messages[Number(frame.dataset.index)]
+    const html = await withInlineImages(m)
+    const images = t.showImages ? 'https: http: data: blob:' : 'data: blob:'
+    frame.addEventListener('load', () => {
+      const doc = frame.contentDocument
+      if (doc?.body) frame.style.height = `${doc.body.scrollHeight}px`
+    })
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
+      <base target="_blank">
+      <style>html,body{margin:0;background:#fff;color:#18181b;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere}
+      body{padding:16px}img{max-width:100%;height:auto}table{max-width:100%}a{color:#2563eb}
+      ${t.showImages ? '' : 'img[src^="http:"],img[src^="https:"]{display:none}'}</style></head>
+      <body>${html}</body></html>`
+  }
+}
+
+/** Replaces cid: references with blob URLs of the message's inline attachments. */
+async function withInlineImages(m) {
+  let html = m.html
+  for (const a of m.attachments.filter((x) => x.cid && html.includes(`cid:${x.cid}`))) {
+    try {
+      const url = URL.createObjectURL(await data().attachment(m, a))
+      html = html.split(`cid:${a.cid}`).join(url)
+    } catch {
+      // Leave that image broken; the rest of the message still shows.
+    }
+  }
+  return html
+}
+
+function bindReader(el, summary, t) {
+  if (t && !t.loading && !t.error) fillFrames(el, t)
+  const form = el.querySelector('#reply')
+  if (!form) return
+  const text = form.querySelector('#reply-text')
+  const reply = view.replies[keyOf(summary)]
+  text.addEventListener('input', () => {
+    reply.text = text.value
+    text.style.height = 'auto'
+    text.style.height = `${Math.min(text.scrollHeight, 220)}px`
+  })
+  text.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) form.requestSubmit()
+  })
+  form.querySelector('#reply-from').addEventListener('change', (event) => {
+    reply.from = event.target.value
+    form.querySelector('#from-label').textContent = event.target.value
+  })
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const body = reply.text.trim()
+    if (!body) return text.focus()
+    reply.text = ''
+    await sendReply(summary, reply.from, body)
+    toast('Reply sent')
+  })
+}
+
+async function sendReply(summary, from, text) {
+  const latest = view.thread?.messages[view.thread.messages.length - 1]
+  data().send({
+    inReplyTo: summary,
+    from,
+    to: (latest?.from[0] ?? summary.from[0])?.email,
+    subject: summary.subject.startsWith('Re:') ? summary.subject : `Re: ${summary.subject}`,
+    text,
+  })
+  await openThread(keyOf(summary), { markRead: false })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Events
 
-function bind() {
-  const section = root.querySelector('.mail')
-  section.addEventListener('click', onClick)
-
-  const search = root.querySelector('#search')
-  search?.addEventListener('input', () => {
-    view.query = search.value
-    root.querySelector('#rows').innerHTML = rowsHtml(visible())
-  })
-  search?.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      view.searching = false
-      view.query = ''
-      renderMail(root, ctx)
-    }
-  })
-
-  const text = root.querySelector('#reply-text')
-  const m = selected()
-  if (text && m) {
-    text.addEventListener('input', () => {
-      view.replies[m.id].text = text.value
-      text.style.height = 'auto'
-      text.style.height = `${Math.min(text.scrollHeight, 220)}px`
-    })
-    text.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) root.querySelector('#reply').requestSubmit()
-    })
-    root.querySelector('#reply-from').addEventListener('change', (event) => {
-      view.replies[m.id].from = event.target.value
-      event.target.parentElement.firstChild.textContent = event.target.value
-    })
-    root.querySelector('#reply').addEventListener('submit', (event) => {
-      event.preventDefault()
-      const body = view.replies[m.id].text.trim()
-      if (!body) return text.focus()
-      sendReply(m, view.replies[m.id].from, body)
-      view.replies[m.id].text = ''
-      renderMail(root, ctx)
-      toast('Reply sent')
-    })
-  }
-  // The reader's back button only shows on narrow windows, where the list and reader take turns.
-  const close = root.querySelector('[data-act="close"]')
-  if (close && window.innerWidth <= 680) close.style.display = 'flex'
-}
-
 function onClick(event) {
   const el = event.target.closest('button')
   if (!el || el.disabled) return
-  const m = selected()
+  const summary = selectedSummary()
 
-  if (el.dataset.folder) {
-    view.folder = el.dataset.folder
-    view.scope = null
-    view.selectedId = null
-    return renderMail(root, ctx)
-  }
-  if (el.dataset.domain) {
-    view.folder = 'inbox'
-    view.scope = { domainId: el.dataset.domain }
-    view.selectedId = null
-    return renderMail(root, ctx)
-  }
-  if (el.dataset.address) {
-    view.folder = 'inbox'
-    view.scope = { address: el.dataset.address }
-    view.selectedId = null
-    return renderMail(root, ctx)
-  }
-  if (el.dataset.unread) {
-    view.unreadOnly = el.dataset.unread === '1'
-    view.selectedId = null
-    return renderMail(root, ctx)
-  }
+  if (el.dataset.folder) return setView({ folder: el.dataset.folder, scope: null })
+  if (el.dataset.domain) return setView({ folder: 'inbox', scope: { domainId: el.dataset.domain } })
+  if (el.dataset.mailbox) return setView({ folder: 'inbox', scope: { mailboxId: el.dataset.mailbox } })
+  if (el.dataset.unread) return setView({ unreadOnly: el.dataset.unread === '1' })
   if (el.dataset.id) {
     view.selectedId = el.dataset.id
-    store.messages.find((x) => x.id === el.dataset.id).unread = false
-    return renderMail(root, ctx)
+    renderRows()
+    return openThread(el.dataset.id)
   }
+  if (el.dataset.download) return download(el)
 
   switch (el.dataset.act) {
     case 'compose':
       return openComposer()
     case 'all-inboxes':
-      view.folder = 'inbox'
-      view.scope = null
-      view.selectedId = null
-      return renderMail(root, ctx)
+      return setView({ folder: 'inbox', scope: null })
     case 'add-domain':
-      return ctx.navigate('#/settings/domains')
     case 'verify':
       return ctx.navigate('#/settings/domains')
+    case 'retry':
+      return loadList()
     case 'close':
       view.selectedId = null
-      return renderMail(root, ctx)
+      view.thread = null
+      renderRows()
+      return renderReader()
     case 'pin':
-      m.pinned = !m.pinned
-      toast(m.pinned ? 'Pinned' : 'Unpinned')
-      return renderMail(root, ctx)
-    case 'archive':
-      m.folder = m.folder === 'archive' ? 'inbox' : 'archive'
-      toast(m.folder === 'archive' ? 'Archived' : 'Moved to inbox')
-      view.selectedId = null
-      return renderMail(root, ctx)
-    case 'assign':
-      return openAssignMenu(el, m)
-    case 'send-draft':
-      sendReply(m, m.draft.from, m.draft.body)
-      m.draft = null
-      toast('Draft sent')
-      return renderMail(root, ctx)
-    case 'edit-draft':
-      view.replies[m.id] = { text: m.draft.body, from: fromAddresses().includes(m.draft.from) ? m.draft.from : defaultFrom(m) }
-      m.draft = null
-      renderMail(root, ctx)
+      return change(summary, { pinned: !summary.pinned }, summary.pinned ? 'Unpinned' : 'Pinned')
+    case 'unread':
+      return setSeen(summary, !summary.seen)
+    case 'archive': {
+      const toInbox = summary.folder === 'archive'
+      return change(summary, { folder: toInbox ? 'inbox' : 'archive' }, toInbox ? 'Moved to inbox' : 'Archived', true)
+    }
+    case 'show-images':
+      view.thread.showImages = true
+      return renderReader()
+    case 'send-draft': {
+      const latest = view.thread.messages[view.thread.messages.length - 1]
+      const { from, body } = latest.draft
+      data().clearDraft(summary)
+      return sendReply(summary, from, body).then(() => toast('Draft sent'))
+    }
+    case 'edit-draft': {
+      const latest = view.thread.messages[view.thread.messages.length - 1]
+      view.replies[keyOf(summary)] = { text: latest.draft.body, from: latest.draft.from }
+      data().clearDraft(summary)
+      latest.draft = null
+      renderReader()
       return root.querySelector('#reply-text')?.focus()
+    }
   }
 }
 
-function sendReply(m, from, body) {
-  ;(m.thread ??= []).push({ from, body, time: new Date().toISOString() })
-  m.unread = false
+function setView(changes) {
+  Object.assign(view, changes)
+  view.selectedId = null
+  view.thread = null
+  view.list = []
+  renderFolders()
+  renderList()
+  renderReader()
+  loadList()
 }
 
-function openAssignMenu(button, m) {
-  closeMenus()
-  const menu = document.createElement('div')
-  menu.className = 'menu'
-  menu.setAttribute('role', 'menu')
-  const people = assignees()
-  menu.innerHTML =
-    people
-      .map(
-        (p) => `<button role="menuitem" data-who="${p.id}"><span class="avatar md">${esc(initials(p.name))}</span>
-          <span class="ellipsis">${esc(p.name)}${p.id === 'me' ? ' <span class="muted">(you)</span>' : ''}</span>
-          ${m.assignee === p.id ? `<span class="check">${icon('check', 14)}</span>` : ''}</button>`,
-      )
-      .join('') + (m.assignee ? `<button role="menuitem" data-who="">${icon('x', 14)}Unassign</button>` : '')
-  document.body.append(menu)
-  const r = button.getBoundingClientRect()
-  menu.style.top = `${r.bottom + 6}px`
-  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`
-  menu.querySelector('button')?.focus()
-  menu.addEventListener('click', (event) => {
-    const item = event.target.closest('[data-who]')
-    if (!item) return
-    m.assignee = item.dataset.who || null
-    closeMenus()
-    toast(m.assignee ? `Assigned to ${people.find((p) => p.id === m.assignee).name}` : 'Unassigned')
-    renderMail(root, ctx)
-  })
-  setTimeout(() => document.addEventListener('click', closeMenus, { once: true }))
+/** Pins, unpins or moves a message: updates the screen right away, and reloads if the server says no. */
+async function change(summary, patch, message, leavesList = false) {
+  const before = { ...summary }
+  Object.assign(summary, patch)
+  if (leavesList && view.folder !== 'pinned' && summary.folder !== view.folder) {
+    view.list = view.list.filter((m) => m !== summary)
+    view.selectedId = window.innerWidth > 680 && view.list[0] ? keyOf(view.list[0]) : null
+    view.thread = null
+  }
+  renderRows()
+  renderReader()
+  if (view.selectedId && !view.thread) openThread(view.selectedId, { markRead: false })
+  try {
+    await data().update(before, patch)
+    toast(message)
+    if (patch.folder) loadFolders().then(() => (renderFolders(), ctx.refreshRail?.()))
+  } catch (err) {
+    toast(err.message)
+    loadList()
+  }
 }
 
-function closeMenus() {
-  document.querySelectorAll('.menu').forEach((el) => el.remove())
+async function download(button) {
+  const [i, j] = button.dataset.download.split(':').map(Number)
+  const m = view.thread.messages[i]
+  const a = m.attachments.filter((x) => !x.inline)[j]
+  button.setAttribute('aria-busy', 'true')
+  try {
+    const url = URL.createObjectURL(await data().attachment(m, a))
+    const link = Object.assign(document.createElement('a'), { href: url, download: a.name })
+    document.body.append(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  } catch (err) {
+    toast(err.message)
+  } finally {
+    button.removeAttribute('aria-busy')
+  }
 }
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeMenus()
-})
 
 // ---------------------------------------------------------------------------------------------------------------
 // Composer
@@ -495,28 +733,35 @@ function openComposer() {
       err.textContent = 'Enter a valid email address.'
       return $('#c-to').focus()
     }
-    if (!isDemo()) {
-      // No send endpoint yet. Say so rather than pretend.
-      err.textContent = "Sending from xstate isn't available yet."
-      return
-    }
-    store.messages.push({
-      id: `msg_${Date.now()}`,
-      from: { name: store.user.name, email: $('#c-from').value },
-      to,
-      subject: $('#c-subject').value.trim(),
-      body: ($('#c-body').value.trim() || ' ').split(/\n{2,}/),
-      time: new Date().toISOString(),
-      folder: 'sent',
-    })
+    if (!data().canSend) return (err.textContent = "Sending from xstate isn't available yet.")
+    data().send({ from: $('#c-from').value, to, subject: $('#c-subject').value.trim(), text: $('#c-body').value.trim() })
     close()
     toast('Sent')
-    renderMail(root, ctx)
+    if (view.folder === 'sent') loadList()
   })
 }
 
 window.addEventListener('xstate:compose', () => openComposer())
 window.addEventListener('xstate:search', () => {
   view.searching = true
-  if (root?.isConnected && root.querySelector('.mail')) renderMail(root, ctx)
+  if (root?.isConnected && root.querySelector('.mail')) renderList()
 })
+
+// ---------------------------------------------------------------------------------------------------------------
+// Formatting
+
+function formatTime(iso) {
+  const d = new Date(iso)
+  const now = new Date()
+  const days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400000)
+  if (days === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return d.toLocaleDateString([], { weekday: 'short' })
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() && { year: 'numeric' }) })
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}

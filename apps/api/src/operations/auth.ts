@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { getMe, login, register } from '../auth/service'
+import { ensureBucketsInBackground } from '../storage/buckets'
 import { defineOperation } from './define'
 
 const email = z.email().max(254)
@@ -17,7 +18,12 @@ export const authRegister = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/register', status: 201 },
   mcp: false,
-  run: ({ env }, input) => register(env, input),
+  run: async ({ env, waitUntil }, input) => {
+    const session = await register(env, input)
+    // The organization's R2 bucket. If this fails, the first file stored creates it instead.
+    ensureBucketsInBackground(env, waitUntil, [session.organization.id])
+    return session
+  },
 })
 
 export const authLogin = defineOperation({
@@ -36,7 +42,12 @@ export const authMe = defineOperation({
   input: z.object({}),
   http: { method: 'GET', path: '/auth/me' },
   mcp: { readOnly: true },
-  run: ({ env, actor }) => getMe(env, actor),
+  run: async ({ env, actor, waitUntil }) => {
+    const me = await getMe(env, actor)
+    // Backfill: organizations created before buckets existed get theirs the next time their owner signs in.
+    ensureBucketsInBackground(env, waitUntil, me.organizations.filter((o) => o.role === 'owner').map((o) => o.id))
+    return me
+  },
 })
 
 export const authOperations = [authRegister, authLogin, authMe]

@@ -7,3 +7,12 @@ APP_ORIGINS=http://localhost:8787,app://xstate
 STALWART_API_KEY=
 # Signs session JWTs (HS256). Any long random string: openssl rand -base64 48
 JWT_SECRET=
+# R2 for organization buckets (files). From the Cloudflare dashboard: R2 → Manage API tokens → Create API token,
+# Object Read & Write, apply to all buckets. Leave empty to run without file storage.
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+# Cloudflare API token with Account → Workers R2 Storage → Edit, to create organization buckets.
+CLOUDFLARE_API_TOKEN=
+# Signs Stalwart's webhook requests (X-Signature). Same value as the WebHook's signatureKey on Stalwart.
+# Any long random string: openssl rand -base64 32
+STALWART_WEBHOOK_SECRET=

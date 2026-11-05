@@ -4,6 +4,8 @@ import * as mailboxesDb from '../db/mailboxes'
 import { domainContext, isAdmin, loadMember, mailboxContext, requireAddressFree, requireMemberInOrg } from './access'
 import { EmailError, withRollback } from './errors'
 import { syncMemberGroups } from './sharing'
+import type { BucketEnv } from '../storage/buckets'
+import { deleteMailboxFolder } from '../storage/files'
 import * as stalwart from './stalwart/accounts'
 import { toMailbox, type Actor, type EmailEnv, type Mailbox, type MailboxKind } from './types'
 import { generatePassword, normalizeLocalPart, validatePassword, validateQuota } from './validation'
@@ -132,12 +134,20 @@ export async function setMailboxPassword(env: EmailEnv, actor: Actor, mailboxId:
   await stalwart.setPassword(env, mailbox.stalwart_id, password)
 }
 
-/** Permanently deletes a mailbox, its addresses and all of its mail. The /email API should confirm first. */
-export async function deleteMailbox(env: EmailEnv, actor: Actor, mailboxId: string): Promise<void> {
+/**
+ * Permanently deletes a mailbox, its addresses, all of its mail and its folder of files in R2. The /email API
+ * should confirm first.
+ */
+export async function deleteMailbox(env: EmailEnv & BucketEnv, actor: Actor, mailboxId: string): Promise<void> {
   const { mailbox } = await mailboxContext(env, actor, mailboxId, 'manage')
   const memberIds = await mailboxAccessDb.memberIds(env.DB, mailbox.id)
 
   await stalwart.destroyAccount(env, mailbox.stalwart_id)
+  // Before the row goes, since its files rows cascade with it. A failure here leaves files under the mailbox's
+  // id in R2 rather than blocking the delete; nothing points at them any more.
+  await deleteMailboxFolder(env, mailbox.organization_id, mailbox.id).catch((err) =>
+    console.error(`storage: deleting R2 folder of mailbox ${mailbox.id} failed`, err),
+  )
   await mailboxesDb.remove(env.DB, mailbox.id).run()
 
   if (mailbox.kind === 'shared') await Promise.all(memberIds.map((memberId) => syncMemberGroups(env, memberId)))

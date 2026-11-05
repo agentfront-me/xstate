@@ -37,6 +37,22 @@ Set `XSTATE_API_URL=http://localhost:8788/v1` to point `start` at a local API. I
 missing after install, run `node apps/desktop/node_modules/electron/install.js`. Auto-update reads the `publish` URL
 in `apps/desktop/package.json`; point it at wherever release builds are uploaded.
 
+## Background mail sync
+
+Stalwart calls `POST /webhooks/stalwart` when mail arrives. The API queues a sync of that mailbox on the
+`xstate-mail-sync` queue, which copies new attachments into the organization's R2 bucket. An hourly cron syncs
+every mailbox in case webhooks were lost. See `docs/stalwart-api.md` §7.
+
+One-time production setup:
+
+```bash
+pnpm --filter @xstate/api exec wrangler queues create xstate-mail-sync
+pnpm --filter @xstate/api exec wrangler secret put STALWART_WEBHOOK_SECRET   # also R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, CLOUDFLARE_API_TOKEN
+```
+
+Then create the WebHook on Stalwart with the same secret (`docs/stalwart-api.md` §7). Locally,
+`wrangler dev --test-scheduled` lets you run the hourly job with `curl "localhost:8788/__scheduled?cron=0+*+*+*+*"`.
+
 ## Deploy
 
 Pushes to `main` run `.github/workflows/deploy.yml`: typecheck, then deploy `api` and `www` with `CLOUDFLARE_API_TOKEN`

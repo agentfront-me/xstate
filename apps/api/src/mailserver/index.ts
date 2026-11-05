@@ -29,6 +29,20 @@ export {
   updateMailbox,
   type CreateMailboxInput,
 } from './mailboxes'
+export {
+  getAttachment,
+  getMailState,
+  getThread,
+  listFolders,
+  listMessages,
+  updateMessage,
+  type Attachment,
+  type Folder,
+  type FolderView,
+  type MailboxFolders,
+  type Message,
+  type MessageSummary,
+} from './messages'
 export { grantMailboxAccess, listMailboxAccess, revokeMailboxAccess } from './sharing'
 export type {
   Actor,

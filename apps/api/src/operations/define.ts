@@ -6,9 +6,12 @@ import type { Actor } from '../auth/types'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+/** `waitUntil` keeps background work (e.g. creating a bucket after sign-up) running after the response is sent. */
+type Background = { waitUntil: (promise: Promise<unknown>) => void }
+
 export type OperationContext<Public extends boolean> = Public extends true
-  ? { env: Env; actor?: undefined }
-  : { env: Env; actor: Actor }
+  ? { env: Env; actor?: undefined } & Background
+  : { env: Env; actor: Actor } & Background
 
 export type Operation<Input extends z.ZodType = z.ZodType, Public extends boolean = boolean> = {
   /** Unique, snake_case, prefixed by area (`email_…`). Also the MCP tool name. */

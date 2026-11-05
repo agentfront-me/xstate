@@ -211,6 +211,101 @@ export const emailRevokeAccess = defineOperation({
   run: ({ env, actor }, input) => mailserver.revokeMailboxAccess(env, actor, input.mailboxId, input.memberId),
 })
 
+// Mail. Personal mailboxes can only be read by their owner; shared and agent mailboxes by the people allowed in.
+
+const folderRole = z.enum(['inbox', 'sent', 'drafts', 'archive', 'junk', 'trash'])
+const truthy = z.union([z.boolean(), z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1')])
+
+export const emailListFolders = defineOperation({
+  name: 'email_list_folders',
+  description:
+    'List the folders (Inbox, Sent, Drafts, Archive, Junk, Trash and custom ones) with unread and total counts, for ' +
+    'one mailbox or every mailbox in the organization whose mail you can read.',
+  input: z.object({ organizationId: id, mailboxId: id.optional() }),
+  http: { method: 'GET', path: '/email/orgs/:organizationId/folders' },
+  mcp: { readOnly: true },
+  run: async ({ env, actor }, input) => ({
+    mailboxes: await mailserver.listFolders(env, actor, input.organizationId, input.mailboxId),
+  }),
+})
+
+export const emailListMessages = defineOperation({
+  name: 'email_list_messages',
+  description:
+    'List the newest messages in a folder, newest first: one mailbox, or every mailbox you can read when mailboxId ' +
+    'is omitted. folder is inbox, sent, drafts, archive, junk, trash or pinned (flagged anywhere but junk and ' +
+    'trash). Filter with unreadOnly and a full-text query. Pass nextCursor back as cursor for the next page. ' +
+    'Returns summaries with a preview; call email_get_thread for full bodies and attachments.',
+  input: z.object({
+    organizationId: id,
+    mailboxId: id.optional(),
+    folder: z.union([folderRole, z.literal('pinned')]).default('inbox'),
+    unreadOnly: truthy.optional(),
+    query: z.string().trim().max(200).optional(),
+    cursor: z.string().datetime().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  }),
+  http: { method: 'GET', path: '/email/orgs/:organizationId/messages' },
+  mcp: { readOnly: true },
+  run: ({ env, actor }, input) => mailserver.listMessages(env, actor, input.organizationId, input),
+})
+
+export const emailGetThread = defineOperation({
+  name: 'email_get_thread',
+  description:
+    'Get every message in a conversation, oldest first, with plain-text and HTML bodies and attachment details ' +
+    '(blobId, name, type, size). Does not mark anything as read.',
+  input: z.object({ mailboxId: id, threadId: z.string().min(1).max(64) }),
+  http: { method: 'GET', path: '/email/mailboxes/:mailboxId/threads/:threadId' },
+  mcp: { readOnly: true },
+  run: async ({ env, actor }, input) => ({
+    messages: await mailserver.getThread(env, actor, input.mailboxId, input.threadId),
+  }),
+})
+
+export const emailUpdateMessage = defineOperation({
+  name: 'email_update_message',
+  description:
+    'Change one message: mark it read or unread (seen), pin or unpin it (pinned, shown as flagged in mail apps), ' +
+    'or move it to a folder (inbox, archive, junk, trash). Needs write access to the mailbox.',
+  input: z
+    .object({
+      mailboxId: id,
+      messageId: z.string().min(1).max(64),
+      seen: z.boolean().optional(),
+      pinned: z.boolean().optional(),
+      folder: folderRole.optional(),
+    })
+    .refine((v) => v.seen !== undefined || v.pinned !== undefined || v.folder !== undefined, 'Nothing to change'),
+  http: { method: 'PATCH', path: '/email/mailboxes/:mailboxId/messages/:messageId' },
+  run: ({ env, actor }, input) => mailserver.updateMessage(env, actor, input.mailboxId, input.messageId, input),
+})
+
+export const emailGetMailState = defineOperation({
+  name: 'email_get_mail_state',
+  description:
+    'A token that changes whenever any message changes in a mailbox you can read. Poll it and reload when it differs.',
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/email/orgs/:organizationId/mail-state' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ state: await mailserver.getMailState(env, actor, input.organizationId) }),
+})
+
+export const emailGetAttachment = defineOperation({
+  name: 'email_get_attachment',
+  description: "Download an attachment's bytes, by the blobId, name and type from email_get_thread.",
+  input: z.object({
+    mailboxId: id,
+    blobId: z.string().min(1).max(256),
+    name: z.string().min(1).max(255).default('attachment'),
+    type: z.string().min(1).max(255).default('application/octet-stream'),
+  }),
+  http: { method: 'GET', path: '/email/mailboxes/:mailboxId/attachments/:blobId' },
+  mcp: false,
+  run: ({ env, actor }, input) =>
+    mailserver.getAttachment(env, actor, input.mailboxId, input.blobId, input.name, input.type),
+})
+
 export const emailOperations = [
   emailAddDomain,
   emailCheckDomain,
@@ -231,4 +326,10 @@ export const emailOperations = [
   emailListAccess,
   emailGrantAccess,
   emailRevokeAccess,
+  emailListFolders,
+  emailListMessages,
+  emailGetThread,
+  emailUpdateMessage,
+  emailGetMailState,
+  emailGetAttachment,
 ]
