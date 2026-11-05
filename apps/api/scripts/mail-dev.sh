@@ -114,7 +114,8 @@ stop_bg() {
 trap 'status=$?; stop_bg; if [ $status -ne 0 ] && [ "${SETTING_UP:-}" = 1 ]; then rm -rf "$CONFIG" "$ADMIN" "$DIR/data"; log "setup failed, cleaned up; run it again"; fi' EXIT
 
 ensure_not_running() {
-  if pgrep -f "$BIN --config" >/dev/null; then die "Stalwart is already running (pkill -f '$BIN')"; fi
+  # Already up (e.g. a second `pnpm dev`): nothing to do. Exiting 0 keeps turbo from failing the whole dev run.
+  if pgrep -f "$BIN --config" >/dev/null; then log "Stalwart is already running on http://localhost:$HTTP_PORT"; exit 0; fi
   local port
   for port in "$HTTP_PORT" "$SETUP_PORT" 2525 2465 2993; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then die "port $port is already in use: $(lsof -nP -iTCP:"$port" -sTCP:LISTEN | awk 'NR==2 {print $1, "pid", $2}')"; fi

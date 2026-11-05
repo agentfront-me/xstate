@@ -1,0 +1,9 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The local Stalwart (scripts/mail-dev.sh) runs alongside the API whenever `dev` does.
+    "dev": { "with": ["mail:dev"] },
+    "mail:dev": { "cache": false, "persistent": true }
+  }
+}

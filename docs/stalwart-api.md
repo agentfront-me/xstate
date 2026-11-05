@@ -371,7 +371,8 @@ AWS blocks outbound port 25 on EC2, so Stalwart hands mail for outside addresses
 testing would otherwise be left behind there after the local D1 is wiped, which is how asdfasdf.com ended up on the
 production server.
 
-- **Local Stalwart:** `pnpm --filter @xstate/api mail:dev` runs Stalwart 1.0.2 (same as production) from
+- **Local Stalwart:** `pnpm dev` starts it with the API (`apps/api/turbo.json` runs `mail:dev` alongside `dev`; if it's
+  already running it's left as is). On its own: `pnpm --filter @xstate/api mail:dev`. It runs Stalwart 1.0.2 (same as production) from
   `apps/api/.stalwart/`, set up by `apps/api/scripts/mail-dev.sh`. The first run downloads it (SHA-256 checked),
   bootstraps `mx.xstate.test`, and writes `STALWART_URL=http://localhost:18080` and a local `STALWART_API_KEY` into
   `.dev.vars`. Ports, all on 127.0.0.1: HTTP/JMAP and admin UI 18080, SMTP 2525 (inbound, no sign-in), submission
