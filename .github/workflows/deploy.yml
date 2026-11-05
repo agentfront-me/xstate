@@ -1,5 +1,5 @@
 # Pull requests: install and typecheck.
-# Pushes to main: the same checks, then deploy every Worker to Cloudflare.
+# Pushes to main: the same checks, then apply D1 migrations and deploy every Worker to Cloudflare.
 name: Deploy
 
 on:
@@ -8,7 +8,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Never run two deploys at once; a newer push waits for the running one instead of cancelling it.
+# Never run two deploys at once; a newer push waits for the running one instead of cancelling it mid-migration.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('check-{0}', github.ref) || 'deploy-production' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -42,6 +42,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      # Migrations run before new code goes live, so the code never sees a schema older than it expects.
+      - name: Apply D1 migrations
+        run: pnpm db:migrate:remote
+
       - name: Deploy api
         run: pnpm --filter @xstate/api run deploy
       - name: Deploy www

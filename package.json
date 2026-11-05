@@ -10,7 +10,9 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "deploy": "turbo run deploy"
+    "deploy": "turbo run deploy",
+    "db:migrate:local": "pnpm --filter @xstate/api db:migrate:local",
+    "db:migrate:remote": "pnpm --filter @xstate/api db:migrate:remote"
   },
   "devDependencies": {
     "turbo": "^2.11.4",
