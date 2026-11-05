@@ -12,8 +12,9 @@
   "vars": {
     "ENVIRONMENT": "production",
     "STALWART_URL": "https://mx.xstate.com",
-    // Browser origins allowed to call the API (comma-separated): the sign-up and onboarding pages.
-    "APP_ORIGINS": "https://xstate.com,https://www.xstate.com"
+    // Browser origins allowed to call the API (comma-separated): the site's sign-up pages and dashboard, and the
+    // desktop app, which serves the dashboard from app://xstate.
+    "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [

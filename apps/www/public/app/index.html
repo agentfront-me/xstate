@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xstate</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script>
+  try {
+    var t = localStorage.getItem('theme');
+    if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+  } catch (e) {}
+</script>
+<link rel="stylesheet" href="/app/dashboard.css">
+<script type="module" src="/app/dashboard.js"></script>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="rail" id="rail" aria-label="Main"></aside>
+  <main class="main" id="main"><div class="loading"><span class="spinner"></span></div></main>
+</div>
+</body>
+</html>

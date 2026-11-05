@@ -42,7 +42,7 @@ The response mirrors it: `{"methodResponses": [["<Method>", { ...result }, "c1"]
 2. Go to Account → Credentials → **API Keys** and create one, e.g. "xstate backend".
 3. Copy the secret. It is shown only once and stored hashed.
 
-The key inherits the account's permissions unless you narrow it. It only works for the management API, not IMAP/SMTP. Keep it in the backend's secret store, never in the browser.
+The key inherits the account's permissions unless you narrow it, mail access included. It works as `Bearer` on the management API and JMAP, and on IMAP, POP3, SMTP and ManageSieve through `OAUTHBEARER`/`XOAUTH2` over TLS ([API keys](https://stalw.art/docs/auth/authentication/api-key/)). An admin key can act on any account by passing its `accountId` (the `impersonate` permission). Keep it in the backend's secret store, never in the browser.
 
 ### IDs
 
@@ -236,6 +236,62 @@ Deletion is immediate and permanent on our (non-Enterprise) edition:
 xstate should confirm with the user before calling this.
 
 ---
+
+## 5. Read and send mail as any account
+
+The admin key can use the standard JMAP mail methods on any account by setting `accountId` to the account's
+`x:Account` id (our `mailboxes.stalwart_id`). This works because admins hold the `impersonate` permission
+([Administrators](https://stalw.art/docs/auth/authorization/administrator#impersonation)). Tested 2026-11-05 with
+`Email/query`, `Email/get`, `Email/set` (create, destroy), `EmailSubmission/set`, `/jmap/upload/<accountId>/` and
+`/jmap/download/<accountId>/<blobId>/<name>`.
+
+```json
+{
+  "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"],
+  "methodCalls": [
+    ["Email/query", { "accountId": "<stalwart account id>", "filter": { "subject": "invoice" } }, "q"],
+    ["Email/get", { "accountId": "<stalwart account id>", "#ids": { "resultOf": "q", "name": "Email/query", "path": "/ids" },
+      "properties": ["subject", "from", "receivedAt", "preview", "attachments"] }, "g"]
+  ]
+}
+```
+
+To send: upload attachments to `/jmap/upload/<accountId>/`. Create the message with `Email/set`, using the
+`bodyStructure` and `bodyValues` properties, in the account's Drafts folder (`Mailbox/query` with
+`filter.role = "drafts"`). Then `EmailSubmission/set` with an `identityId` from `Identity/get` and
+`onSuccessUpdateEmail` to clear `$draft`. Each account already has an identity for its own address.
+
+## 6. Where Stalwart stores mail
+
+Since 2026-11-05, message contents (raw messages with attachments, Sieve scripts, pending uploads, spam-filter data)
+live in the R2 bucket `xstate-mail-blobs` on the HireNinja Cloudflare account (location: Eastern North America),
+under the prefix `mx1/`. Accounts, folders, flags and the search index stay in the Postgres data store on the server.
+
+The `x:BlobStore` singleton:
+
+```json
+{
+  "@type": "S3",
+  "bucket": "xstate-mail-blobs",
+  "keyPrefix": "mx1/",
+  "region": { "@type": "Custom", "url": "https://99322c1871edd6eb7fba729f872c1832.r2.cloudflarestorage.com", "region": "auto" },
+  "accessKeyId": { "@type": "EnvironmentVariable", "variableName": "R2_BLOBS_ACCESS_KEY_ID" },
+  "secretKey": { "@type": "EnvironmentVariable", "variableName": "R2_BLOBS_SECRET_ACCESS_KEY" },
+  "sessionToken": { "@type": "None" },
+  "timeout": 30000,
+  "maxRetries": 3,
+  "allowInvalidCerts": false,
+  "verifyAfterWrite": false
+}
+```
+
+- **Key:** the two variables live in `/etc/stalwart/stalwart.env`, which the systemd unit loads. The R2 token is
+  limited to Object Read & Write on this bucket.
+- **Changing the store:** changes to the blob store take effect after `systemctl restart stalwart`, and existing
+  blobs are not moved. To move a server that holds real mail, stop Stalwart and use `stalwart --export` and
+  `--import` ([Migration](https://stalw.art/docs/management/maintenance/migration)). The switch on 2026-11-05 was
+  done in place because the server held only test mail. The 7 messages written before it were deleted, because their
+  contents stayed behind in Postgres.
 
 ## Permissions for xstate's API key
 

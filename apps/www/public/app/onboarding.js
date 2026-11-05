@@ -108,6 +108,9 @@ async function resume() {
   state.mailboxes = mailboxes
 
   const p = progress()
+  // Signing in to an account that already has addresses: go straight to the dashboard. Onboarding is for new
+  // accounts, and a new device (the desktop app) has no local progress to resume.
+  if (location.pathname.startsWith('/login') && state.domain && state.mailboxes.length) return location.assign('/app/')
   if (location.pathname.startsWith('/login')) {
     history.replaceState(null, '', '/signup')
     document.title = 'Set up · xstate'
@@ -788,6 +791,7 @@ function showDone() {
         .join('')}
     </div>
     ${verified ? '' : `<div class="small muted">Mail to ${esc(domainName())} starts arriving once its DNS records are in place.</div>`}
+    <a class="btn btn-primary" href="/app/">Open xstate</a>
     <a class="link" href="#" id="sign-out">Sign out</a>`)
 
   view.querySelector('.checklist').addEventListener('click', (event) => {

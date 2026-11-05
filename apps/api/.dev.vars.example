@@ -2,7 +2,7 @@
 ENVIRONMENT=development
 STALWART_URL=https://mx.xstate.com
 # The www dev server, so its sign-up pages can call this API.
-APP_ORIGINS=http://localhost:8787
+APP_ORIGINS=http://localhost:8787,app://xstate
 # Stalwart API key (Account → Credentials → API Keys on mx.xstate.com).
 STALWART_API_KEY=
 # Signs session JWTs (HS256). Any long random string: openssl rand -base64 48
