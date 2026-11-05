@@ -1,0 +1,27 @@
+{
+  // xstate API: Hono on Cloudflare Workers.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "xstate-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // api.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
+  "workers_dev": false,
+  "routes": [{ "pattern": "api.xstate.com", "custom_domain": true }],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "STALWART_URL": "https://mx.xstate.com"
+  },
+  // Users, organizations, domains and mailboxes. Schema lives in migrations/.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "xstate",
+      "database_id": "215ca842-0591-4fc4-8f6f-0e61cc77b1ea",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
+  "secrets": { "required": ["STALWART_API_KEY", "JWT_SECRET"] }
+}

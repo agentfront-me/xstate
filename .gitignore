@@ -1,0 +1,10 @@
+node_modules/
+.turbo/
+.output/
+.wrangler/
+dist/
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+.DS_Store

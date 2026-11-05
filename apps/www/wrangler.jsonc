@@ -1,0 +1,17 @@
+{
+  // xstate marketing site: static assets on Cloudflare Workers, no Worker script.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "xstate-www",
+  "compatibility_date": "2026-09-20",
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // xstate.com and www.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "xstate.com", "custom_domain": true },
+    { "pattern": "www.xstate.com", "custom_domain": true }
+  ]
+}

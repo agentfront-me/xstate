@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `wrangler dev`. Production values are set with `wrangler secret put <NAME>`.
+ENVIRONMENT=development
+STALWART_URL=https://mx.xstate.com
+# Stalwart API key (Account → Credentials → API Keys on mx.xstate.com).
+STALWART_API_KEY=
+# Signs session JWTs (HS256). Any long random string: openssl rand -base64 48
+JWT_SECRET=
