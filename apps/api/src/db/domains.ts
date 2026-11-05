@@ -45,6 +45,12 @@ export function setEnabled(db: D1Database, id: string, enabled: boolean, now: st
   return db.prepare('UPDATE domains SET enabled = ?, updated_at = ? WHERE id = ?').bind(enabled ? 1 : 0, now, id)
 }
 
+export function setVerified(db: D1Database, id: string, now: string): D1PreparedStatement {
+  return db
+    .prepare("UPDATE domains SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ?")
+    .bind(now, now, id)
+}
+
 export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM domains WHERE id = ?').bind(id)
 }

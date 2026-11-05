@@ -13,7 +13,7 @@ export type CreateMailboxInput = {
   domainId: string
   localPart: string
   displayName?: string
-  /** Required for personal mailboxes, generated for agent mailboxes if omitted, not allowed for shared ones. */
+  /** Generated for personal and agent mailboxes if omitted (returned once), not allowed for shared ones. */
   password?: string
   quotaBytes?: number | null
   /** The member a personal mailbox belongs to. */
@@ -41,7 +41,9 @@ export async function createMailbox(
     if (password !== undefined) throw new EmailError('invalid_password', 'Shared mailboxes have no password')
     if (input.ownerMemberId) throw new EmailError('invalid_owner', 'Shared mailboxes have no owner; grant access instead')
   } else {
-    if (password === undefined && input.kind === 'agent') password = generated = generatePassword()
+    // Onboarding creates the first personal mailbox without one: the owner reads mail in xstate and can set a
+    // password later for other mail apps.
+    if (password === undefined) password = generated = generatePassword()
     validatePassword(password)
   }
   if (input.ownerMemberId) {

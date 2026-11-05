@@ -3,6 +3,7 @@ import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
+import { checkRecords, essentialRecords, lookupDomain, type DnsProvider, type DnsRecord } from './dns'
 import * as stalwart from './stalwart/domains'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
 import { normalizeDomain } from './validation'
@@ -56,6 +57,37 @@ export async function getDomainDnsRecords(env: EmailEnv, actor: Actor, domainId:
     .split('\n')
     .filter((line) => !/\sTLSA\s/i.test(line))
     .join('\n')
+}
+
+/**
+ * Before adding a domain: whether the name is valid, exists in public DNS, is free on xstate, and which provider
+ * hosts its DNS. Onboarding uses the provider to tailor the verification step.
+ */
+export async function checkDomain(
+  env: EmailEnv,
+  name: string,
+): Promise<{ name: string; registered: boolean; taken: boolean; provider: DnsProvider | null }> {
+  name = normalizeDomain(name)
+  const [lookup, taken] = await Promise.all([lookupDomain(name), domainsDb.nameTaken(env.DB, name)])
+  return { name, taken, ...lookup }
+}
+
+/**
+ * Checks public DNS for the records mail needs. When every required record is found, the domain is marked
+ * verified. Safe to poll: a verified domain stays verified, and the records are still reported.
+ */
+export async function verifyDomain(
+  env: EmailEnv,
+  actor: Actor,
+  domainId: string,
+): Promise<{ domain: Domain; records: DnsRecord[] }> {
+  const { domain } = await domainContext(env, actor, domainId, 'read')
+  const records = await checkRecords(essentialRecords(await getDomainDnsRecords(env, actor, domainId), domain.name), domain.name)
+  if (domain.status !== 'verified' && records.every((r) => r.found || !r.required)) {
+    await domainsDb.setVerified(env.DB, domain.id, new Date().toISOString()).run()
+    return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
+  }
+  return { domain: toDomain(domain), records }
 }
 
 /** Turns mail for a domain on or off without deleting anything. */

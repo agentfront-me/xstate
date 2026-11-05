@@ -8,7 +8,17 @@
 // ../db/ holds the SQL, with write helpers returning prepared statements so a service can batch them atomically.
 
 export { addAlias, removeAlias } from './aliases'
-export { addDomain, getDomain, getDomainDnsRecords, listDomains, removeDomain, setDomainEnabled } from './domains'
+export {
+  addDomain,
+  checkDomain,
+  getDomain,
+  getDomainDnsRecords,
+  listDomains,
+  removeDomain,
+  setDomainEnabled,
+  verifyDomain,
+} from './domains'
+export type { DnsProvider, DnsRecord } from './dns'
 export { EmailError } from './errors'
 export {
   createMailbox,

@@ -19,6 +19,17 @@ export const emailAddDomain = defineOperation({
   run: async ({ env, actor }, input) => ({ domain: await mailserver.addDomain(env, actor, input.organizationId, input.name) }),
 })
 
+export const emailCheckDomain = defineOperation({
+  name: 'email_check_domain',
+  description:
+    'Check a domain before adding it: whether the name is valid, exists in public DNS, is already on xstate ' +
+    '("taken"), and which provider hosts its DNS (e.g. Cloudflare), or null if unrecognized.',
+  input: z.object({ name: z.string().trim().min(3).max(253) }),
+  http: { method: 'GET', path: '/email/domain-check' },
+  mcp: { readOnly: true },
+  run: ({ env }, input) => mailserver.checkDomain(env, input.name),
+})
+
 export const emailListDomains = defineOperation({
   name: 'email_list_domains',
   description: "List the organization's domains that you can see.",
@@ -47,6 +58,16 @@ export const emailGetDnsRecords = defineOperation({
   run: async ({ env, actor }, input) => ({ zoneFile: await mailserver.getDomainDnsRecords(env, actor, input.domainId) }),
 })
 
+export const emailVerifyDomain = defineOperation({
+  name: 'email_verify_domain',
+  description:
+    'Look up the essential mail records (MX, SPF, DKIM, DMARC) in public DNS and report each as found or not. ' +
+    'Marks the domain "verified" once every required record is found. Safe to call repeatedly while waiting.',
+  input: z.object({ domainId: id }),
+  http: { method: 'POST', path: '/email/domains/:domainId/verify' },
+  run: ({ env, actor }, input) => mailserver.verifyDomain(env, actor, input.domainId),
+})
+
 export const emailSetDomainEnabled = defineOperation({
   name: 'email_set_domain_enabled',
   description: 'Turn mail for a domain on or off. Turning it off stops delivery but deletes nothing.',
@@ -71,9 +92,9 @@ export const emailRemoveDomain = defineOperation({
 export const emailCreateMailbox = defineOperation({
   name: 'email_create_mailbox',
   description:
-    'Create a mailbox on a domain. "personal" is one person\'s inbox and needs a password; "shared" (e.g. hello@, ' +
-    'support@) has no password and is opened by members you grant access to; "agent" is for an AI agent and gets a ' +
-    'generated password if none is given, returned once in the response.',
+    'Create a mailbox on a domain. "personal" is one person\'s inbox; "shared" (e.g. hello@, support@) has no ' +
+    'password and is opened by members you grant access to; "agent" is for an AI agent. personal and agent ' +
+    'mailboxes get a generated password if none is given, returned once in the response.',
   input: z.object({
     domainId: id,
     kind,
@@ -192,9 +213,11 @@ export const emailRevokeAccess = defineOperation({
 
 export const emailOperations = [
   emailAddDomain,
+  emailCheckDomain,
   emailListDomains,
   emailGetDomain,
   emailGetDnsRecords,
+  emailVerifyDomain,
   emailSetDomainEnabled,
   emailRemoveDomain,
   emailCreateMailbox,
