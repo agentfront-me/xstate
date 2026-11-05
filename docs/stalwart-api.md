@@ -365,6 +365,34 @@ AWS blocks outbound port 25 on EC2, so Stalwart hands mail for outside addresses
 - **Testing:** SES's mailbox simulator (`bounce@simulator.amazonses.com`, `complaint@simulator.amazonses.com`)
   produces real notifications without hurting reputation.
 
+## 9. Local development
+
+`wrangler dev` must never reach mx.xstate.io, production SES or the Cloudflare account. Domains created while
+testing would otherwise be left behind there after the local D1 is wiped, which is how asdfasdf.com ended up on the
+production server.
+
+- **Local Stalwart:** `pnpm --filter @xstate/api mail:dev` runs Stalwart 1.0.2 (same as production) from
+  `apps/api/.stalwart/`, set up by `apps/api/scripts/mail-dev.sh`. The first run downloads it (SHA-256 checked),
+  bootstraps `mx.xstate.test`, and writes `STALWART_URL=http://localhost:18080` and a local `STALWART_API_KEY` into
+  `.dev.vars`. Ports, all on 127.0.0.1: HTTP/JMAP and admin UI 18080, SMTP 2525 (inbound, no sign-in), submission
+  2465, IMAP 2993. The admin password is in `.stalwart/admin.env`.
+- **Nothing leaves the machine:** outbound mail goes to the `nowhere` relay (127.0.0.1:9), so it stays queued and
+  eventually bounces. The spam filter is off so test mail from made-up senders reaches the inbox. A mail-sync webhook
+  posts to `http://localhost:8788/webhooks/stalwart`.
+- **SES:** `SES_MODE=fake` in `.dev.vars` returns made-up DKIM tokens and marks the domain ready on the next check,
+  without calling AWS. `off` skips SES; `live` (the production default in `wrangler.jsonc`) is real SES.
+- **DNS:** outside production, domains ending in `.test` (reserved, never registrable) skip public DNS, so
+  `acme.test` passes onboarding end to end. Real domains are still checked against public DNS.
+- **R2:** every organization shares the `xstate-dev` bucket (`R2_BUCKET`, ignored in production), which has CORS for
+  `http://localhost:8787`. `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` come from an R2 API token with Object Read &
+  Write on `xstate-dev` only, so local runs can't touch production buckets. `CLOUDFLARE_API_TOKEN` stays empty, so
+  nothing creates or deletes buckets. Without the keys, file endpoints answer 503 `storage_not_configured` and mail
+  sync skips attachment copying.
+- **Reset:** `pnpm --filter @xstate/api mail:reset` deletes the local Stalwart's data and clears domains, mailboxes
+  and mail rows from the local D1 (their Stalwart ids are gone). Users and organizations stay.
+
+Test inbound mail with any SMTP client, e.g. `swaks --server 127.0.0.1:2525 --to dev@acme.test`.
+
 ## Permissions for xstate's API key
 
 If you narrow the key instead of letting it inherit full admin rights, it needs:

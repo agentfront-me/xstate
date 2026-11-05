@@ -5,16 +5,37 @@
 //
 // Credentials: AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY, an IAM user allowed to manage identities only
 // (not send). Without them, registration is skipped and domains fall back to Stalwart's DKIM record.
+//
+// SES_MODE picks what happens: "live" calls SES; "fake" (local dev) never calls AWS, hands out made-up DKIM tokens
+// and reports the domain verified from the next check on; "off" skips SES as if it weren't configured.
 
 import { AwsClient } from 'aws4fetch'
 import { EmailError } from './errors'
 
-export type SesEnv = Pick<Env, 'AWS_SES_ACCESS_KEY_ID' | 'AWS_SES_SECRET_ACCESS_KEY' | 'AWS_SES_REGION' | 'SES_SNS_TOPIC_ARNS'>
+export type SesEnv = Pick<Env, 'AWS_SES_ACCESS_KEY_ID' | 'AWS_SES_SECRET_ACCESS_KEY' | 'AWS_SES_REGION' | 'SES_SNS_TOPIC_ARNS' | 'SES_MODE'>
 
 /** SES's view of a domain: whether it may send, and the DKIM tokens behind its three CNAMEs. */
 export type SesIdentity = { status: 'pending' | 'verified' | 'failed'; dkimTokens: string[] }
 
-export const sesConfigured = (env: SesEnv) => !!(env.AWS_SES_ACCESS_KEY_ID && env.AWS_SES_SECRET_ACCESS_KEY)
+type SesMode = 'live' | 'fake' | 'off'
+
+function mode(env: SesEnv): SesMode {
+  const value = (env.SES_MODE as string | undefined) ?? 'live'
+  if (value === 'fake' || value === 'off') return value
+  return env.AWS_SES_ACCESS_KEY_ID && env.AWS_SES_SECRET_ACCESS_KEY ? 'live' : 'off'
+}
+
+export const sesConfigured = (env: SesEnv) => mode(env) !== 'off'
+
+/** Fake mode: three stable made-up tokens per domain, shaped like SES's. */
+async function fakeTokens(domain: string): Promise<string[]> {
+  const tokens: string[] = []
+  for (let i = 1; i <= 3; i++) {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${domain}#${i}`)))
+    tokens.push([...digest.slice(0, 16)].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 32))
+  }
+  return tokens
+}
 
 let client: { key: string; aws: AwsClient } | null = null
 function aws(env: SesEnv): AwsClient {
@@ -81,6 +102,8 @@ function toIdentity(raw: V2Identity): SesIdentity {
 
 /** SES's current view of a domain, or null if it isn't registered. */
 export async function getDomainIdentity(env: SesEnv, domain: string): Promise<SesIdentity | null> {
+  // Only asked about domains already registered, so a fake one is verified from its first check on.
+  if (mode(env) === 'fake') return { status: 'verified', dkimTokens: await fakeTokens(domain) }
   const raw = (await v2(env, 'GET', `/identities/${encodeURIComponent(domain)}`)) as V2Identity | null
   return raw ? toIdentity(raw) : null
 }
@@ -90,6 +113,7 @@ export async function getDomainIdentity(env: SesEnv, domain: string): Promise<Se
  * call again: an existing identity is read and its notification topics set again.
  */
 export async function registerDomain(env: SesEnv, domain: string): Promise<SesIdentity> {
+  if (mode(env) === 'fake') return { status: 'pending', dkimTokens: await fakeTokens(domain) }
   let identity: SesIdentity
   try {
     const created = (await v2(env, 'POST', '/identities', {
@@ -112,6 +136,7 @@ export async function registerDomain(env: SesEnv, domain: string): Promise<SesId
 
 /** Removes a domain from SES. One that isn't registered is fine. */
 export async function deleteDomainIdentity(env: SesEnv, domain: string): Promise<void> {
+  if (mode(env) === 'fake') return
   await v2(env, 'DELETE', `/identities/${encodeURIComponent(domain)}`)
 }
 

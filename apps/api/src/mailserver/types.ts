@@ -9,7 +9,15 @@ export type { Actor } from '../auth/types'
 
 export type EmailEnv = Pick<
   Env,
-  'DB' | 'STALWART_URL' | 'STALWART_API_KEY' | 'AWS_SES_ACCESS_KEY_ID' | 'AWS_SES_SECRET_ACCESS_KEY' | 'AWS_SES_REGION' | 'SES_SNS_TOPIC_ARNS'
+  | 'DB'
+  | 'ENVIRONMENT'
+  | 'STALWART_URL'
+  | 'STALWART_API_KEY'
+  | 'AWS_SES_ACCESS_KEY_ID'
+  | 'AWS_SES_SECRET_ACCESS_KEY'
+  | 'AWS_SES_REGION'
+  | 'SES_SNS_TOPIC_ARNS'
+  | 'SES_MODE'
 >
 
 export type Domain = {

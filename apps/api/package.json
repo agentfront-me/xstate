@@ -8,6 +8,8 @@
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply xstate --local",
     "db:migrate:remote": "wrangler d1 migrations apply xstate --remote",
+    "mail:dev": "scripts/mail-dev.sh start",
+    "mail:reset": "scripts/mail-dev.sh reset",
     "typecheck": "tsc"
   },
   "dependencies": {

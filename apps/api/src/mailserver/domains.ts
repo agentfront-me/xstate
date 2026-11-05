@@ -3,7 +3,7 @@ import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
-import { checkRecords, essentialRecords, lookupDomain, type DnsProvider, type DnsRecord } from './dns'
+import { checkRecords, essentialRecords, isTestDomain, lookupDomain, type DnsProvider, type DnsRecord } from './dns'
 import * as ses from './ses'
 import * as stalwart from './stalwart/domains'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
@@ -93,7 +93,11 @@ export async function checkDomain(
   name: string,
 ): Promise<{ name: string; registered: boolean; taken: boolean; provider: DnsProvider | null }> {
   name = normalizeDomain(name)
-  const [lookup, taken] = await Promise.all([lookupDomain(name), domainsDb.nameTaken(env.DB, name)])
+  const testLookup = { registered: true, provider: null }
+  const [lookup, taken] = await Promise.all([
+    isTestDomain(env, name) ? testLookup : lookupDomain(name),
+    domainsDb.nameTaken(env.DB, name),
+  ])
   return { name, taken, ...lookup }
 }
 
@@ -114,7 +118,10 @@ export async function verifyDomain(
   })
   const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
   if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
-  const records = await checkRecords(essentialRecords(zone, domain.name, sesDkimRecords(domain)), domain.name)
+  const expected = essentialRecords(zone, domain.name, sesDkimRecords(domain))
+  const records = isTestDomain(env, domain.name)
+    ? expected.map((r) => ({ ...r, found: true }))
+    : await checkRecords(expected, domain.name)
   if (domain.status !== 'verified' && records.every((r) => r.found || !r.required)) {
     await domainsDb.setVerified(env.DB, domain.id, new Date().toISOString()).run()
     return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }

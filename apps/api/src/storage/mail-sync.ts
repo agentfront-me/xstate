@@ -11,7 +11,7 @@ import * as mailboxSyncDb from '../db/mailbox-sync'
 import * as mailboxesDb from '../db/mailboxes'
 import * as jmap from '../mailserver/stalwart/mail'
 import type { JmapAttachmentMessage, JmapBodyPart, JmapFolder } from '../mailserver/stalwart/mail'
-import { organizationBucket, type BucketEnv } from './buckets'
+import { organizationBucket, storageConfigured, type BucketEnv } from './buckets'
 import { cleanFileName, fileKey } from './files'
 import { deleteObject, putObject } from './r2'
 
@@ -26,6 +26,9 @@ export type SyncResult = { mailboxId: string; stored: number; skipped: number; d
 
 export async function syncMailbox(env: SyncEnv, mailboxId: string): Promise<SyncResult> {
   const result: SyncResult = { mailboxId, stored: 0, skipped: 0, deleted: 0, firstSync: false }
+  // Without file storage (local dev) there's nowhere to copy attachments to. Skip instead of failing, so the queue
+  // doesn't retry the job ten times.
+  if (!storageConfigured(env)) return result
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
   if (!mailbox) return result // deleted since the job was queued
 

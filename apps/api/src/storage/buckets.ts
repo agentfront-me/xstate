@@ -5,10 +5,31 @@ import * as organizationsDb from '../db/organizations'
 import { ApiError } from '../errors'
 import { deletePrefix, type R2Env } from './r2'
 
-export type BucketEnv = R2Env & Pick<Env, 'DB' | 'CLOUDFLARE_API_TOKEN' | 'ENVIRONMENT' | 'APP_ORIGINS'>
+export type BucketEnv = R2Env & Pick<Env, 'DB' | 'CLOUDFLARE_API_TOKEN' | 'ENVIRONMENT' | 'APP_ORIGINS' | 'R2_BUCKET'>
 
 /** Near the mail server (us-east-2) and the main users; R2 picks the closest region in Eastern North America. */
 const LOCATION_HINT = 'enam'
+
+/**
+ * Whether file storage is set up: R2 keys for objects, plus either a Cloudflare API token to create a bucket per
+ * organization (production) or a shared R2_BUCKET (local dev). Without them, file features answer 503
+ * storage_not_configured.
+ */
+export function storageConfigured(
+  env: Pick<Env, 'CLOUDFLARE_API_TOKEN' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY' | 'R2_BUCKET' | 'ENVIRONMENT'>,
+): boolean {
+  return !!(env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && (env.CLOUDFLARE_API_TOKEN || sharedBucket(env)))
+}
+
+/**
+ * Local dev: the one bucket every organization shares (R2_BUCKET, e.g. xstate-dev), or null for a bucket per
+ * organization. Never used in production. Sharing is safe because files live under `<mailboxId>/` and mailbox ids
+ * are unique, and deleting a mailbox only removes its own folder.
+ */
+export function sharedBucket(env: Pick<Env, 'R2_BUCKET' | 'ENVIRONMENT'>): string | null {
+  const name = (env.R2_BUCKET as string).trim()
+  return name && (env.ENVIRONMENT as string) !== 'production' ? name : null
+}
 
 /** `xstate-org-<id>` in production, `xstate-dev-org-<id>` otherwise, so local runs never touch customer buckets. */
 export function bucketName(env: Pick<Env, 'ENVIRONMENT'>, organizationId: string): string {
@@ -64,6 +85,12 @@ export async function destroyBucket(env: BucketEnv, name: string): Promise<void>
  */
 export async function organizationBucket(env: BucketEnv, organizationId: string): Promise<string> {
   const existing = await organizationsDb.getBucket(env.DB, organizationId)
+  const shared = sharedBucket(env)
+  if (shared) {
+    // Never created here: it already exists, and the local token can't create buckets anyway.
+    if (existing !== shared) await organizationsDb.setBucket(env.DB, organizationId, shared).run()
+    return shared
+  }
   if (existing) return existing
   const name = bucketName(env, organizationId)
   await createBucket(env, name)
@@ -85,7 +112,7 @@ export function ensureBucketsInBackground(
   waitUntil: (promise: Promise<unknown>) => void,
   organizationIds: string[],
 ): void {
-  if (!env.CLOUDFLARE_API_TOKEN || !env.R2_ACCESS_KEY_ID || !organizationIds.length) return
+  if (!storageConfigured(env) || !organizationIds.length) return
   waitUntil(
     (async () => {
       for (const id of organizationIds) {

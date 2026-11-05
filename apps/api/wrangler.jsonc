@@ -20,7 +20,13 @@
     // SNS topics allowed to post SES bounces and complaints to /webhooks/ses (comma-separated).
     "SES_SNS_TOPIC_ARNS": "arn:aws:sns:us-east-2:881901370832:xstate-ses-events",
     // Amazon SES region for outbound mail and domain registration (mailserver/ses.ts).
-    "AWS_SES_REGION": "us-east-2"
+    "AWS_SES_REGION": "us-east-2",
+    // How domains are registered with SES: "live" (real SES, needs the AWS_SES_* secrets), "fake" (made-up DKIM
+    // tokens, verified on the next check: for local dev) or "off" (skip SES). Local dev sets it in .dev.vars.
+    "SES_MODE": "live",
+    // Outside production only: one shared bucket for every organization instead of a bucket each, so local dev
+    // needs no bucket-creating token (an R2 token scoped to this bucket is enough). Empty in production.
+    "R2_BUCKET": ""
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [

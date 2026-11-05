@@ -37,6 +37,14 @@ const PROVIDERS: { id: string; name: string; ns: RegExp }[] = [
 ]
 
 /** Whether the domain exists in public DNS, and which provider hosts its DNS if we recognize it. */
+/**
+ * Outside production, domains under the reserved `.test` TLD (RFC 2606: never registrable) skip public DNS: they
+ * count as registered and every record as published, so local dev can take one through onboarding end to end.
+ */
+export function isTestDomain(env: Pick<Env, 'ENVIRONMENT'>, name: string): boolean {
+  return (env.ENVIRONMENT as string) !== 'production' && (name === 'test' || name.endsWith('.test'))
+}
+
 export async function lookupDomain(name: string): Promise<{ registered: boolean; provider: DnsProvider | null }> {
   const answer = await resolve(name, 'NS')
   if (answer === null) return { registered: false, provider: null }

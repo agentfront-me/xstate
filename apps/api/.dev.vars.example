@@ -1,22 +1,32 @@
 # Copy to .dev.vars for `wrangler dev`. Production values are set with `wrangler secret put <NAME>`.
+#
+# Local dev never touches production: `pnpm mail:dev` runs a local Stalwart and fills in STALWART_URL and
+# STALWART_API_KEY below, SES runs in fake mode, domains ending in .test pass DNS checks, and files go to the shared
+# xstate-dev bucket through a token that can't reach any other bucket.
 ENVIRONMENT=development
-STALWART_URL=https://mx.xstate.io
 # The www dev server, so its sign-up pages can call this API.
 APP_ORIGINS=http://localhost:8787,app://xstate
-# Stalwart API key (Account → Credentials → API Keys on mx.xstate.io).
-STALWART_API_KEY=
 # Signs session JWTs (HS256). Any long random string: openssl rand -base64 48
 JWT_SECRET=
-# R2 for organization buckets (files). From the Cloudflare dashboard: R2 → Manage API tokens → Create API token,
-# Object Read & Write, apply to all buckets. Leave empty to run without file storage.
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=
-# Cloudflare API token with Account → Workers R2 Storage → Edit, to create organization buckets.
-CLOUDFLARE_API_TOKEN=
-# Signs Stalwart's webhook requests (X-Signature). Same value as the WebHook's signatureKey on Stalwart.
-# Any long random string: openssl rand -base64 32
+# Signs Stalwart's webhook requests (X-Signature). `pnpm mail:dev` gives the local Stalwart's webhook this value,
+# so set it before the first run. Any long random string: openssl rand -base64 32
 STALWART_WEBHOOK_SECRET=
-# Amazon SES identity management (register customer domains). IAM user with ses:CreateEmailIdentity,
-# GetEmailIdentity, DeleteEmailIdentity, SetIdentityNotificationTopic. Leave empty to skip SES registration.
+
+# Written by `pnpm mail:dev` (local Stalwart on port 18080). Never put the production mx.xstate.io key here.
+STALWART_URL=http://localhost:18080
+STALWART_API_KEY=
+
+# Amazon SES: "fake" hands out made-up DKIM tokens and marks the domain ready on the next check; "off" skips SES.
+# "live" with the AWS_SES_* keys registers real identities in production SES, so don't use it locally.
+SES_MODE=fake
 AWS_SES_ACCESS_KEY_ID=
 AWS_SES_SECRET_ACCESS_KEY=
+
+# Files: every organization shares the xstate-dev bucket locally. Use an R2 API token with Object Read & Write on
+# xstate-dev only (R2 → Manage API tokens), so local runs can't reach production buckets. Leave the keys empty to
+# run without file storage (file endpoints answer 503 storage_not_configured).
+R2_BUCKET=xstate-dev
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+# Leave empty locally: it can create and delete any bucket in the account. Only production needs it.
+CLOUDFLARE_API_TOKEN=
