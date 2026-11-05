@@ -41,7 +41,8 @@ in `apps/desktop/package.json`; point it at wherever release builds are uploaded
 
 Stalwart calls `POST /webhooks/stalwart` when mail arrives. The API queues a sync of that mailbox on the
 `xstate-mail-sync` queue, which copies new attachments into the organization's R2 bucket. An hourly cron syncs
-every mailbox in case webhooks were lost. See `docs/stalwart-api.md` §7.
+every mailbox in case webhooks were lost, and permanently removes files whose message was deleted more than 30
+days ago. See `docs/stalwart-api.md` §7.
 
 One-time production setup:
 

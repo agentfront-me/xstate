@@ -33,7 +33,7 @@
     "producers": [{ "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" }],
     "consumers": [{ "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 }]
   },
-  // Hourly safety check, in case Stalwart's webhooks were lost.
+  // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
   // STALWART_WEBHOOK_SECRET: HMAC key shared with the WebHook object on Stalwart (signatureKey).

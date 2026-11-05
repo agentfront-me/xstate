@@ -3,6 +3,7 @@
 
 import * as mailboxesDb from '../db/mailboxes'
 import { syncMailbox } from '../storage/mail-sync'
+import { purgeDeletedFiles } from '../storage/purge'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' }
 
@@ -34,8 +35,13 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
   }
 }
 
-/** Cron: queue every mailbox, in case webhooks were lost. Mailboxes with nothing new finish in one JMAP call. */
+/**
+ * Cron, hourly: queue every mailbox in case webhooks were lost (mailboxes with nothing new finish in one JMAP call),
+ * and permanently remove files deleted more than 30 days ago.
+ */
 export async function hourly(env: Env): Promise<void> {
   const ids = await mailboxesDb.allIds(env.DB)
   await enqueue(env, ids.map((mailboxId) => ({ mailboxId, reason: 'hourly' })))
+  const purge = await purgeDeletedFiles(env)
+  if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
 }

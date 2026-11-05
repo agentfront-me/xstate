@@ -152,8 +152,9 @@ inbound mail, mail sent from the dashboard, and mail sent from Apple Mail, Spark
    state. Each created message's attachment parts are claimed in `files` (status `pending`), streamed from
    `/jmap/download/...` into the organization's bucket while being hashed, then marked `ready`. Inline parts under
    20 KB (logos, tracking pixels) are skipped.
-3. Destroyed messages mark their files `deleted`. R2 objects are removed after a grace period, so an accidental
-   delete is recoverable. That cleanup is still to build.
+3. Destroyed messages mark their files `deleted`. The hourly cron then removes files deleted more than 30 days ago
+   (`storage/purge.ts`, `GRACE_DAYS`), from R2 first and then from `files`, up to 500 per run. Until then a deleted
+   file can still be recovered by hand.
 4. A mailbox seen for the first time, or whose saved state is too old to diff from, is backfilled. Its current
    state is noted, every message with attachments is copied, then the state is saved.
 5. An hourly Cron Trigger queues every mailbox, because webhooks aren't guaranteed and deletions send none.
@@ -285,8 +286,10 @@ deliver until one of these is done:
    locally with signed webhooks: first sync, new mail (PDF stored with a matching SHA-256, inline logo skipped),
    replay (no duplicates), delete (file marked deleted), and cron. Live test the same day, with a temporary
    Stalwart webhook to a tunnel (removed afterwards): real deliveries reached the API within a second, and their
-   attachments landed in R2. Left: the production setup (queue, secret, WebHook object, then restart Stalwart) and
-   purging deleted files after the grace period.
+   attachments landed in R2. Production set up the same day: queue `xstate-mail-sync`, all secrets, and WebHook
+   `jm3h29ayaaaa` → `https://api.xstate.com/webhooks/stalwart`. Stalwart restarted, and a real delivery was accepted
+   (no `telemetry.webhook-error`). Not yet seen in production: an attachment stored in R2, since production has no
+   organizations yet. Purge of deleted files after 30 days added and tested locally (2026-11-05).
 5. Files operations (upload, complete, get, list) and `email_send` with attachments (internal delivery).
 6. Dashboard: live inbox, thread view, attachment downloads, 30 s polling and sandboxed HTML are **done
    2026-11-05** (`apps/www/public/app/mail-data.js`, `mail.js`). Left: composer uploads and sending, once

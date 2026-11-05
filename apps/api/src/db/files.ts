@@ -110,3 +110,20 @@ export function markDeletedForEmails(db: D1Database, mailboxId: string, emailIds
     )
     .bind(now, mailboxId, JSON.stringify(emailIds))
 }
+
+/** Files deleted before `before`, oldest first, with their organization's bucket (null if it was never created). */
+export async function listPurgeable(db: D1Database, before: string, limit: number) {
+  const { results } = await db
+    .prepare(
+      `SELECT f.id, f.r2_key, o.r2_bucket AS bucket FROM files f JOIN organizations o ON o.id = f.organization_id
+       WHERE f.status = 'deleted' AND f.deleted_at < ? ORDER BY f.deleted_at LIMIT ?`,
+    )
+    .bind(before, limit)
+    .all<{ id: string; r2_key: string; bucket: string | null }>()
+  return results
+}
+
+/** Removes rows for good, once their R2 objects are gone. */
+export function removeMany(db: D1Database, ids: string[]): D1PreparedStatement {
+  return db.prepare('DELETE FROM files WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids))
+}

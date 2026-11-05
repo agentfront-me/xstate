@@ -35,6 +35,6 @@ export default {
   fetch: app.fetch,
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
   queue: (batch, env) => consume(batch, env),
-  // Hourly safety check in case webhooks were lost.
+  // Hourly: safety-net mail sync in case webhooks were lost, and purge of files deleted over 30 days ago.
   scheduled: (_controller, env, ctx) => ctx.waitUntil(hourly(env)),
 } satisfies ExportedHandler<Env, MailSyncJob>
