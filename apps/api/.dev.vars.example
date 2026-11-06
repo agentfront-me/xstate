@@ -30,3 +30,12 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 # Leave empty locally: it can create and delete any bucket in the account. Only production needs it.
 CLOUDFLARE_API_TOKEN=
+
+# One-click DNS setup (Domain Connect, docs/domain-connect/README.md). Off locally: .test domains have no DNS
+# provider to send you to. To try it against a real Cloudflare domain, set ENABLED=true and the private key.
+# The private key signs apply links; its public key is published as TXT at <DOMAIN_CONNECT_KEY_HOST>.xstate.io.
+# Make a pair with scripts/domain-connect-key.sh; production: wrangler secret put DOMAIN_CONNECT_PRIVATE_KEY
+DOMAIN_CONNECT_ENABLED=false
+DOMAIN_CONNECT_KEY_HOST=_dck1
+# PKCS#8 RSA private key, the base64 body on one line (no BEGIN/END lines).
+DOMAIN_CONNECT_PRIVATE_KEY=

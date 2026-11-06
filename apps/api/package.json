@@ -10,7 +10,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply xstate --remote",
     "mail:dev": "scripts/mail-dev.sh start",
     "mail:reset": "scripts/mail-dev.sh reset",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

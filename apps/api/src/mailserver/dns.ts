@@ -20,8 +20,8 @@ export type DnsRecord = {
 
 export type DnsProvider = { id: string; name: string }
 
-// Matched against the domain's NS hosts. Domain Connect is not offered yet: each provider has to onboard our
-// template first, so until then everyone gets the records table.
+// Matched against the domain's NS hosts, to tailor the verify step. One-click setup (Domain Connect) is discovered
+// separately from the domain's _domainconnect record: see domain-connect.ts.
 const PROVIDERS: { id: string; name: string; ns: RegExp }[] = [
   { id: 'cloudflare', name: 'Cloudflare', ns: /\.ns\.cloudflare\.com$/ },
   { id: 'godaddy', name: 'GoDaddy', ns: /\.domaincontrol\.com$/ },
@@ -99,6 +99,7 @@ function matches(record: Omit<DnsRecord, 'found'>, published: string): boolean {
     const value = joinTxt(published)
     // Any DMARC policy counts: the owner may already have one they prefer.
     if (record.purpose === 'DMARC') return value.startsWith('v=DMARC1')
+    if (record.purpose === 'SPF') return spfIncludes(value, record.value)
     return squash(value) === squash(record.value)
   }
   if (record.type === 'MX') return mxHost(published) === mxHost(record.value)
@@ -115,6 +116,26 @@ const LEGACY_MX_HOSTS: Record<string, string> = { 'mx.xstate.com': 'mx.xstate.io
 function mxHost(value: string): string {
   const [priority, host = ''] = hostname(value).split(/\s+/)
   return `${priority} ${LEGACY_MX_HOSTS[host] ?? host}`
+}
+
+/**
+ * Whether a published SPF record authorizes everything ours does. A record merged with the owner's other senders
+ * (`v=spf1 mx include:_spf.google.com ~all`, which Domain Connect's SPFM produces) counts as long as it has our
+ * mechanisms (`mx`); its `all` qualifier is the owner's choice.
+ */
+function spfIncludes(published: string, expected: string): boolean {
+  const terms = (spf: string) => squash(spf).split(' ')
+  const have = terms(published)
+  if (have[0] !== 'v=spf1') return false
+  return terms(expected)
+    .slice(1)
+    .filter((term) => !/^[-~?+]?all$/.test(term))
+    .every((term) => have.includes(term) || have.includes(`+${term}`))
+}
+
+/** The TXT values at a name, joined from their quoted strings; empty when there are none. */
+export async function resolveTxt(name: string): Promise<string[]> {
+  return ((await resolve(name, 'TXT')) ?? []).map(joinTxt)
 }
 
 /** The record data for a name and type, or null when the name doesn't exist (NXDOMAIN). */

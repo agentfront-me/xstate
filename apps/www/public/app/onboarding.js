@@ -182,7 +182,14 @@ async function copy(button, text) {
   try {
     await navigator.clipboard.writeText(text)
   } catch {
-    return
+    // Clipboard API blocked (permissions, embedded frames): fall back to a hidden textarea.
+    const area = Object.assign(document.createElement('textarea'), { value: text, readOnly: true })
+    area.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
+    document.body.append(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    area.remove()
+    if (!ok) return
   }
   const original = button.innerHTML
   button.innerHTML = icon('check', 14)
@@ -336,85 +343,68 @@ function showDomain() {
       <span class="input on-panel" id="domain-box">
         <input name="domain" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="yourbusiness.com"
           aria-label="Domain" aria-describedby="domain-help" value="${esc(state.domain?.name ?? '')}">
-        <span class="hi" id="domain-ok" hidden>${icon('circle-check')}</span>
       </span>
       ${help('domain-help')}
     </form>
-    <button class="btn btn-primary" id="continue" form="form" type="submit" disabled>Continue</button>
+    <button class="btn btn-primary" id="continue" form="form" type="submit">Continue</button>
     <a class="link" href="#" id="no-domain">I don't have a domain</a>
     ${help('no-domain-help')}`)
 
   const form = $('#form')
   const input = form.domain
   const box = $('#domain-box')
-  const ok = $('#domain-ok')
   const helpEl = $('#domain-help')
   const button = $('#continue')
-  let checked = null
-  let timer
-  let latest = 0
 
-  const set = ({ error = false, valid = false, message = '', kind = 'info' }) => {
-    box.classList.toggle('is-error', error)
-    ok.hidden = !valid
-    button.disabled = !valid
-    say(helpEl, message, kind)
+  const fail = (message) => {
+    box.classList.add('is-error')
+    say(helpEl, message, 'error')
+    input.focus()
   }
 
-  const check = async (name) => {
-    const ticket = ++latest
-    try {
-      const result = await api('GET', `/email/domain-check?name=${encodeURIComponent(name)}`)
-      if (ticket !== latest) return
-      checked = result
-      const ours = state.domain?.name === result.name
-      if (result.taken && !ours) {
-        set({ error: true, message: `${result.name} is already on xstate. If it's yours, sign in to that account.`, kind: 'error' })
-      } else if (!result.registered) {
-        set({ error: true, message: `We couldn't find ${result.name}. Check the spelling, or register it first.`, kind: 'error' })
-      } else if (result.provider) {
-        set({ valid: true, message: `Looks like your domain is on ${result.provider.name}. We'll show you what to add there next.`, kind: 'ok' })
-      } else set({ valid: true, message: "Found it. We'll show you the DNS records to add next.", kind: 'ok' })
-    } catch (err) {
-      if (ticket === latest) set({ error: true, message: err.message, kind: 'error' })
-    }
-  }
-
-  const update = ({ final = false } = {}) => {
-    clearTimeout(timer)
-    checked = null
-    latest++
-    const name = cleanDomain(input.value)
-    if (!name) return set({})
-    if (!DOMAIN_RE.test(name)) {
-      if (!final) return set({})
-      return set({ error: true, message: "That doesn't look like a web address. Try something like yourbusiness.com.", kind: 'error' })
-    }
-    set({})
-    timer = setTimeout(() => check(name), 350)
-  }
-
-  input.addEventListener('input', () => update())
-  input.addEventListener('blur', () => update({ final: true }))
-  if (input.value) update({ final: true })
-  else input.focus()
+  // Nothing is looked up while typing: editing only clears an earlier error.
+  input.addEventListener('input', () => {
+    box.classList.remove('is-error')
+    say(helpEl, '')
+  })
+  input.focus()
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
-    if (!checked || button.disabled) return update({ final: true })
+    if (button.disabled) return
+    const name = cleanDomain(input.value)
+    if (!name) return fail('Enter your domain, like yourbusiness.com.')
+    if (!DOMAIN_RE.test(name)) return fail("That doesn't look like a domain. Try something like yourbusiness.com.")
+    input.value = name
+    box.classList.remove('is-error')
+
+    const label = button.innerHTML
+    button.innerHTML = `<span class="spinner spinner-on-primary"></span>Checking ${esc(name)}…`
+    input.readOnly = true
+    say(helpEl, '')
     await busy(button, async () => {
       try {
-        if (state.domain?.name !== checked.name) {
+        const result = await api('GET', `/email/domain-check?name=${encodeURIComponent(name)}`)
+        const ours = state.domain?.name === result.name
+        if (result.taken && !ours) return fail(`${result.name} is already on xstate. If it's yours, sign in to that account.`)
+        if (!result.registered) return fail(`We couldn't find ${result.name}. Check the spelling, or register it first.`)
+        if (!ours) {
           // Changing the domain before any address uses it: swap the old one out.
           if (state.domain) await api('DELETE', `/email/domains/${state.domain.id}`)
           state.domain = null
-          const { domain } = await api('POST', `/email/orgs/${state.org.id}/domains`, { name: checked.name })
+          const { domain } = await api('POST', `/email/orgs/${state.org.id}/domains`, { name: result.name })
           state.domain = domain
         }
-        state.provider = checked.provider
+        state.provider = result.provider
+        setProgress({ provider: { domainId: state.domain.id, ...result.provider } })
         showVerify()
       } catch (err) {
-        set({ error: true, message: err.message, kind: 'error' })
+        fail(err.message)
+      } finally {
+        if (view.contains(button)) {
+          button.innerHTML = label
+          input.readOnly = false
+        }
       }
     })
   })
@@ -436,12 +426,43 @@ function stopPolling() {
 
 const NUMBERS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']
 
+/** One copyable line of a DNS record: a label, the text, and a copy button. Clicking the text copies too. */
+function field(label, text, key) {
+  return `
+    <div class="rec-field">
+      <span class="rec-label">${label}</span>
+      <button type="button" class="cell" data-copy="${key}" title="Copy ${label.toLowerCase()}">${esc(text)}</button>
+      <button type="button" class="copy" data-copy="${key}" aria-label="Copy ${label.toLowerCase()}">${icon('copy', 14)}</button>
+    </div>`
+}
+
+/**
+ * Shown when the domain's DNS is on Cloudflare: a link straight to the zone's DNS page, for adding the records by
+ * hand. One-click setup (Domain Connect), when the API offers it, goes above this in #connect.
+ */
+function cloudflarePanel(domain) {
+  const url = `https://dash.cloudflare.com/?to=/:account/${encodeURIComponent(domain)}/dns/records`
+  return `
+    <div class="panel">
+      <div class="panel-section">
+        <div class="hi" id="manual-title">Your DNS is on Cloudflare</div>
+        <div class="small muted">Open your DNS settings, choose <span class="hi">Add record</span> for each record below,
+          and paste in its name and value. Leave CNAME records as <span class="hi">DNS only</span> (grey cloud).</div>
+        <a class="btn" href="${url}" target="_blank" rel="noopener">${icon('external-link', 14)}Open Cloudflare DNS</a>
+      </div>
+    </div>`
+}
+
 function showVerify() {
   const domain = domainName()
-  const where = state.provider ? state.provider.name : 'your domain provider'
+  const saved = progress().provider
+  const provider = state.provider ?? (saved?.domainId === state.domain.id && saved.name ? saved : null)
+  const where = provider ? provider.name : 'your domain provider'
   render('3 of 5', `
     ${back()}
     <div class="head"><h1 id="title">Verify your domain</h1><p id="sub">Checking ${esc(domain)}…</p></div>
+    <div class="panel" id="connect" hidden></div>
+    ${provider?.id === 'cloudflare' ? cloudflarePanel(domain) : ''}
     <div class="records" id="records" hidden></div>
     <a class="link" href="#" id="zone" hidden>Copy every record as a zone file</a>
     <div class="status" id="status" role="status"><span class="spinner"></span><span>Looking up your DNS…</span></div>
@@ -464,20 +485,21 @@ function showVerify() {
     const table = $('#records')
     table.hidden = false
     $('#zone').hidden = done()
-    table.innerHTML =
-      `<div class="rec rec-head"><span></span><span>Type</span><span>Name</span><span>Value</span><span></span></div>` +
-      records
-        .map(
-          (r, i) => `
-          <div class="rec">
-            <span class="${r.found ? 'ok' : 'wait'}" title="${r.found ? 'Found' : 'Not found yet'}">${icon(r.found ? 'circle-check' : 'circle-dashed')}</span>
-            <span class="type">${esc(r.type)} <span class="dim">${esc(r.purpose)}</span></span>
-            <button type="button" class="cell" data-copy-name="${i}" title="Copy name: ${esc(r.name)}">${esc(r.name)}</button>
-            <button type="button" class="cell" data-copy-value="${i}" title="Copy value">${esc(r.value)}</button>
-            <button type="button" class="copy" data-copy-value="${i}" aria-label="Copy value">${icon('copy', 14)}</button>
-          </div>`,
-        )
-        .join('')
+    table.innerHTML = records
+      .map(
+        (r, i) => `
+        <div class="rec">
+          <div class="rec-top">
+            <span class="${r.found ? 'ok' : 'wait'}" title="${r.found ? 'Found' : 'Not found yet'}">${icon(r.found ? 'circle-check' : 'circle-dashed', 14)}</span>
+            <span class="type">${esc(r.type)}</span>
+            <span class="dim">${esc(r.purpose)}${r.required ? '' : ' · recommended'}</span>
+            <span class="rec-state">${r.found ? 'Found' : 'Not found yet'}</span>
+          </div>
+          ${field('Name', r.name, `name-${i}`)}
+          ${field('Value', r.value, `value-${i}`)}
+        </div>`,
+      )
+      .join('')
 
     const status = $('#status')
     status.classList.toggle('is-done', done())
@@ -516,12 +538,13 @@ function showVerify() {
   }
 
   $('#records').addEventListener('click', (event) => {
-    const target = event.target.closest('[data-copy-name], [data-copy-value]')
+    const target = event.target.closest('[data-copy]')
     if (!target) return
-    const record = records[Number(target.dataset.copyName ?? target.dataset.copyValue)]
-    const text = target.dataset.copyName !== undefined ? record.name : record.value
-    if (target.classList.contains('copy')) copy(target, text)
-    else navigator.clipboard?.writeText(text).catch(() => {})
+    const [part, i] = target.dataset.copy.split('-')
+    const record = records[Number(i)]
+    if (!record) return
+    const button = target.closest('.rec-field').querySelector('.copy')
+    copy(button, part === 'name' ? record.name : record.value)
   })
 
   $('#zone').addEventListener('click', async (event) => {
@@ -549,6 +572,51 @@ function showVerify() {
     if (!done() && view.contains($('#status'))) pollTimer = setTimeout(poll, POLL_MS)
   }
   poll()
+  showConnect(provider)
+}
+
+/**
+ * Domain Connect: when the domain's DNS provider supports our template, a button that sends the person there to
+ * approve every record in one click. The API returns no link until the template is onboarded (or for providers
+ * without Domain Connect), and then nothing changes: the records table is the way. On the web the provider sends
+ * the browser back to /signup, which resumes here; the desktop app opens the provider in the browser instead and
+ * keeps polling.
+ */
+async function showConnect(provider) {
+  const domainId = state.domain.id
+  const returned = connectReturn?.state === domainId ? connectReturn : null
+  connectReturn = null
+  if (state.domain.status === 'verified') return
+
+  const web = /^https?:$/.test(location.protocol)
+  const query = web ? `?redirectUri=${encodeURIComponent(`${location.origin}/signup`)}` : ''
+  let result
+  try {
+    result = await api('GET', `/email/domains/${domainId}/domain-connect${query}`)
+  } catch {
+    return // One-click setup is optional; the records below still work.
+  }
+  const slot = $('#connect')
+  if (!result?.applyUrl || !slot || state.domain?.id !== domainId || state.domain.status === 'verified') return
+
+  const name = result.provider ?? provider?.name ?? 'your DNS provider'
+  const note = !returned
+    ? `Sign in to ${name} and approve. It adds every record below for you.`
+    : returned.error
+      ? returned.error === 'access_denied'
+        ? `${name} didn't add the records. Try again, or add them yourself below.`
+        : `${name} couldn't add the records (${returned.error}). Try again, or add them yourself below.`
+      : `${name} is adding your records. We'll confirm as soon as they show up in DNS.`
+  slot.innerHTML = `
+    <div class="panel-section">
+      <div class="hi">Set up in one click</div>
+      <div class="small muted">${esc(note)}</div>
+      <a class="btn ${returned && !returned.error ? '' : 'btn-primary'}" href="${esc(result.applyUrl)}"
+        ${web ? '' : 'target="_blank" rel="noopener"'}>${esc(`Connect with ${name}`)}</a>
+    </div>`
+  slot.hidden = false
+  const manual = $('#manual-title')
+  if (manual) manual.textContent = 'Or add the records yourself'
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -806,7 +874,20 @@ function showDone() {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * Back from Domain Connect: the DNS provider redirects to /signup?state=<domain id>, with error=… if it failed or
+ * the person cancelled. Remember it for the verify step and tidy the address bar.
+ */
+let connectReturn = null
+function readConnectReturn() {
+  const params = new URLSearchParams(location.search)
+  if (!params.has('state')) return
+  connectReturn = { state: params.get('state'), error: params.get('error') }
+  history.replaceState(null, '', location.pathname)
+}
+
 async function start() {
+  readConnectReturn()
   const onLogin = location.pathname.startsWith('/login')
   if (!session()) return onLogin ? showLogin() : showAccount()
   try {

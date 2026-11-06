@@ -26,7 +26,13 @@
     "SES_MODE": "live",
     // Outside production only: one shared bucket for every organization instead of a bucket each, so local dev
     // needs no bucket-creating token (an R2 token scoped to this bucket is enough). Empty in production.
-    "R2_BUCKET": ""
+    "R2_BUCKET": "",
+    // One-click DNS setup (Domain Connect, docs/domain-connect/). Keep "false" until the template is merged into
+    // github.com/Domain-Connect/Templates and Cloudflare has onboarded it; until then onboarding shows only the
+    // records table. Apply links are signed with DOMAIN_CONNECT_PRIVATE_KEY, whose public key is published as TXT
+    // at <DOMAIN_CONNECT_KEY_HOST>.xstate.io (the template's syncPubKeyDomain).
+    "DOMAIN_CONNECT_ENABLED": "false",
+    "DOMAIN_CONNECT_KEY_HOST": "_dck1"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -50,6 +56,8 @@
   // AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY: IAM user that manages SES identities (not sending).
   // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY: an R2 API token's S3 keys, Object Read & Write on all buckets.
   // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
+  // DOMAIN_CONNECT_PRIVATE_KEY (optional until DOMAIN_CONNECT_ENABLED is "true"): RSA key that signs Domain
+  // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {
     "required": [
       "STALWART_API_KEY",

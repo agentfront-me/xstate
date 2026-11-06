@@ -3,7 +3,8 @@ import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
-import { checkRecords, essentialRecords, isTestDomain, lookupDomain, type DnsProvider, type DnsRecord } from './dns'
+import { checkRecords, essentialRecords, isTestDomain, lookupDomain, resolveTxt, type DnsProvider, type DnsRecord } from './dns'
+import * as domainConnect from './domain-connect'
 import * as ses from './ses'
 import * as stalwart from './stalwart/domains'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
@@ -127,6 +128,60 @@ export async function verifyDomain(
     return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
   }
   return { domain: toDomain(domain), records }
+}
+
+/**
+ * A signed Domain Connect link that adds the domain's mail records at its DNS provider in one click, or null when
+ * one-click setup isn't available: turned off (DOMAIN_CONNECT_ENABLED), a .test domain, SES's DKIM tokens not
+ * issued yet, or the provider doesn't support Domain Connect or hasn't onboarded our template.
+ *
+ * `redirectUri` is where the provider sends the browser back to (with `state` set to the domain id, and `error` if
+ * it failed or was cancelled). It must be on one of APP_ORIGINS; anything else is dropped, because a signed link
+ * would otherwise let anyone use our signature for an open redirect.
+ */
+export async function domainConnectUrl(
+  env: EmailEnv & domainConnect.DomainConnectEnv & Pick<Env, 'APP_ORIGINS'>,
+  actor: Actor,
+  domainId: string,
+  redirectUri?: string,
+): Promise<{ applyUrl: string | null; provider: string | null }> {
+  const { domain } = await domainContext(env, actor, domainId, 'read')
+  const none = { applyUrl: null, provider: null }
+  if (!domainConnect.domainConnectEnabled(env) || isTestDomain(env, domain.name)) return none
+  const tokens = domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : []
+  if (tokens.length !== 3) return none
+
+  try {
+    const [txt] = await resolveTxt(`_domainconnect.${domain.name}`)
+    if (!txt) return none
+    const settings = await domainConnect.fetchSettings(txt, domain.name)
+    if (!settings?.urlSyncUX || !(await domainConnect.supportsTemplate(settings))) return none
+    const redirect = redirectUri && allowedRedirect(env, redirectUri) ? redirectUri : undefined
+    const applyUrl = await domainConnect.buildApplyUrl({
+      urlSyncUX: settings.urlSyncUX,
+      domain: domain.name,
+      variables: { dkim1: tokens[0]!, dkim2: tokens[1]!, dkim3: tokens[2]! },
+      redirectUri: redirect,
+      state: redirect && domain.id,
+      keyHost: env.DOMAIN_CONNECT_KEY_HOST!,
+      privateKey: env.DOMAIN_CONNECT_PRIVATE_KEY!,
+    })
+    return { applyUrl, provider: settings.providerDisplayName ?? settings.providerName ?? null }
+  } catch (err) {
+    // Discovery is a convenience: if the provider is unreachable, the records table still works.
+    console.error(`domain connect: ${domain.name} failed`, err)
+    return none
+  }
+}
+
+/** An http(s) URL whose origin is one of APP_ORIGINS. */
+function allowedRedirect(env: Pick<Env, 'APP_ORIGINS'>, uri: string): boolean {
+  try {
+    const url = new URL(uri)
+    return /^https?:$/.test(url.protocol) && env.APP_ORIGINS.split(',').includes(url.origin)
+  } catch {
+    return false
+  }
 }
 
 /** Turns mail for a domain on or off without deleting anything. */

@@ -68,6 +68,19 @@ export const emailVerifyDomain = defineOperation({
   run: ({ env, actor }, input) => mailserver.verifyDomain(env, actor, input.domainId),
 })
 
+export const emailDomainConnectUrl = defineOperation({
+  name: 'email_domain_connect_url',
+  description:
+    "Get a one-click setup link (Domain Connect) that adds the domain's mail records at its DNS provider, e.g. " +
+    'Cloudflare, after the owner signs in there and approves. Returns { applyUrl, provider }, with applyUrl null ' +
+    'when the provider does not support it yet; then the records from email_verify_domain must be added by hand. ' +
+    'redirectUri (optional, must be on an xstate app origin) is where the provider sends the browser back to.',
+  input: z.object({ domainId: id, redirectUri: z.string().url().max(2048).optional() }),
+  http: { method: 'GET', path: '/email/domains/:domainId/domain-connect' },
+  mcp: { readOnly: true },
+  run: ({ env, actor }, input) => mailserver.domainConnectUrl(env, actor, input.domainId, input.redirectUri),
+})
+
 export const emailSetDomainEnabled = defineOperation({
   name: 'email_set_domain_enabled',
   description: 'Turn mail for a domain on or off. Turning it off stops delivery but deletes nothing.',
@@ -349,6 +362,7 @@ export const emailOperations = [
   emailGetDomain,
   emailGetDnsRecords,
   emailVerifyDomain,
+  emailDomainConnectUrl,
   emailSetDomainEnabled,
   emailRemoveDomain,
   emailCreateMailbox,

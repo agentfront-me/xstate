@@ -1,5 +1,7 @@
 {
   "extends": "@xstate/tsconfig/base.json",
   "compilerOptions": { "types": ["./worker-configuration.d.ts"] },
-  "include": ["src", "worker-configuration.d.ts"]
+  "include": ["src", "worker-configuration.d.ts"],
+  // Unit tests run under Node (pnpm test), which has its own types.
+  "exclude": ["src/**/*.test.ts"]
 }

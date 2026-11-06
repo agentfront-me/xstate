@@ -11,6 +11,7 @@ export { addAlias, removeAlias } from './aliases'
 export {
   addDomain,
   checkDomain,
+  domainConnectUrl,
   getDomain,
   getDomainDnsRecords,
   listDomains,

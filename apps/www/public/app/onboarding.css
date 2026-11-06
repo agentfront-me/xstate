@@ -61,7 +61,7 @@ main { flex: 1; padding: 0 48px; }
 .btn-primary:hover { background: var(--primary); opacity: 0.88; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .btn-primary:disabled:hover { opacity: 0.4; }
-.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"], .btn[aria-busy="true"]:hover { cursor: progress; opacity: 1; }
 .google { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid currentColor; display: flex; align-items: center; justify-content: center; font-size: 10px; }
 .or { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-dim); }
 .or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -98,22 +98,21 @@ main { flex: 1; padding: 0 48px; }
 
 /* DNS records */
 .records { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
-.rec { display: grid; grid-template-columns: 22px 92px 104px minmax(0, 1fr) 24px; gap: 10px; align-items: center; padding: 10px 12px; font-size: 12px; font-family: var(--mono); }
+.rec { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .rec + .rec { border-top: 1px solid var(--border); }
-.rec-head { padding: 8px 12px; font-family: inherit; color: var(--text-dim); border-bottom: 1px solid var(--border); }
-.rec-head + .rec { border-top: 0; }
-.rec .type { color: var(--text-hi); white-space: nowrap; }
-.rec .cell { color: var(--text-toned); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; font-family: var(--mono); font-size: 12px; }
-.rec .cell:hover { color: var(--text-hi); }
-.rec .copy { color: var(--text-dim); justify-self: end; }
-.rec .copy:hover { color: var(--text-hi); }
+.rec-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.rec-top .type { color: var(--text-hi); font-family: var(--mono); }
+.rec-state { margin-left: auto; color: var(--text-dim); }
 .rec .ok { color: var(--text-hi); }
 .rec .wait { color: var(--text-dim); }
-@media (max-width: 640px) {
-  .rec { grid-template-columns: 18px 72px 80px minmax(0, 1fr) 18px; gap: 8px; }
-}
+.rec-field { display: grid; grid-template-columns: 44px minmax(0, 1fr) 24px; align-items: center; gap: 8px; height: 30px; padding: 0 4px 0 8px; border-radius: 6px; background: var(--bg-muted); }
+.rec-label { font-size: 11px; color: var(--text-dim); }
+.rec .cell { color: var(--text-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; font-family: var(--mono); font-size: 12px; height: 100%; }
+.rec .copy { color: var(--text-dim); height: 24px; width: 24px; display: flex; align-items: center; justify-content: center; border-radius: 5px; }
+.rec .copy:hover { color: var(--text-hi); background: var(--panel); }
 .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
 .status.is-done { color: var(--text-hi); }
+.spinner.spinner-on-primary { border-color: color-mix(in srgb, var(--on-primary) 35%, transparent); border-top-color: var(--on-primary); }
 .spinner { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--border-strong); border-top-color: var(--text-hi); animation: spin 0.9s linear infinite; flex-shrink: 0; }
 
 /* Agents */
