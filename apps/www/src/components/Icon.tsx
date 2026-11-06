@@ -1,4 +1,4 @@
-// Lucide icons (ISC licence), inlined so the sign-up pages and dashboard load nothing from other origins.
+// Lucide icons (ISC licence), inlined so the app and sign-in pages load nothing from other origins.
 
 const BODIES = {
   'chevron-left': '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 18l-6-6l6-6"/>',
@@ -53,9 +53,13 @@ const BODIES = {
   'download': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 15V3m9 12v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></g>',
   'info': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></g>',
   forward: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m15 17 5-5-5-5"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></g>',
-}
+} as const satisfies Record<string, string>
 
-/** An icon as an SVG string, sized in px. */
-export function icon(name, size = 15) {
-  return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${BODIES[name]}</svg>`
+export type IconName = keyof typeof BODIES
+
+/** A Lucide icon at `size` px. */
+export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
+  return (
+    <svg className="icon" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" dangerouslySetInnerHTML={{ __html: BODIES[name] }} />
+  )
 }

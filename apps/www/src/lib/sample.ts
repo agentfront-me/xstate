@@ -2,24 +2,26 @@
 // integrations. Demo mode (/app/?demo, no sign-in) also uses the sample account, domains and mailboxes.
 // Replace each export with an API call as the endpoints land.
 
+import type { DnsRecord, Domain, Draft, Mailbox, Org, User } from './types'
+
 /** A time today, or `daysAgo` days back, at hh:mm local time. */
-function at(daysAgo, hh, mm) {
+function at(daysAgo: number, hh: number, mm: number): string {
   const d = new Date()
   d.setDate(d.getDate() - daysAgo)
   d.setHours(hh, mm, 0, 0)
   return d.toISOString()
 }
 
-export const sampleUser = { id: 'usr_demo', email: 'asif@xstate.com', name: 'Asif Khan' }
-export const sampleOrg = { id: 'org_demo', name: 'xstate', role: 'owner', plan: 'Pro' }
+export const sampleUser: User = { id: 'usr_demo', email: 'asif@xstate.com', name: 'Asif Khan' }
+export const sampleOrg: Org = { id: 'org_demo', name: 'xstate', role: 'owner', plan: 'Pro' }
 
-export const sampleDomains = [
+export const sampleDomains: Domain[] = [
   { id: 'dom_1', name: 'xstate.com', status: 'verified', enabled: true },
   { id: 'dom_2', name: 'ninjademo.store', status: 'verified', enabled: true },
   { id: 'dom_3', name: 'acme-supply.co', status: 'pending', enabled: true },
 ]
 
-export const sampleMailboxes = [
+export const sampleMailboxes: Mailbox[] = [
   { id: 'mbx_1', kind: 'shared', address: 'support@xstate.com', domainId: 'dom_1' },
   { id: 'mbx_2', kind: 'shared', address: 'sales@xstate.com', domainId: 'dom_1' },
   { id: 'mbx_3', kind: 'shared', address: 'hello@ninjademo.store', domainId: 'dom_2' },
@@ -28,13 +30,26 @@ export const sampleMailboxes = [
 ]
 
 /** DNS records shown under a pending domain in demo mode (the live app gets them from the verify call). */
-export const sampleRecords = [
+export const sampleRecords: DnsRecord[] = [
   { type: 'MX', name: '@', value: '10 mx.xstate.io', found: false, required: true },
   { type: 'TXT', name: '@', value: 'v=spf1 include:mail.xstate.com ~all', found: false, required: true },
   { type: 'CNAME', name: 'hn._domainkey', value: 'dkim.xstate.com', found: false, required: true },
 ]
 
-export function sampleMessages() {
+export type SampleMessage = {
+  id: string
+  from: { name: string; email: string }
+  to: string
+  subject: string
+  body: string[]
+  time: string
+  folder: 'inbox' | 'sent' | 'spam'
+  pinned?: boolean
+  unread?: boolean
+  draft?: Draft
+}
+
+export function sampleMessages(): SampleMessage[] {
   return [
     {
       id: 'msg_1',
@@ -141,14 +156,29 @@ export function sampleMessages() {
   ]
 }
 
-export const sampleMembers = [
+export type Member = { id: string; name: string | null; email: string; role: 'owner' | 'admin' | 'member'; seen?: string; invited?: boolean }
+export type Secret = { name: string; usedBy: string; updated: string }
+export type Usage = { label: string; used: number; total: number; format: (used: number, total: number) => string }
+export type Billing = {
+  plan: string
+  price: string
+  renews: string
+  renewsShort: string
+  seats: number
+  usage: Usage[]
+  card: { brand: string; last4: string; expires: string; email: string }
+  invoices: { date: string; amount: string }[]
+}
+export type Integration = { id: string; name: string; glyph: string; connected: boolean; detail?: string; about: string }
+
+export const sampleMembers: Member[] = [
   { id: 'mem_2', name: 'Maya Chen', email: 'maya@xstate.com', role: 'admin', seen: 'Active 2 h ago' },
   { id: 'mem_3', name: 'Sam Ortiz', email: 'sam@ninjademo.store', role: 'member', seen: 'Active yesterday' },
   { id: 'mem_4', name: 'Priya Nair', email: 'priya@xstate.com', role: 'member', seen: 'Active Oct 31' },
   { id: 'mem_5', name: null, email: 'jordan@acme-supply.co', role: 'member', invited: true },
 ]
 
-export const sampleSecrets = [
+export const sampleSecrets: Secret[] = [
   { name: 'SHOPIFY_ADMIN_TOKEN', usedBy: 'Support Ninja, Order Tracker', updated: 'Oct 12' },
   { name: 'STRIPE_SECRET_KEY', usedBy: 'Support Ninja', updated: 'Sep 30' },
   { name: 'SHIPPO_API_KEY', usedBy: 'Order Tracker', updated: 'Sep 18' },
@@ -156,16 +186,16 @@ export const sampleSecrets = [
   { name: 'ZENDESK_API_TOKEN', usedBy: '', updated: 'Aug 2' },
 ]
 
-export const sampleBilling = {
+export const sampleBilling: Billing = {
   plan: 'Pro plan',
   price: '$99 / month',
   renews: 'December 1, 2026',
   renewsShort: 'Dec 1',
   seats: 5,
   usage: [
-    { label: 'AI tokens', used: 3.2, total: 5, unit: 'M', format: (u, t) => `${u}M of ${t}M` },
-    { label: 'Conversations', used: 7412, total: 10000, format: (u, t) => `${u.toLocaleString('en-US')} of ${t.toLocaleString('en-US')}` },
-    { label: 'Storage', used: 42.6, total: 100, format: (u, t) => `${u} GB of ${t} GB` },
+    { label: 'AI tokens', used: 3.2, total: 5, format: (u: number, t: number) => `${u}M of ${t}M` },
+    { label: 'Conversations', used: 7412, total: 10000, format: (u: number, t: number) => `${u.toLocaleString('en-US')} of ${t.toLocaleString('en-US')}` },
+    { label: 'Storage', used: 42.6, total: 100, format: (u: number, t: number) => `${u} GB of ${t} GB` },
   ],
   card: { brand: 'Visa', last4: '4242', expires: '08/2028', email: 'billing@xstate.com' },
   invoices: [
@@ -176,7 +206,7 @@ export const sampleBilling = {
   ],
 }
 
-export const sampleIntegrations = [
+export const sampleIntegrations: Integration[] = [
   { id: 'shopify', name: 'Shopify', glyph: 'S', connected: true, detail: 'ninjademo.store', about: 'Orders, customers and products' },
   { id: 'whatsapp', name: 'WhatsApp Business', glyph: 'W', connected: true, detail: '+1 415 555 0142', about: 'Customer chats' },
   { id: 'instagram', name: 'Instagram', glyph: 'I', connected: false, about: 'DMs and comment replies' },

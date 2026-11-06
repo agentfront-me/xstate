@@ -1,4 +1,4 @@
-// Exposes `window.xstateDesktop` to the dashboard (see apps/www/public/app/core.js). Only these calls cross into
+// Exposes `window.xstateDesktop` to the dashboard (see apps/www/src/lib/core.ts). Only these calls cross into
 // the main process; the page gets no Node access.
 
 const { contextBridge, ipcRenderer } = require('electron')

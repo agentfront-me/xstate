@@ -18,7 +18,7 @@ onboarding looks the same as it does today.
 | API operation | `email_domain_connect_url`, `GET /v1/email/domains/:domainId/domain-connect?redirectUri=…` → `{ applyUrl, provider }` |
 | Tests (signature checked against OpenSSL) | `pnpm --filter @xstate/api test` |
 | Key pair generator | [`apps/api/scripts/domain-connect-key.sh`](../../apps/api/scripts/domain-connect-key.sh) |
-| Onboarding button and return handling | `showConnect` and `readConnectReturn` in [`apps/www/public/app/onboarding.js`](../../apps/www/public/app/onboarding.js) |
+| Onboarding button and return handling | [`apps/www/src/onboarding/VerifyStep.tsx`](../../apps/www/src/onboarding/VerifyStep.tsx) and `state.ts` |
 | Switch | `DOMAIN_CONNECT_ENABLED` in [`apps/api/wrangler.jsonc`](../../apps/api/wrangler.jsonc) (now `"false"`) |
 
 The template sets:

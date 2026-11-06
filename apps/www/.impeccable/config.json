@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/styles/dashboard.css"
+        ],
+        "createdAt": "2026-11-06T07:29:52.090Z",
+        "reason": "Claude decided: .message-text.quoted is the standard email quoted-reply rule (2px neutral grey border, same as blockquote in mail clients), not a colored card accent"
+      }
+    ]
+  }
+}

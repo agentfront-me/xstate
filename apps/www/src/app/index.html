@@ -12,13 +12,9 @@
     if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
   } catch (e) {}
 </script>
-<link rel="stylesheet" href="/app/dashboard.css">
-<script type="module" src="/app/dashboard.js"></script>
+<script type="module" src="./main.tsx"></script>
 </head>
 <body>
-<div class="app" id="app">
-  <aside class="rail" id="rail" aria-label="Main"></aside>
-  <main class="main" id="main"><div class="loading"><span class="spinner"></span></div></main>
-</div>
+<div id="root"></div>
 </body>
 </html>

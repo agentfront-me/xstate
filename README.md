@@ -7,8 +7,8 @@ Free business email with agents. A pnpm + Turborepo monorepo of Cloudflare Worke
 | Path | Package | What it is |
 | --- | --- | --- |
 | `apps/api` | `@xstate/api` | Hono Worker: the HTTP API. |
-| `apps/www` | `@xstate/www` | Static site at xstate.com, served as Worker assets: marketing, sign-up, and the dashboard at `/app/`. |
-| `apps/desktop` | `@xstate/desktop` | Electron app that wraps the dashboard (bundles `apps/www/public`, served from `app://xstate`). |
+| `apps/www` | `@xstate/www` | xstate.com, served as Worker assets: the marketing site (`public/`), and the React dashboard at `/app/` and sign-in pages (`src/`, built with Vite). |
+| `apps/desktop` | `@xstate/desktop` | Electron app that wraps the dashboard (bundles `apps/www/dist`, served from `app://xstate`). |
 | `packages/` | | Shared libraries (`@xstate/<name>`), added when needed. |
 | `tooling/tsconfig` | `@xstate/tsconfig` | Shared TypeScript base config. |
 | `docs/` | | Product docs and notes. |
@@ -18,18 +18,20 @@ Free business email with agents. A pnpm + Turborepo monorepo of Cloudflare Worke
 ```bash
 pnpm install
 pnpm --filter @xstate/api dev    # http://localhost:8788/health
-pnpm --filter @xstate/www dev    # http://localhost:8787
+pnpm --filter @xstate/www dev    # http://localhost:8787 (Vite, hot reload)
 ```
+
+`pnpm --filter @xstate/www preview` builds `dist/` and serves it with Wrangler, the way Cloudflare does.
 
 Also in `.claude/launch.json` as `api` and `www`. Copy `apps/api/.dev.vars.example` to `.dev.vars` for local secrets.
 
 The dashboard is at http://localhost:8787/app/ once you are signed in. `/app/?demo` shows it with sample data, no
 sign-in needed. Messages, secrets, billing, integrations and other members are sample data until their APIs exist
-(see `apps/www/public/app/sample.js`).
+(see `apps/www/src/lib/sample.ts`).
 
 ```bash
 pnpm --filter @xstate/desktop dev    # desktop app against the www dev server
-pnpm --filter @xstate/desktop start  # desktop app from the bundled files, calling api.xstate.com
+pnpm --filter @xstate/desktop start  # desktop app from a fresh build of apps/www/dist, calling api.xstate.com
 pnpm --filter @xstate/desktop dist   # installers in apps/desktop/dist (dmg/zip, nsis, AppImage)
 ```
 
