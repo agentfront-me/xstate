@@ -1,4 +1,4 @@
-// The dashboard (/app/) and the sign-in pages (/login/, /signup/) are React, built by Vite from src/. Everything
+// The dashboard (/app/), the sign-in pages (/login/, /signup/) and public file links (/s/) are React, built by Vite from src/. Everything
 // in public/ (the marketing site, brand files) is copied as is. The output in dist/ is what Cloudflare serves
 // (wrangler.jsonc) and what the desktop app bundles (apps/desktop, resources/web).
 //
@@ -54,6 +54,8 @@ export default defineConfig({
         app: path.join(src, 'app/index.html'),
         login: path.join(src, 'login/index.html'),
         signup: path.join(src, 'signup/index.html'),
+        // Public links to Storage files (xstate.com/s/#token).
+        share: path.join(src, 's/index.html'),
       },
     },
   },

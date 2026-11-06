@@ -4,6 +4,7 @@ import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
 import { requireAuth } from './auth/middleware'
+import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
 import type { AppEnv } from './http/types'
@@ -25,8 +26,10 @@ v1.use('*', (c, next) =>
     maxAge: 600,
   })(c, next),
 )
-// Attachment uploads take the file itself as the body, not JSON, so they get their own route.
+// Uploads and saved file contents take the file itself as the body, not JSON, so they get their own routes.
 v1.post('/email/mailboxes/:mailboxId/uploads', requireAuth, handleAttachmentUpload)
+v1.post('/storage/orgs/:organizationId/files', requireAuth, handleStorageUpload)
+v1.put('/storage/items/:itemId/content', requireAuth, handleStorageSave)
 mountOperations(v1, operations)
 app.route('/v1', v1)
 

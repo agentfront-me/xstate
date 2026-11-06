@@ -145,7 +145,11 @@ function Rail() {
             className="nav-item"
             title={p.label}
             aria-current={page === p.id ? 'page' : undefined}
-            onClick={() => void navigate({ to: p.id === 'mail' ? '/mail' : '/$page', params: { page: p.id } })}
+            onClick={() =>
+              void (p.id === 'mail' || p.id === 'storage'
+                ? navigate({ to: `/${p.id}` })
+                : navigate({ to: '/$page', params: { page: p.id } }))
+            }
           >
             <Icon name={p.icon} size={16} />
             <span className="label">{p.label}</span>

@@ -83,7 +83,11 @@ export class ApiError extends Error {
   }
 }
 
-type ApiOptions = { file?: File }
+/** `anonymous` leaves the session off, for public pages that shouldn't send it. */
+type ApiOptions = { file?: File; anonymous?: boolean }
+
+/** The full URL of an API path, for links the browser follows itself (downloads). */
+export const apiUrl = (path: string) => API + path
 
 /** Calls the API and returns its JSON. `file` sends the file itself as the body (attachment uploads). */
 export async function api<T = unknown>(method: string, path: string, body?: unknown, options: ApiOptions = {}): Promise<T> {
@@ -93,12 +97,12 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
 }
 
 /** Calls the API and returns the response body as a Blob (downloads). */
-export async function apiBlob(path: string): Promise<Blob> {
-  return (await request('GET', path)).blob()
+export async function apiBlob(path: string, options: ApiOptions = {}): Promise<Blob> {
+  return (await request('GET', path, undefined, options)).blob()
 }
 
-async function request(method: string, path: string, body?: unknown, { file }: ApiOptions = {}): Promise<Response> {
-  const token = session()?.token
+async function request(method: string, path: string, body?: unknown, { file, anonymous }: ApiOptions = {}): Promise<Response> {
+  const token = anonymous ? undefined : session()?.token
   let res: Response
   try {
     res = await fetch(API + path, {

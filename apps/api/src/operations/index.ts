@@ -3,5 +3,6 @@
 import { authOperations } from './auth'
 import type { AnyOperation } from './define'
 import { emailOperations } from './email'
+import { storageOperations } from './storage'
 
-export const operations: readonly AnyOperation[] = [...authOperations, ...emailOperations]
+export const operations: readonly AnyOperation[] = [...authOperations, ...emailOperations, ...storageOperations]

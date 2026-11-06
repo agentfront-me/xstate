@@ -69,6 +69,19 @@ export async function headObject(env: R2Env, bucket: string, key: string) {
   return { size: Number(res.headers.get('Content-Length') ?? 0), contentType: res.headers.get('Content-Type') ?? '' }
 }
 
+/**
+ * Copies an object inside R2, without the bytes passing through the Worker. Returns false if the source is missing.
+ * Copies within one bucket only (the organization's).
+ */
+export async function copyObject(env: R2Env, bucket: string, fromKey: string, toKey: string): Promise<boolean> {
+  const source = `/${bucket}/${fromKey.split('/').map(encodeURIComponent).join('/')}`
+  const res = await send(env, objectUrl(env, bucket, toKey), {
+    method: 'PUT',
+    headers: { 'x-amz-copy-source': source, 'x-amz-metadata-directive': 'COPY' },
+  })
+  return res.status !== 404
+}
+
 /** Deletes an object. Deleting one that doesn't exist is fine. */
 export async function deleteObject(env: R2Env, bucket: string, key: string): Promise<void> {
   await send(env, objectUrl(env, bucket, key), { method: 'DELETE' })
