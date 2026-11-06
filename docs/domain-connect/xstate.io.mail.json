@@ -4,7 +4,7 @@
     "serviceId": "mail",
     "serviceName": "xstate Mail",
     "version": 1,
-    "logoUrl": "https://xstate.com/favicon.svg",
+    "logoUrl": "https://xstate.com/brand/logo.svg",
     "description": "Sets up a domain for xstate business email: MX to mx.xstate.io, SPF, the three Amazon SES Easy DKIM CNAMEs (outbound mail is relayed and signed by SES) and a DMARC policy.",
     "variableDescription": "dkim1, dkim2, dkim3: the domain's three Amazon SES Easy DKIM tokens (e.g. 4pjxbc5l2fp7qkx6zkfgmdgsi3jq2rrd). Each becomes <token>._domainkey CNAME <token>.dkim.amazonses.com.",
     "syncBlock": false,

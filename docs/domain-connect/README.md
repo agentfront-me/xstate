@@ -77,12 +77,11 @@ Back up that key file somewhere safe, such as a password manager. To rotate, run
 `apps/api/scripts/domain-connect-key.sh _dck2`, publish `_dck2`, put the new secret, then change
 `DOMAIN_CONNECT_KEY_HOST`.
 
-### 2. Get an SVG logo ready
+### 2. Publish the SVG logo
 
-The template's `logoUrl` is `https://xstate.com/favicon.svg`. That file draws "x/s" with `<text>` in a system font,
-so it can look different on Cloudflare's consent page. Cloudflare asks for an SVG logo. Export one with the text
-converted to outlines, publish it (for example at `https://xstate.com/logo.svg`), and update `logoUrl` before you
-open the PR.
+The template's `logoUrl` is `https://xstate.com/brand/logo.svg`: the "x/s" mark on the dark rounded square, with
+the letters as outlines (Inter Regular), so it looks the same on Cloudflare's approval page everywhere. Deploy the
+website, then check that the URL loads before you open the PR.
 
 ### 3. Open the PR to the Templates repo
 
@@ -99,7 +98,7 @@ Send this to **domain-connect@cloudflare.com** once the PR is open (merged is be
 - **Template link:** the PR, or the merged file at
   `https://github.com/Domain-Connect/Templates/blob/master/xstate.io.mail.json`
 - **Public key FQDN:** `_dck1.xstate.io` (`syncPubKeyDomain` `xstate.io`, key host `_dck1`)
-- **SVG logo:** the outlined SVG from step 2, attached and linked
+- **SVG logo:** `apps/www/public/brand/logo.svg`, attached, and https://xstate.com/brand/logo.svg
 - **Proxy default:** DNS only. These are mail records: MX and TXT can't be proxied, and the DKIM CNAMEs must
   resolve to `dkim.amazonses.com` unproxied.
 - **Test account ID:** the Cloudflare account to enable the template on first, for testing. It could be the account
