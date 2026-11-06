@@ -42,8 +42,10 @@ const live = {
     return messages
   },
 
+  /** Read state and folder moves apply to the whole conversation; pinning to the one message. */
   update(summary, patch) {
-    return api('PATCH', `/email/mailboxes/${summary.mailboxId}/messages/${encodeURIComponent(summary.id)}`, patch)
+    const thread = patch.seen !== undefined || patch.folder !== undefined
+    return api('PATCH', `/email/mailboxes/${summary.mailboxId}/messages/${encodeURIComponent(summary.id)}`, { ...patch, thread })
   },
 
   async state() {
@@ -222,5 +224,5 @@ const demo = {
 
 function summaryOf(m) {
   const { text, html, attachments, cc, draft, replies, ...summary } = m
-  return summary
+  return { ...summary, threadSize: 1 + replies.length }
 }

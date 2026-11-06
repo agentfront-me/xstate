@@ -23,6 +23,8 @@ export type JmapEmailSummary = {
   receivedAt: string
   hasAttachment: boolean
   size: number
+  /** Messages in the conversation; set by queryEmails only. */
+  threadSize?: number
 }
 export type JmapBodyPart = {
   partId: string | null
@@ -108,18 +110,40 @@ export async function queryEmails(
   if (!queries.length) return new Map()
   const calls: [string, JmapArgs][] = []
   queries.forEach(({ accountId, query }, i) => {
+    // collapseThreads: one result per conversation, its newest message that matches the filter.
     calls.push([
       'Email/query',
-      { accountId, filter: emailFilter(query), sort: [{ property: 'receivedAt', isAscending: false }], limit: query.limit },
+      {
+        accountId,
+        filter: emailFilter(query),
+        sort: [{ property: 'receivedAt', isAscending: false }],
+        collapseThreads: true,
+        limit: query.limit,
+      },
     ])
     calls.push([
       'Email/get',
-      { accountId, '#ids': { resultOf: `c${i * 2}`, name: 'Email/query', path: '/ids' }, properties: SUMMARY },
+      { accountId, '#ids': { resultOf: `c${i * 3}`, name: 'Email/query', path: '/ids' }, properties: SUMMARY },
+    ])
+    calls.push([
+      'Thread/get',
+      { accountId, '#ids': { resultOf: `c${i * 3 + 1}`, name: 'Email/get', path: '/list/*/threadId' } },
     ])
   })
   const results = await mail(env, calls)
-  return new Map(queries.map(({ accountId }, i) => [accountId, (results[i * 2 + 1]!.list as JmapEmailSummary[]) ?? []]))
+  return new Map(
+    queries.map(({ accountId }, i) => {
+      const threads = new Map(((results[i * 3 + 2]!.list as JmapThread[]) ?? []).map((t) => [t.id, t.emailIds.length]))
+      const emails = ((results[i * 3 + 1]!.list as JmapEmailSummary[]) ?? []).map((e) => ({
+        ...e,
+        threadSize: threads.get(e.threadId) ?? 1,
+      }))
+      return [accountId, emails]
+    }),
+  )
 }
+
+type JmapThread = { id: string; emailIds: string[] }
 
 /** Every message in a thread, oldest first, with bodies and attachment parts. */
 export async function getThread(env: StalwartEnv, accountId: string, threadId: string): Promise<JmapEmail[]> {
@@ -156,6 +180,41 @@ export async function updateEmail(
   const [result] = await mail(env, [['Email/set', { accountId, update: { [emailId]: update } }]])
   const failed = (result!.notUpdated as Record<string, { type?: string; description?: string }> | undefined)?.[emailId]
   if (failed?.type === 'notFound') throw new EmailError('message_not_found', 'Message not found', 404)
+  if (failed) throw new EmailError('mail_server_error', `Mail server rejected the change: ${failed.description ?? failed.type}`, 502)
+}
+
+/**
+ * Applies a change to a whole conversation: `seen` to every message in it, a folder move to the messages that
+ * share a folder with `emailId` (so a thread archived from the inbox leaves its copies in Sent alone).
+ */
+export async function updateThreadOf(
+  env: StalwartEnv,
+  accountId: string,
+  emailId: string,
+  patch: { seen?: boolean; folderId?: string },
+): Promise<void> {
+  const [, , found] = await mail(env, [
+    ['Email/get', { accountId, ids: [emailId], properties: ['threadId'] }],
+    ['Thread/get', { accountId, '#ids': { resultOf: 'c0', name: 'Email/get', path: '/list/*/threadId' } }],
+    [
+      'Email/get',
+      { accountId, '#ids': { resultOf: 'c1', name: 'Thread/get', path: '/list/*/emailIds' }, properties: ['mailboxIds', 'keywords'] },
+    ],
+  ])
+  const emails = (found!.list as { id: string; mailboxIds: Record<string, true>; keywords: Record<string, true> }[]) ?? []
+  const self = emails.find((e) => e.id === emailId)
+  if (!self) throw new EmailError('message_not_found', 'Message not found', 404)
+  const update: Record<string, JmapArgs> = {}
+  for (const e of emails) {
+    const u: JmapArgs = {}
+    if (patch.seen !== undefined && !!e.keywords.$seen !== patch.seen) u['keywords/$seen'] = patch.seen || null
+    const sameFolder = Object.keys(e.mailboxIds).some((id) => self.mailboxIds[id])
+    if (patch.folderId && sameFolder && !e.mailboxIds[patch.folderId]) u.mailboxIds = { [patch.folderId]: true }
+    if (Object.keys(u).length) update[e.id] = u
+  }
+  if (!Object.keys(update).length) return
+  const [result] = await mail(env, [['Email/set', { accountId, update }]])
+  const failed = Object.values((result!.notUpdated as Record<string, { type?: string; description?: string }> | undefined) ?? {})[0]
   if (failed) throw new EmailError('mail_server_error', `Mail server rejected the change: ${failed.description ?? failed.type}`, 502)
 }
 

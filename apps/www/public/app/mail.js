@@ -33,7 +33,7 @@ const view = {
   loadingMore: false,
   error: null,
   selectedId: null,
-  /** The open conversation: { id, messages, loading, error, showImages }. */
+  /** The open conversation: { id, messages, loading, error, showImages, expanded, quotes } (sets of message indexes). */
   thread: null,
   /** Reply text and From per message id, so re-rendering doesn't lose what was typed. */
   replies: {},
@@ -129,7 +129,8 @@ async function loadMore() {
     const result = await data().list(query)
     if (token !== listToken) return
     const more = ids ? result.messages.filter((m) => ids.includes(m.mailboxId)) : result.messages
-    view.list.push(...more.filter((m) => !view.list.some((x) => keyOf(x) === keyOf(m))))
+    // A long conversation can come back on a later page by an older message; keep the row we already have.
+    view.list.push(...more.filter((m) => !view.list.some((x) => x.mailboxId === m.mailboxId && x.threadId === m.threadId)))
     view.nextCursor = result.nextCursor
   } catch (err) {
     toast(err.message)
@@ -142,12 +143,13 @@ async function loadMore() {
 async function openThread(id, { markRead = true } = {}) {
   const summary = view.list.find((m) => keyOf(m) === id)
   if (!summary) return
-  view.thread = { id, messages: [], loading: true, error: null, showImages: false }
+  view.thread = { id, messages: [], loading: true, error: null, showImages: false, expanded: new Set(), quotes: new Set() }
   renderReader()
   try {
     const messages = await data().thread(summary)
     if (view.thread?.id !== id) return
     view.thread.messages = messages
+    view.thread.expanded = initialExpanded(messages)
   } catch (err) {
     if (view.thread?.id !== id) return
     view.thread.error = err.message
@@ -164,6 +166,8 @@ async function setSeen(summary, seen) {
   renderReader()
   try {
     await data().update(summary, { seen })
+    // The whole conversation changed, which may be more than one unread message; take the counts from the server.
+    if (summary.threadSize > 1) loadFolders().then(() => (renderFolders(), ctx.refreshRail?.()))
   } catch (err) {
     summary.seen = !seen
     adjustUnread(summary, seen ? 1 : -1)
@@ -384,7 +388,7 @@ function renderRows() {
         const who = m.folder === 'sent' ? `To ${m.to.map((a) => a.name || a.email).join(', ')}` : sender(m.from)
         return `
       <button class="row${m.seen ? '' : ' is-unread'}" data-id="${esc(keyOf(m))}" aria-selected="${keyOf(m) === view.selectedId}">
-        <div class="row-top"><span class="who ellipsis">${esc(who)}</span>
+        <div class="row-top"><span class="who ellipsis">${esc(who)}</span>${m.threadSize > 1 ? `<span class="thread-count">${m.threadSize}</span>` : ''}
           <span class="meta">${m.hasAttachment ? icon('paperclip', 12) : ''}${m.pinned ? icon('pin', 12) : ''}${m.seen ? '' : '<span class="dot" aria-label="Unread"></span>'}${esc(formatTime(m.receivedAt))}</span></div>
         <div class="subject ellipsis">${esc(m.subject || '(no subject)')}</div>
         <div class="preview ellipsis">${esc(m.preview)}</div>
@@ -436,24 +440,77 @@ function sender(list) {
   return a ? a.name || a.email : '(no sender)'
 }
 
+/** A stable colour per sender, so a conversation is easy to follow at a glance. */
+function avatarStyle(email) {
+  let h = 0
+  for (const ch of email.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) % 360
+  return `background:hsl(${h} 45% 42%);border-color:transparent;color:#fff`
+}
+
+/** Which messages of a conversation start open: the newest, and any not read yet. */
+function initialExpanded(messages) {
+  return new Set(messages.flatMap((m, i) => (i === messages.length - 1 || !m.seen ? [i] : [])))
+}
+
+const ATTRIBUTION = /^\s*On\b.*\bwrote:\s*$/i
+const ATTRIBUTION_START = /^\s*On\b.{6,}/
+const OUTLOOK_HEADER = /^\s*(-{2,}\s*Original Message\s*-{2,}|_{20,})\s*$/i
+
+/**
+ * Splits a plain-text body into what was written and the quoted history under it ("On … wrote:" and "> " lines,
+ * or an Outlook "Original Message" block). Returns quote: '' when there is none, or nothing would be left.
+ */
+export function splitQuote(text) {
+  const lines = text.split('\n')
+  const quoted = (from) => lines.slice(from).every((l) => !l.trim() || /^\s*>/.test(l))
+  let cut = -1
+  for (let i = 0; i < lines.length && cut < 0; i++) {
+    const line = lines[i]
+    if (ATTRIBUTION.test(line) || OUTLOOK_HEADER.test(line)) cut = i
+    // Long attributions wrap: "On Tue, … Name <a@b.c>" then "wrote:" on the next line.
+    else if (ATTRIBUTION_START.test(line) && /^\s*\S*.*wrote:\s*$/i.test(lines[i + 1] ?? '') && !/^\s*>/.test(line)) cut = i
+    else if (/^\s*From:\s/.test(line) && /^\s*(Sent|Date):\s/.test(lines[i + 1] ?? '')) cut = i
+    else if (/^\s*>/.test(line) && quoted(i)) cut = i
+  }
+  if (cut <= 0) return { body: text, quote: '' }
+  const body = lines.slice(0, cut).join('\n').trimEnd()
+  return body.trim() ? { body, quote: lines.slice(cut).join('\n').trim() } : { body: text, quote: '' }
+}
+
 function messageHtml(m, index, t) {
   const from = m.from[0] ?? { name: null, email: '' }
   const files = m.attachments.filter((a) => !a.inline)
   const remote = !!m.html && /\bsrc\s*=\s*["']?https?:/i.test(m.html)
+  const last = index === t.messages.length - 1
+  const open = t.expanded.has(index)
+  const to = [...m.to, ...m.cc].map((a) => a.name || a.email).join(', ')
+  const head = `
+      <span class="avatar lg" style="${avatarStyle(from.email)}">${esc(initials(from.name || from.email))}</span>
+      <div class="who"><div class="ellipsis"><span class="from">${esc(from.name || from.email)}</span>
+        ${open && from.name ? `<span class="email"> ${esc(from.email)}</span>` : ''}</div>
+        <div class="to ellipsis">${open ? `to ${esc(to)}` : esc(m.preview)}</div></div>
+      <span class="time">${files.length ? icon('paperclip', 12) : ''}${esc(formatTime(m.receivedAt))}</span>`
+  if (!open) {
+    return `<div class="message is-collapsed"><button class="sender" data-act="toggle-msg" data-index="${index}"
+      title="${esc(from.email)}">${head}</button></div>`
+  }
+  const text = m.html ? null : splitQuote(m.text)
+  const quoteOpen = t.quotes.has(index)
   return `
-    <div class="message${index ? ' thread-reply' : ''}">
-      <div class="sender">
-        <span class="avatar lg">${esc(initials(from.name || from.email))}</span>
-        <div class="who"><div class="ellipsis"><span class="from">${esc(from.name || from.email)}</span>
-          ${from.name ? `<span class="email"> ${esc(from.email)}</span>` : ''}</div>
-          <div class="to ellipsis">To ${esc(m.to.map((a) => a.email).join(', '))}${m.cc.length ? `, cc ${esc(m.cc.map((a) => a.email).join(', '))}` : ''}</div></div>
-        <span class="time">${esc(formatTime(m.receivedAt))}</span>
-      </div>
+    <div class="message">
+      ${last ? `<div class="sender" title="${esc(from.email)}">${head}</div>` : `<button class="sender" data-act="toggle-msg" data-index="${index}" title="${esc(from.email)}">${head}</button>`}
       ${
         m.html
           ? `${remote && !t.showImages ? `<div class="images-note">${icon('info', 14)}<span>Remote images are hidden to protect your privacy.</span><button data-act="show-images">Show images</button></div>` : ''}
-             <iframe class="mail-html" data-index="${index}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Message"></iframe>`
-          : `<div class="message-text">${m.text.split(/\n{2,}/).map((p) => `<p>${esc(p)}</p>`).join('')}</div>`
+             <iframe class="mail-html" data-index="${index}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Message"></iframe>
+             <button class="quote-toggle" data-act="toggle-quote" data-index="${index}" aria-expanded="${quoteOpen}" title="Show quoted text" hidden>•••</button>`
+          : `<div class="message-text">${paragraphs(text.body)}</div>
+             ${
+               text.quote
+                 ? `<button class="quote-toggle" data-act="toggle-quote" data-index="${index}" aria-expanded="${quoteOpen}" title="${quoteOpen ? 'Hide' : 'Show'} quoted text">•••</button>
+                    ${quoteOpen ? `<div class="message-text quoted">${paragraphs(text.quote.replace(/^\s*> ?/gm, ''))}</div>` : ''}`
+                 : ''
+             }`
       }
       ${
         files.length
@@ -467,6 +524,8 @@ function messageHtml(m, index, t) {
       }
     </div>`
 }
+
+const paragraphs = (text) => text.split(/\n{2,}/).map((p) => `<p>${esc(p)}</p>`).join('')
 
 function draftHtml(draft) {
   return `
@@ -552,24 +611,108 @@ function replyHtml(summary) {
     </div></form></div>`
 }
 
+/** Where mail apps put the quoted history in an HTML reply (Spark, Apple Mail, Gmail, Outlook, Thunderbird, Yahoo). */
+const HTML_QUOTE = [
+  '[name="messageReplySection"]',
+  '.gmail_quote',
+  '#appendonsend',
+  '[id^="divRplyFwdMsg"]',
+  '.moz-cite-prefix',
+  '.yahoo_quoted',
+  'blockquote[type="cite"]',
+].join(',')
+
+/** Simple mail (no layout colours or tables) reads better in the app's own colours than in a white box. */
+const isPlainHtml = (html) => !/<table|bgcolor\s*=|background(-color|-image)?\s*:|<img/i.test(html)
+
+/**
+ * Marks the quoted history in an HTML body (and the "On … wrote:" line above it) so it can be hidden. Returns
+ * false when there is none, or hiding it would leave nothing to read.
+ */
+function markQuote(doc) {
+  const quote = doc.body.querySelector(HTML_QUOTE)
+  if (!quote) return false
+  const marked = [quote]
+  for (let n = quote.nextSibling; n; n = n.nextSibling) marked.push(n)
+  let prev = quote.previousSibling
+  while (prev && ((prev.nodeType === 3 && !prev.textContent.trim()) || prev.nodeName === 'BR')) prev = prev.previousSibling
+  if (prev && /wrote:\s*$/i.test(prev.textContent ?? '')) marked.push(prev)
+  const wrap = (n) => {
+    if (n.nodeType === 1) return n
+    const span = doc.createElement('span')
+    n.replaceWith(span)
+    span.append(n)
+    return span
+  }
+  const els = marked.map(wrap)
+  els.forEach((el) => el.setAttribute('data-xq', ''))
+  doc.body.classList.add('xq-hide')
+  if (!doc.body.innerText.trim()) {
+    doc.body.classList.remove('xq-hide')
+    return false
+  }
+  return true
+}
+
+function themeColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+// Simple HTML mail is drawn in the theme's colours, so redraw the open conversation when the theme changes.
+new MutationObserver(() => {
+  if (view.thread && !view.thread.loading && root?.isConnected) renderReader()
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+
 /** Writes each HTML body into its sandboxed iframe. No scripts run; remote images load only after "Show images". */
 async function fillFrames(el, t) {
   for (const frame of el.querySelectorAll('iframe.mail-html')) {
-    const m = t.messages[Number(frame.dataset.index)]
+    const index = Number(frame.dataset.index)
+    const m = t.messages[index]
     const html = await withInlineImages(m)
     const images = t.showImages ? 'https: http: data: blob:' : 'data: blob:'
+    const plain = isPlainHtml(m.html)
+    frame.classList.toggle('is-plain', plain)
+    const base = plain
+      ? `:root{color-scheme:${themeColor('color-scheme') || 'light'}}
+         html,body{background:transparent;color:${themeColor('--text-hi')}}body{padding:0}
+         body *{color:inherit!important;background-color:transparent!important;font-family:inherit!important}
+         a{color:${themeColor('--text-hi')}!important;text-decoration:underline}
+         blockquote{margin:6px 0;padding-left:12px;border-left:2px solid ${themeColor('--border-strong')};opacity:.8}`
+      : `html,body{background:#fff;color:#18181b}body{padding:16px}a{color:#2563eb}`
     frame.addEventListener('load', () => {
       const doc = frame.contentDocument
-      if (doc?.body) frame.style.height = `${doc.body.scrollHeight}px`
+      if (!doc?.body) return
+      const toggle = frame.parentElement.querySelector('.quote-toggle')
+      if (markQuote(doc) && toggle) {
+        toggle.hidden = false
+        doc.body.classList.toggle('xq-hide', !t.quotes.has(index))
+      }
+      frame.style.height = `${doc.body.scrollHeight}px`
     })
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
       <base target="_blank">
-      <style>html,body{margin:0;background:#fff;color:#18181b;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere}
-      body{padding:16px}img{max-width:100%;height:auto}table{max-width:100%}a{color:#2563eb}
+      <style>html,body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
+      ${base}img{max-width:100%;height:auto}table{max-width:100%}
+      body.xq-hide [data-xq]{display:none!important}
       ${t.showImages ? '' : 'img[src^="http:"],img[src^="https:"]{display:none}'}</style></head>
       <body>${html}</body></html>`
   }
+}
+
+/** Shows or hides the quoted history of one message, in place for HTML so the frame isn't reloaded. */
+function toggleQuote(button) {
+  const index = Number(button.dataset.index)
+  const t = view.thread
+  if (t.quotes.has(index)) t.quotes.delete(index)
+  else t.quotes.add(index)
+  const frame = button.parentElement.querySelector('iframe.mail-html')
+  const doc = frame?.contentDocument
+  if (!doc?.body) return renderReader()
+  doc.body.classList.toggle('xq-hide', !t.quotes.has(index))
+  button.setAttribute('aria-expanded', String(t.quotes.has(index)))
+  frame.style.height = '0px'
+  frame.style.height = `${doc.body.scrollHeight}px`
 }
 
 /** Replaces cid: references with blob URLs of the message's inline attachments. */
@@ -689,6 +832,14 @@ function onClick(event) {
       const toInbox = summary.folder === 'archive'
       return change(summary, { folder: toInbox ? 'inbox' : 'archive' }, toInbox ? 'Moved to inbox' : 'Archived', true)
     }
+    case 'toggle-msg': {
+      const index = Number(el.dataset.index)
+      if (view.thread.expanded.has(index)) view.thread.expanded.delete(index)
+      else view.thread.expanded.add(index)
+      return renderReader()
+    }
+    case 'toggle-quote':
+      return toggleQuote(el)
     case 'show-images':
       view.thread.showImages = true
       return renderReader()

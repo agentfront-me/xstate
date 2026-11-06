@@ -245,7 +245,8 @@ export const emailListFolders = defineOperation({
 export const emailListMessages = defineOperation({
   name: 'email_list_messages',
   description:
-    'List the newest messages in a folder, newest first: one mailbox, or every mailbox you can read when mailboxId ' +
+    'List the newest conversations in a folder, newest first, one row per conversation (its newest message there, ' +
+    'with threadSize): one mailbox, or every mailbox you can read when mailboxId ' +
     'is omitted. folder is inbox, sent, drafts, archive, junk, trash or pinned (flagged anywhere but junk and ' +
     'trash). Filter with unreadOnly and a full-text query. Pass nextCursor back as cursor for the next page. ' +
     'Returns summaries with a preview; call email_get_thread for full bodies and attachments.',
@@ -280,7 +281,8 @@ export const emailUpdateMessage = defineOperation({
   name: 'email_update_message',
   description:
     'Change one message: mark it read or unread (seen), pin or unpin it (pinned, shown as flagged in mail apps), ' +
-    'or move it to a folder (inbox, archive, junk, trash). Needs write access to the mailbox.',
+    'or move it to a folder (inbox, archive, junk, trash). With thread: true, seen and folder apply to the whole ' +
+    'conversation (a move takes only its messages in the same folder as this one). Needs write access to the mailbox.',
   input: z
     .object({
       mailboxId: id,
@@ -288,6 +290,7 @@ export const emailUpdateMessage = defineOperation({
       seen: z.boolean().optional(),
       pinned: z.boolean().optional(),
       folder: folderRole.optional(),
+      thread: z.boolean().optional(),
     })
     .refine((v) => v.seen !== undefined || v.pinned !== undefined || v.folder !== undefined, 'Nothing to change'),
   http: { method: 'PATCH', path: '/email/mailboxes/:mailboxId/messages/:messageId' },

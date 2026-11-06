@@ -32,6 +32,8 @@ export type MessageSummary = {
   pinned: boolean
   hasAttachment: boolean
   size: number
+  /** How many messages the conversation has (in any folder). Lists show one row per conversation. */
+  threadSize: number
 }
 export type Attachment = {
   blobId: string
@@ -96,8 +98,11 @@ export type ListMessagesInput = {
 }
 
 /**
- * The newest messages in a folder across one or all readable mailboxes. Paging uses the receivedAt of the last
- * message as the cursor; mail that arrived in the same second as a page boundary can be skipped, which is rare.
+ * The newest conversations in a folder across one or all readable mailboxes, one row per conversation: its newest
+ * message in that folder, with threadSize; email_get_thread has the rest. Paging uses the receivedAt of the last
+ * row as the cursor, so a long conversation can show up again on a later page by an older message (callers drop
+ * threadIds they already have); mail that arrived in the same second as a page boundary can be skipped, which is
+ * rare.
  */
 export async function listMessages(
   env: EmailEnv,
@@ -140,7 +145,13 @@ export async function getThread(env: EmailEnv, actor: Actor, mailboxId: string, 
   return emails.map((e) => toMessage(e, mailbox.id, folders.get(mailbox.stalwart_id) ?? []))
 }
 
-export type UpdateMessageInput = { seen?: boolean; pinned?: boolean; folder?: FolderRole }
+export type UpdateMessageInput = {
+  seen?: boolean
+  pinned?: boolean
+  folder?: FolderRole
+  /** Apply seen and folder to the whole conversation (folder: only its messages in this message's folder). */
+  thread?: boolean
+}
 
 /** Marks a message read or unread, pins or unpins it, or moves it to another folder (archive, junk, trash, inbox). */
 export async function updateMessage(
@@ -158,6 +169,11 @@ export async function updateMessage(
     // Stalwart doesn't create an Archive folder for new accounts; make it the first time someone archives.
     if (!folderId && input.folder === 'archive') folderId = await jmap.createFolder(env, mailbox.stalwart_id, 'Archive', 'archive')
     if (!folderId) throw new EmailError('folder_not_found', `This mailbox has no ${input.folder} folder`, 404)
+  }
+  if (input.thread && (input.seen !== undefined || folderId)) {
+    await jmap.updateThreadOf(env, mailbox.stalwart_id, messageId, { seen: input.seen, folderId })
+    if (input.pinned === undefined) return
+    return jmap.updateEmail(env, mailbox.stalwart_id, messageId, { pinned: input.pinned })
   }
   await jmap.updateEmail(env, mailbox.stalwart_id, messageId, { seen: input.seen, pinned: input.pinned, folderId })
 }
@@ -227,6 +243,7 @@ function toSummary(e: JmapEmailSummary, mailboxId: string, folders: JmapFolder[]
     pinned: !!e.keywords.$flagged,
     hasAttachment: e.hasAttachment,
     size: e.size,
+    threadSize: e.threadSize ?? 1,
   }
 }
 
