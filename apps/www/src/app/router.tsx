@@ -27,6 +27,7 @@ const storage = createRoute({
     source: raw.source === 'received' || raw.source === 'sent' ? raw.source : undefined,
     open: str(raw.open),
     att: str(raw.att),
+    q: typeof raw.q === 'string' && raw.q.trim() ? raw.q.slice(0, 500) : undefined,
   }),
   component: function Storage() {
     return <StoragePage search={storage.useSearch()} />

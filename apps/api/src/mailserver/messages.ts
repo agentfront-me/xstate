@@ -222,7 +222,8 @@ async function mailboxesFor(env: EmailEnv, actor: Actor, organizationId: string,
 
 const addresses = (list: JmapAddress[] | null): Address[] => (list ?? []).map((a) => ({ name: a.name || null, email: a.email }))
 
-function folderRole(mailboxIds: Record<string, true>, folders: JmapFolder[]): FolderRole | null {
+/** The folder a message is "in" for people, among the ones it sits in; null for a custom folder only. */
+export function folderRole(mailboxIds: Record<string, true>, folders: JmapFolder[]): FolderRole | null {
   const roles = folders.filter((f) => mailboxIds[f.id]).map((f) => f.role)
   // A message can sit in several folders; prefer the one people think of it being "in".
   return ROLES.find((r) => roles.includes(r)) ?? null
@@ -247,12 +248,20 @@ function toSummary(e: JmapEmailSummary, mailboxId: string, folders: JmapFolder[]
   }
 }
 
-function bodyText(parts: JmapBodyPart[], values: JmapEmail['bodyValues']): string {
+export function bodyText(parts: JmapBodyPart[], values: JmapEmail['bodyValues']): string {
   return parts.map((p) => (p.partId ? (values[p.partId]?.value ?? '') : '')).join('\n')
 }
 
+/** A message's readable text: its plain-text part, or its HTML part as text. Agents, previews and search read this. */
+export function plainText(e: Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValues'>): string {
+  const textParts = e.textBody.filter((p) => p.type === 'text/plain')
+  if (textParts.length) return bodyText(textParts, e.bodyValues)
+  const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
+  return htmlParts.length ? htmlToText(bodyText(htmlParts, e.bodyValues)) : ''
+}
+
 /** Readable plain text from HTML, for messages sent without a text part. Agents and previews read this. */
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   return html
     .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -270,7 +279,6 @@ function htmlToText(html: string): string {
 
 function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Message {
   const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
-  const textParts = e.textBody.filter((p) => p.type === 'text/plain')
   const html = htmlParts.length ? bodyText(htmlParts, e.bodyValues) : null
   return {
     ...toSummary(e, mailboxId, folders),
@@ -279,7 +287,7 @@ function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Mess
     sentAt: e.sentAt,
     messageId: e.messageId?.[0] ?? null,
     // JMAP falls back to the HTML part in textBody when there is no plain-text part; keep `text` plain.
-    text: textParts.length ? bodyText(textParts, e.bodyValues) : html ? htmlToText(html) : '',
+    text: plainText(e),
     html,
     attachments: e.attachments
       .filter((p): p is JmapBodyPart & { blobId: string } => !!p.blobId)

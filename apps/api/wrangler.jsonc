@@ -45,10 +45,32 @@
   ],
   // Mail sync jobs: Stalwart's webhook (POST /webhooks/stalwart) and the hourly check queue one job per mailbox;
   // the consumer copies new attachments to the organization's R2 bucket. Create once: wrangler queues create xstate-mail-sync
+  // Storage search (search/): every new file version and attachment is queued for indexing; the consumer extracts
+  // its text, embeds it with Workers AI and writes the vectors to Vectorize. Create once: wrangler queues create xstate-search-index
   "queues": {
-    "producers": [{ "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" }],
-    "consumers": [{ "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 }]
+    "producers": [
+      { "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" },
+      { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" }
+    ],
+    "consumers": [
+      { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
+      { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10 }
+    ]
   },
+  // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.
+  "ai": { "binding": "AI", "remote": true },
+  // Vectorize has no local simulator, and dev must never touch production vectors, so there are two bindings and
+  // search/vectors.ts picks by ENVIRONMENT: SEARCH in production, SEARCH_DEV (remote) under wrangler dev. The index
+  // is named after the embedding model: a model change is a new index and a backfill. Create once:
+  //   wrangler vectorize create xstate-search-bge-m3 --dimensions=1024 --metric=cosine
+  //   wrangler vectorize create-metadata-index xstate-search-bge-m3 --property-name=<top|space|owner|doc> --type=string
+  "vectorize": [
+    { "binding": "SEARCH", "index_name": "xstate-search-bge-m3" },
+    { "binding": "SEARCH_DEV", "index_name": "xstate-search-dev", "remote": true }
+  ],
+  // storage_search: 60 calls a minute per user (each one is an embedding call and up to several Vectorize queries).
+  // The namespace id only has to be unique within this Worker.
+  "ratelimits": [{ "name": "SEARCH_RATE", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
   // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.

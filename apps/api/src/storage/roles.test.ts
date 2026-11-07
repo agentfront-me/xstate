@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, type ChainNode } from './roles.ts'
+import { canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, searchScopes, TOPS_PER_FILTER, type ChainNode } from './roles.ts'
 
 const node = (patch: Partial<ChainNode> = {}): ChainNode => ({
   space: 'organization',
@@ -85,5 +85,40 @@ describe('inTrash', () => {
   it('counts trashed folders above', () => {
     assert.equal(inTrash([node(), node({ trashed_at: '2026-11-01T00:00:00Z' })]), true)
     assert.equal(inTrash([node(), node()]), false)
+  })
+})
+
+describe('searchScopes', () => {
+  const tops = [
+    { id: 'team', space: 'organization' as const },
+    { id: 'shared-personal', space: 'personal' as const },
+  ]
+
+  it('always searches My Files, and lists the shared tops and mailboxes for a member', () => {
+    assert.deepEqual(searchScopes(me, tops, ['mb1']), [
+      { space: 'personal', owner: 'me' },
+      { top: { $in: ['team', 'shared-personal', 'mb:mb1'] } },
+    ])
+  })
+
+  it('gives an admin the whole organization space instead of its tops', () => {
+    assert.deepEqual(searchScopes(admin, tops, []), [
+      { space: 'personal', owner: 'me' },
+      { space: 'organization' },
+      { top: { $in: ['shared-personal'] } },
+    ])
+  })
+
+  it('splits long lists so each filter stays small', () => {
+    const many = Array.from({ length: 85 }, (_, i) => ({ id: `t${i}`, space: 'organization' as const }))
+    const filters = searchScopes(me, many, [])
+    assert.equal(filters.length, 4)
+    assert.equal(filters[1]!.top!.$in.length, TOPS_PER_FILTER)
+    assert.equal(filters[3]!.top!.$in.length, 5)
+  })
+
+  it('lists a top once however many items under it are shared', () => {
+    const filters = searchScopes(me, [tops[0]!, tops[0]!], [])
+    assert.deepEqual(filters[1], { top: { $in: ['team'] } })
   })
 })

@@ -81,6 +81,28 @@ export type Access = {
 
 export type Member = { id: string; name: string | null; email: string; role: string }
 
+/** One passage found by storage_search: a Storage file, a mail attachment or a message. */
+export type SearchResult = {
+  where: 'storage' | 'mail' | 'email'
+  id: string
+  score: number
+  passage: string
+  pos: number
+  /** The file's name, or the email's subject. */
+  name: string
+  fileId?: string
+  emailId?: string | null
+  itemId?: string
+  version?: number
+  path?: PathEntry[]
+  mailbox?: { id: string; address: string }
+  threadId?: string | null
+  from?: string
+  receivedAt?: string
+  /** Emails: inbox, sent, drafts, archive, junk or trash. */
+  folder?: string | null
+}
+
 export const RANK: Record<Role, number> = { viewer: 1, editor: 2, manager: 3 }
 export const canEdit = (item: { role: Role }) => RANK[item.role] >= RANK.editor
 
@@ -131,6 +153,14 @@ export const storageApi = {
     api<Access>('PUT', `/storage/items/${enc(itemId)}/access`, input),
   setPublicLink: (itemId: string, enabled: boolean) => api<Access>('PUT', `/storage/items/${enc(itemId)}/public-link`, { enabled }),
   usage: (orgId: string) => api<Usage>('GET', `/storage/orgs/${orgId}/usage`),
+
+  /** Search by meaning across files and mail (storage_search). 60 calls a minute; the API answers 429 beyond that. */
+  search: async (orgId: string, q: { q: string; folderId?: string; limit?: number }) => {
+    const params = new URLSearchParams({ q: q.q })
+    if (q.folderId) params.set('folderId', q.folderId)
+    if (q.limit) params.set('limit', String(q.limit))
+    return (await api<{ results: SearchResult[] }>('GET', `/storage/orgs/${orgId}/search?${params}`)).results
+  },
   members: async (orgId: string) => (await api<{ members: Member[] }>('GET', `/storage/orgs/${orgId}/members`)).members,
 
   attachments: (orgId: string, q: { mailboxId?: string; source?: 'received' | 'sent'; query?: string; cursor?: string }) => {

@@ -18,8 +18,10 @@ import { organizationBucket, type BucketEnv } from './buckets'
 import { cleanFileName } from './files'
 import { copyObject, deleteObject, getObject, presign, putObject } from './r2'
 import { atLeast, canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, type Reader, type Role } from './roles'
+import { extractText, textKind } from '../search/extract'
+import { enqueueIndex } from '../search/jobs'
 
-export type StorageEnv = BucketEnv & EmailEnv
+export type StorageEnv = BucketEnv & EmailEnv & Pick<Env, 'SEARCH_INDEX' | 'AI'>
 
 /** Workers accept request bodies up to 100 MB; bigger uploads would need multipart uploads to R2. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -367,6 +369,7 @@ export async function uploadFile(
     if (isUniqueViolation(err)) throw new ApiError('name_taken', `Something called ${name} was just added here. Try again.`, 409)
     throw err
   }
+  await enqueueIndex(env, [stored.fileId])
   return (await getItem(env, actor, itemId)).item
 }
 
@@ -523,8 +526,10 @@ async function commitVersion(env: StorageEnv, ctx: ItemContext, bucket: string, 
         now,
       }),
       ...filesDb.retireVersions(env.DB, ctx.item.id, ctx.item.file_id!, now),
+      filesDb.copySearchExcluded(env.DB, ctx.item.file_id!, stored.fileId),
     ])
     if (!updated!.meta.changes) throw conflict()
+    await enqueueIndex(env, [stored.fileId])
   } catch (err) {
     await deleteObject(env, bucket, stored.key).catch(() => null)
     if (err instanceof ApiError) {
@@ -547,14 +552,22 @@ export async function downloadUrl(env: StorageEnv, actor: Actor, itemId: string,
 // Text, for agents
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|x-ndjson|csv|markdown))/
+/** Largest PDF whose text agents can read; the text itself is cut at MAX_TEXT_BYTES. */
+const MAX_PDF_BYTES = 25 * 1024 * 1024
 
 export async function readText(env: StorageEnv, actor: Actor, itemId: string) {
   const ctx = await itemContext(env, actor, itemId, 'viewer')
   if (ctx.item.kind !== 'file') throw new ApiError('not_a_file', 'Folders have no contents')
-  if (!TEXT_TYPES.test(ctx.item.content_type ?? '')) throw new ApiError('not_text', `${ctx.item.name} isn't a text file`)
-  if (ctx.item.size_bytes > MAX_TEXT_BYTES) throw new ApiError('file_too_large', 'Text files over 1 MB can only be downloaded')
+  const pdf = textKind(ctx.item.content_type ?? '', ctx.item.name) === 'pdf'
+  if (!pdf && !TEXT_TYPES.test(ctx.item.content_type ?? '')) throw new ApiError('not_text', `${ctx.item.name} isn't a text file`)
+  if (ctx.item.size_bytes > (pdf ? MAX_PDF_BYTES : MAX_TEXT_BYTES)) {
+    throw new ApiError('file_too_large', `${pdf ? 'PDFs over 25 MB' : 'Text files over 1 MB'} can only be downloaded`)
+  }
   const res = await readContent(env, actor, itemId)
-  return { item: toItem(ctx.item, ctx.role), text: await res.text() }
+  if (!pdf) return { item: toItem(ctx.item, ctx.role), text: await res.text(), truncated: false }
+  const text = await extractText(env.AI, 'pdf', ctx.item.name, await res.arrayBuffer())
+  const truncated = text.length > MAX_TEXT_BYTES
+  return { item: toItem(ctx.item, ctx.role), text: truncated ? text.slice(0, MAX_TEXT_BYTES) : text, truncated }
 }
 
 export async function writeText(env: StorageEnv, actor: Actor, itemId: string, expectedVersion: number, text: string) {
@@ -656,6 +669,15 @@ export async function updateItem(
     await env.DB.batch(statements).catch((err) => {
       throw isUniqueViolation(err) ? new ApiError('name_taken', `There's already something called ${name} there`, 409) : err
     })
+  }
+  if (moving) {
+    // Search filters on the top-level item above a file. A move under a different top (or to another space)
+    // re-indexes everything inside; a move within the same top changes nothing the vectors carry.
+    const oldTop = ctx.chain.at(-1)!.id
+    const newTop = target.parentId ? (await storageDb.topOf(env.DB, target.parentId))?.top_id : ctx.item.id
+    if (newTop !== oldTop || target.space !== ctx.item.space) {
+      await enqueueIndex(env, await storageDb.subtreeFileIds(env.DB, ctx.item.id))
+    }
   }
   return (await getItem(env, actor, itemId)).item
 }
@@ -995,6 +1017,7 @@ export async function saveAttachment(
     await deleteObject(env, bucket, key).catch(() => null)
     throw isUniqueViolation(err) ? new ApiError('name_taken', `Something called ${name} was just added here. Try again.`, 409) : err
   }
+  await enqueueIndex(env, [newFileId])
   return (await getItem(env, actor, itemId)).item
 }
 

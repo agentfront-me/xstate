@@ -16,6 +16,7 @@ import { type PathEntry, type Space, type StorageItem, type TopView, canEdit, fi
 import { FileIcon } from './FileIcon'
 import { FileView } from './FileView'
 import { ConfirmDialog, Menu, type MenuItem, MoveDialog, NameDialog, ShareDialog, VersionsDialog } from './dialogs'
+import { SearchField, SearchResults } from './SearchResults'
 
 export type StorageView = TopView | 'attachments'
 export type StorageSearch = {
@@ -27,6 +28,8 @@ export type StorageSearch = {
   open?: string
   /** A mail attachment open in the preview window. */
   att?: string
+  /** A search by meaning (SearchResults) in place of the file list. */
+  q?: string
 }
 
 const VIEWS: { id: StorageView; label: string; icon: IconName }[] = [
@@ -63,6 +66,7 @@ function Storage({ orgId, memberId, search }: { orgId: string; memberId: string;
   const navigate = useNavigate()
   const view: StorageView = search.view ?? 'personal'
   const go = (next: StorageSearch, replace = false) => void navigate({ to: '/storage', search: next, replace })
+  // The file list and the attachments list keep the search state in the URL too; `go` is passed down as is.
   const [request, setRequest] = useState<CreateRequest | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
@@ -84,7 +88,9 @@ function Storage({ orgId, memberId, search }: { orgId: string; memberId: string;
           setMenu({ x: r.left, y: r.bottom + 4 })
         }}
       />
-      {view === 'attachments' ? (
+      {search.q ? (
+        <SearchResults orgId={orgId} search={search} go={go} />
+      ) : view === 'attachments' ? (
         <AttachmentList orgId={orgId} search={search} go={go} />
       ) : (
         <ItemList orgId={orgId} memberId={memberId} view={view} folderId={search.folder} search={search} go={go} request={request} />
@@ -226,7 +232,7 @@ function ItemList({
   view: TopView
   folderId?: string
   search: StorageSearch
-  go: (s: StorageSearch) => void
+  go: (s: StorageSearch, replace?: boolean) => void
   request: CreateRequest | null
 }) {
   const client = useQueryClient()
@@ -368,6 +374,7 @@ function ItemList({
           {query.data && <span className="sub ellipsis">{headMeta}</span>}
         </div>
         {uploading > 0 && <span className="muted small row-gap"><span className="spinner" />Uploading {uploading}…</span>}
+        {view !== 'trash' && <SearchField search={search} go={go} />}
         {folder && (
           <button className="btn btn-sm" onClick={() => setDialog({ kind: 'share', item: folder })}>
             <Icon name="user-plus" size={14} />{folder.role === 'manager' ? 'Share' : 'Access'}

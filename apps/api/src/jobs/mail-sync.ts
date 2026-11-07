@@ -26,7 +26,7 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
   for (const [mailboxId, messages] of byMailbox) {
     try {
       const result = await syncMailbox(env, mailboxId)
-      if (result.stored || result.deleted || result.firstSync) console.log('mail-sync', JSON.stringify(result))
+      if (result.stored || result.deleted || result.queued || result.unindexed || result.firstSync) console.log('mail-sync', JSON.stringify(result))
       for (const m of messages) m.ack()
     } catch (err) {
       console.error(`mail-sync: mailbox ${mailboxId} failed`, err)

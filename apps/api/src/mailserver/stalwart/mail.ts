@@ -265,6 +265,46 @@ export async function queryEmailsWithAttachments(env: StalwartEnv, accountId: st
   return { ids: (result!.ids as string[]) ?? [], total: Number(result!.total ?? 0) }
 }
 
+/** Ids of every message in the account, newest first, a page at a time (for search's first pass over a mailbox). */
+export async function queryAllEmails(env: StalwartEnv, accountId: string, position: number, limit: number) {
+  const [result] = await mail(env, [
+    ['Email/query', { accountId, sort: [{ property: 'receivedAt', isAscending: false }], position, limit }],
+  ])
+  return { ids: (result!.ids as string[]) ?? [], total: Number(result!.total ?? 0) }
+}
+
+export type JmapEmailText = Pick<JmapEmail, 'id' | 'threadId' | 'mailboxIds' | 'from' | 'to' | 'subject' | 'receivedAt' | 'textBody' | 'htmlBody' | 'bodyValues'>
+
+/** Body text over this is cut: search indexes the first 200 KB of a message, which is far past any real letter. */
+const MAX_INDEXED_BODY_BYTES = 200_000
+
+/** Messages with their headers and body text, for search. Missing ids (deleted meanwhile) are left out. */
+export async function getEmailTexts(env: StalwartEnv, accountId: string, ids: string[]): Promise<JmapEmailText[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [
+    [
+      'Email/get',
+      {
+        accountId,
+        ids,
+        properties: ['id', 'threadId', 'mailboxIds', 'from', 'to', 'subject', 'receivedAt', 'textBody', 'htmlBody', 'bodyValues'],
+        bodyProperties: ['partId', 'type'],
+        fetchTextBodyValues: true,
+        fetchHTMLBodyValues: true,
+        maxBodyValueBytes: MAX_INDEXED_BODY_BYTES,
+      },
+    ],
+  ])
+  return (result!.list as JmapEmailText[]) ?? []
+}
+
+/** Just which folders each message sits in. Missing ids are left out. */
+export async function getEmailFolders(env: StalwartEnv, accountId: string, ids: string[]): Promise<{ id: string; mailboxIds: Record<string, true> }[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [['Email/get', { accountId, ids, properties: ['id', 'mailboxIds'] }]])
+  return (result!.list as { id: string; mailboxIds: Record<string, true> }[]) ?? []
+}
+
 export type JmapAttachmentMessage = {
   id: string
   threadId: string

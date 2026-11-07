@@ -5,6 +5,9 @@
 // or destroyed, which also catches deletions (no webhook fires for those) and anything a dropped webhook missed.
 // Every step is safe to repeat: an attachment part is claimed in `files` before it is uploaded, so a retried job
 // never stores a second copy.
+//
+// The same walk feeds search (search/): created messages are queued for indexing by their bodies, destroyed ones
+// have their documents removed, and a mailbox's existing messages are queued once (bodies_synced).
 
 import * as filesDb from '../db/files'
 import * as mailboxSyncDb from '../db/mailbox-sync'
@@ -14,18 +17,30 @@ import type { JmapAttachmentMessage, JmapBodyPart, JmapFolder } from '../mailser
 import { organizationBucket, storageConfigured, type BucketEnv } from './buckets'
 import { cleanFileName, fileKey } from './files'
 import { deleteObject, putObject } from './r2'
+import { refreshEmailFolders, removeEmails } from '../search/indexer'
+import { enqueueEmails, enqueueIndex } from '../search/jobs'
 
-export type SyncEnv = BucketEnv & Pick<Env, 'STALWART_URL' | 'STALWART_API_KEY'>
+export type SyncEnv = BucketEnv & Pick<Env, 'STALWART_URL' | 'STALWART_API_KEY' | 'SEARCH_INDEX' | 'AI' | 'SEARCH' | 'SEARCH_DEV'>
 
 /** Inline parts smaller than this (signature logos, tracking pixels) aren't worth a file of their own. */
 const SMALL_INLINE_BYTES = 20_000
 /** Messages fetched per Email/get while copying. */
 const BATCH = 50
 
-export type SyncResult = { mailboxId: string; stored: number; skipped: number; deleted: number; firstSync: boolean }
+export type SyncResult = {
+  mailboxId: string
+  stored: number
+  skipped: number
+  deleted: number
+  /** Messages queued for search by their bodies, documents whose folder changed, and documents of destroyed messages removed. */
+  queued: number
+  moved: number
+  unindexed: number
+  firstSync: boolean
+}
 
 export async function syncMailbox(env: SyncEnv, mailboxId: string): Promise<SyncResult> {
-  const result: SyncResult = { mailboxId, stored: 0, skipped: 0, deleted: 0, firstSync: false }
+  const result: SyncResult = { mailboxId, stored: 0, skipped: 0, deleted: 0, queued: 0, moved: 0, unindexed: 0, firstSync: false }
   // Without file storage (local dev) there's nowhere to copy attachments to. Skip instead of failing, so the queue
   // doesn't retry the job ten times.
   if (!storageConfigured(env)) return result
@@ -35,18 +50,23 @@ export async function syncMailbox(env: SyncEnv, mailboxId: string): Promise<Sync
   const accountId = mailbox.stalwart_id
   const folders = (await jmap.getFolders(env, [accountId])).get(accountId) ?? []
   const ctx = { env, mailbox, accountId, folders, bucket: '' as string, result }
-  const since = await mailboxSyncDb.getState(env.DB, mailbox.id)
+  const sync = await mailboxSyncDb.get(env.DB, mailbox.id)
 
-  if (since) {
-    let state = since
+  if (sync?.emailState) {
+    if (!sync.bodiesSynced) await queueAllBodies(ctx)
+    let state = sync.emailState
     for (;;) {
       const changes = await jmap.emailChanges(env, accountId, state)
       if (!changes) return firstSync(ctx) // state too old to diff from: start over
       await copyMessages(ctx, changes.created)
+      await enqueueEmails(env, mailbox.id, changes.created)
+      result.queued += changes.created.length
+      if (changes.updated.length) result.moved += await refreshEmailFolders(env, mailbox.id, changes.updated)
       if (changes.destroyed.length) {
         const now = new Date().toISOString()
         const { meta } = await filesDb.markDeletedForEmails(env.DB, mailbox.id, changes.destroyed, now).run()
         result.deleted += meta.changes
+        result.unindexed += await removeEmails(env, mailbox.id, changes.destroyed)
       }
       state = changes.newState
       await mailboxSyncDb.saveState(env.DB, mailbox.id, state, new Date().toISOString()).run()
@@ -78,7 +98,19 @@ async function firstSync(ctx: Ctx): Promise<SyncResult> {
     if (position + BATCH >= page.total || !page.ids.length) break
   }
   await mailboxSyncDb.saveState(ctx.env.DB, ctx.mailbox.id, state, new Date().toISOString()).run()
+  await queueAllBodies(ctx)
   return ctx.result
+}
+
+/** Queues every message of the mailbox for search, newest first, and remembers that it was done. */
+async function queueAllBodies(ctx: Ctx): Promise<void> {
+  for (let position = 0; ; position += BATCH) {
+    const page = await jmap.queryAllEmails(ctx.env, ctx.accountId, position, BATCH)
+    await enqueueEmails(ctx.env, ctx.mailbox.id, page.ids)
+    ctx.result.queued += page.ids.length
+    if (position + BATCH >= page.total || !page.ids.length) break
+  }
+  await mailboxSyncDb.markBodiesSynced(ctx.env.DB, ctx.mailbox.id).run()
 }
 
 async function copyMessages(ctx: Ctx, ids: string[]): Promise<void> {
@@ -158,6 +190,7 @@ async function copyPart(ctx: Ctx, message: JmapAttachmentMessage, part: JmapBody
     }
     const sha256 = [...new Uint8Array(await digest.digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
     await filesDb.markReady(env.DB, id, size, sha256).run()
+    await enqueueIndex(env, [id])
     return true
   } catch (err) {
     // Leave nothing half-done: the next sync claims and copies it again.

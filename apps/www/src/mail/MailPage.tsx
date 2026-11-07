@@ -32,6 +32,15 @@ type View = { folder: FolderView; scope: Scope; unreadOnly: boolean; query: stri
 /** What the Email page shows, kept across page switches. */
 let remembered: View = { folder: 'inbox', scope: null, unreadOnly: false, query: '', searching: false, selected: null }
 
+/**
+ * Lands the Email page on one message found elsewhere (Storage's search): the mailbox's folder, searched for the
+ * subject, with that message's conversation open. The caller navigates to /mail after this.
+ */
+export function showMessage(mailboxId: string, emailId: string, subject: string, folder?: string | null): void {
+  const view: FolderView = folder === 'trash' ? 'trash' : (FOLDERS.find((f) => f.id === folder && f.id !== 'pinned')?.id ?? 'inbox')
+  remembered = { folder: view, scope: { mailboxId }, unreadOnly: false, query: subject, searching: true, selected: keyOf({ mailboxId, id: emailId }) }
+}
+
 const domainName = (address: string) => address.split('@')[1] ?? ''
 const NARROW = 680
 const isNarrow = () => window.innerWidth <= NARROW

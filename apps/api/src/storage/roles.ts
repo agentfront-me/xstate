@@ -81,6 +81,37 @@ export function inTrash(chain: Pick<ChainNode, 'trashed_at'>[]): boolean {
   return chain.some((n) => n.trashed_at)
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Search
+
+/** A Vectorize metadata filter: the coarse scope a search query is narrowed to before the permission check. */
+export type SearchFilter = { space?: 'personal' | 'organization'; owner?: string; top?: { $in: string[] } }
+
+/** Ids per `$in` list: 40 keep a filter under Vectorize's 2 KB limit. */
+export const TOPS_PER_FILTER = 40
+
+/**
+ * The filters covering everything the reader may find, one Vectorize query each. `tops` are the top-level items
+ * above whatever is shared with the reader (a grant, or org_access set) and the organization-space folders they
+ * own; `mailboxIds` are the mailboxes whose mail they can read. Filters only narrow the candidates: every hit is
+ * still checked with roleOn before it is returned.
+ */
+export function searchScopes(
+  reader: Reader,
+  tops: { id: string; space: Space }[],
+  mailboxIds: string[],
+): SearchFilter[] {
+  const filters: SearchFilter[] = [{ space: 'personal', owner: reader.memberId }]
+  // Admins see the whole organization space, so its tops need no listing.
+  if (reader.admin) filters.push({ space: 'organization' })
+  const ids = new Set<string>()
+  for (const top of tops) if (!(reader.admin && top.space === 'organization')) ids.add(top.id)
+  for (const id of mailboxIds) ids.add(`mb:${id}`)
+  const list = [...ids]
+  for (let i = 0; i < list.length; i += TOPS_PER_FILTER) filters.push({ top: { $in: list.slice(i, i + TOPS_PER_FILTER) } })
+  return filters
+}
+
 /**
  * Whether the reader may take the item out of where it is (move it elsewhere, or trash it): editor on the folder
  * it's in, or manager of the item when it's at the top of its space.

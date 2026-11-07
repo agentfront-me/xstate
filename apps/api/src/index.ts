@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
+import { consume as consumeSearch, hourly as searchHourly, type SearchJob } from './search/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
@@ -44,7 +45,20 @@ app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpo
 export default {
   fetch: app.fetch,
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
-  queue: (batch, env) => consume(batch, env),
-  // Hourly: safety-net mail sync in case webhooks were lost, and purge of files deleted over 30 days ago.
-  scheduled: (_controller, env, ctx) => ctx.waitUntil(hourly(env)),
-} satisfies ExportedHandler<Env, MailSyncJob>
+  // SEARCH_INDEX jobs: index a file for Storage search.
+  queue: (batch, env) =>
+    batch.queue === 'xstate-search-index'
+      ? consumeSearch(batch as MessageBatch<SearchJob>, env)
+      : consume(batch as MessageBatch<MailSyncJob>, env),
+  // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
+  // search backfill and sweep.
+  scheduled: (_controller, env, ctx) =>
+    ctx.waitUntil(
+      Promise.all([
+        hourly(env),
+        searchHourly(env).then((r) => {
+          if (r.queued || r.retried || r.swept || r.sweepFailed) console.log('search-hourly', JSON.stringify(r))
+        }),
+      ]),
+    ),
+} satisfies ExportedHandler<Env, MailSyncJob | SearchJob>

@@ -73,6 +73,100 @@ export async function chain(db: D1Database, itemId: string, userId: string): Pro
   return results
 }
 
+/**
+ * The chains of many items at once (search checks every hit this way): item id → the item and its ancestors, item
+ * first. Items that don't exist are absent.
+ */
+export async function chains(
+  db: D1Database,
+  itemIds: string[],
+  userId: string,
+): Promise<Map<string, (ItemView & { depth: number })[]>> {
+  const out = new Map<string, (ItemView & { depth: number })[]>()
+  if (!itemIds.length) return out
+  const { results } = await db
+    .prepare(
+      `WITH RECURSIVE up(start, id, depth) AS (
+         SELECT value, value, 0 FROM json_each(?2)
+         UNION ALL
+         SELECT up.start, p.parent_id, up.depth + 1 FROM up JOIN storage_items p ON p.id = up.id
+         WHERE p.parent_id IS NOT NULL AND up.depth < ${MAX_DEPTH}
+       )
+       SELECT ${VIEW}, up.depth, up.start FROM up JOIN storage_items s ON s.id = up.id ${JOINS} ORDER BY up.start, up.depth`,
+    )
+    .bind(userId, JSON.stringify(itemIds))
+    .all<ItemView & { depth: number; start: string }>()
+  for (const { start, ...row } of results) {
+    const chain = out.get(start) ?? []
+    chain.push(row)
+    out.set(start, chain)
+  }
+  return out
+}
+
+/**
+ * For search: the top-level items above everything shared with the member (a grant to them, or org_access set)
+ * and above the organization-space items they own. Their own My Files aren't listed: search covers those with one
+ * filter. Trashed items are included; the check on each hit drops them.
+ */
+export async function accessTops(db: D1Database, organizationId: string, memberId: string): Promise<{ id: string; space: Space }[]> {
+  const { results } = await db
+    .prepare(
+      `WITH RECURSIVE up(id, parent_id, depth) AS (
+         SELECT s.id, s.parent_id, 0 FROM storage_items s
+         WHERE s.organization_id = ?1
+           AND (s.org_access IS NOT NULL
+                OR (s.space = 'organization' AND s.owner_member_id = ?2)
+                OR EXISTS (SELECT 1 FROM storage_grants g WHERE g.item_id = s.id AND g.member_id = ?2))
+         UNION ALL
+         SELECT p.id, p.parent_id, up.depth + 1 FROM up JOIN storage_items p ON p.id = up.parent_id WHERE up.depth < ${MAX_DEPTH}
+       )
+       SELECT DISTINCT t.id, t.space FROM up JOIN storage_items t ON t.id = up.id WHERE up.parent_id IS NULL`,
+    )
+    .bind(organizationId, memberId)
+    .all<{ id: string; space: Space }>()
+  return results
+}
+
+export type TopOf = { file_id: string | null; top_id: string; space: Space; owner_member_id: string | null }
+
+/**
+ * For search: an item's current version, and the top-level item above it (itself, at the top) with that top's
+ * space and owner. Null if the item doesn't exist.
+ */
+export async function topOf(db: D1Database, itemId: string): Promise<TopOf | null> {
+  return db
+    .prepare(
+      `WITH RECURSIVE up(id, depth) AS (
+         SELECT ?1, 0
+         UNION ALL
+         SELECT p.parent_id, up.depth + 1 FROM up JOIN storage_items p ON p.id = up.id
+         WHERE p.parent_id IS NOT NULL AND up.depth < ${MAX_DEPTH}
+       )
+       SELECT i.file_id, t.id AS top_id, t.space, t.owner_member_id
+       FROM storage_items i, up JOIN storage_items t ON t.id = up.id
+       WHERE i.id = ?1 ORDER BY up.depth DESC LIMIT 1`,
+    )
+    .bind(itemId)
+    .first<TopOf>()
+}
+
+/** The current version's file id of every file in a subtree (the item itself included), for re-indexing after a move. */
+export async function subtreeFileIds(db: D1Database, itemId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `WITH RECURSIVE sub(id, depth) AS (
+         SELECT ?1, 0
+         UNION ALL
+         SELECT c.id, sub.depth + 1 FROM sub JOIN storage_items c ON c.parent_id = sub.id WHERE sub.depth < ${MAX_DEPTH}
+       )
+       SELECT s.file_id FROM sub JOIN storage_items s ON s.id = sub.id WHERE s.kind = 'file' AND s.file_id IS NOT NULL`,
+    )
+    .bind(itemId)
+    .all<{ file_id: string }>()
+  return results.map((r) => r.file_id)
+}
+
 /** Live (not trashed) children of a folder. */
 export async function children(db: D1Database, parentId: string, userId: string): Promise<ItemView[]> {
   const { results } = await db

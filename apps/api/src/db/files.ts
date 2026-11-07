@@ -25,9 +25,11 @@ export type FileRow = {
   created_by: string | null
   created_at: string
   deleted_at: string | null
+  /** 1 once an admin has kept the file out of search (search/). */
+  search_excluded: number
 }
 
-export type NewFile = Omit<FileRow, 'status' | 'deleted_at' | 'sha256' | 'item_id' | 'version'> & {
+export type NewFile = Omit<FileRow, 'status' | 'deleted_at' | 'sha256' | 'item_id' | 'version' | 'search_excluded'> & {
   status?: FileStatus
   sha256?: string | null
   item_id?: string | null
@@ -75,6 +77,16 @@ export function findPart(db: D1Database, mailboxId: string, emailId: string, par
     .first<FileRow>()
 }
 
+/** Many files by id, whatever their status. */
+export async function findMany(db: D1Database, ids: string[]): Promise<Map<string, FileRow>> {
+  if (!ids.length) return new Map()
+  const { results } = await db
+    .prepare('SELECT * FROM files WHERE id IN (SELECT value FROM json_each(?))')
+    .bind(JSON.stringify(ids))
+    .all<FileRow>()
+  return new Map(results.map((r) => [r.id, r]))
+}
+
 export function find(db: D1Database, id: string): Promise<FileRow | null> {
   return db.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<FileRow>()
 }
@@ -104,6 +116,15 @@ export async function listForMailbox(
 
 export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM files WHERE id = ?').bind(id)
+}
+
+export function setSearchExcluded(db: D1Database, id: string, excluded: boolean): D1PreparedStatement {
+  return db.prepare('UPDATE files SET search_excluded = ? WHERE id = ?').bind(excluded ? 1 : 0, id)
+}
+
+/** A new version keeps the replaced version's search exclusion, so an admin's choice sticks across edits. */
+export function copySearchExcluded(db: D1Database, fromId: string, toId: string): D1PreparedStatement {
+  return db.prepare('UPDATE files SET search_excluded = (SELECT search_excluded FROM files WHERE id = ?) WHERE id = ?').bind(fromId, toId)
 }
 
 export function markReady(db: D1Database, id: string, sizeBytes: number, sha256: string | null): D1PreparedStatement {
