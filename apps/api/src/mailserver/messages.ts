@@ -136,6 +136,30 @@ export async function listMessages(
   return { messages: page, nextCursor: more && page.length ? page[page.length - 1]!.receivedAt : null }
 }
 
+/**
+ * The newest messages to or from an address in every mailbox the actor can read (not junk or trash), newest first.
+ * For a person's activity in the Users section: someone else's personal mail stays out, as everywhere else.
+ */
+export async function messagesWith(
+  env: EmailEnv,
+  actor: Actor,
+  organizationId: string,
+  address: string,
+  limit: number,
+): Promise<MessageSummary[]> {
+  const mailboxes = await readableMailboxes(env, actor, organizationId)
+  if (!mailboxes.length) return []
+  const folders = await jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id))
+  const queries = mailboxes.map((m) => {
+    const skip = (folders.get(m.stalwart_id) ?? []).filter((f) => f.role === 'junk' || f.role === 'trash').map((f) => f.id)
+    return { accountId: m.stalwart_id, query: { participant: address, notInFolders: skip, collapseThreads: false, limit } }
+  })
+  const found = await jmap.queryEmails(env, queries)
+  const all = mailboxes.flatMap((m) => (found.get(m.stalwart_id) ?? []).map((e) => toSummary(e, m.id, folders.get(m.stalwart_id) ?? [])))
+  all.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
+  return all.slice(0, limit)
+}
+
 /** Every message in a conversation, oldest first, with bodies and attachments. Doesn't mark anything read. */
 export async function getThread(env: EmailEnv, actor: Actor, mailboxId: string, threadId: string): Promise<Message[]> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')

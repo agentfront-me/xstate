@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { handleCollect } from './audience/collect'
+import { snippet } from './audience/snippet'
 import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
 import { consume as consumeSearch, hourly as searchHourly, type SearchJob } from './search/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
@@ -17,6 +19,18 @@ const app = new Hono<AppEnv>()
 app.get('/', (c) => c.json({ message: 'Hello from xstate' }))
 
 app.get('/health', (c) => c.json({ ok: true, service: 'api', time: new Date().toISOString() }))
+
+// Audience tracking from customers' websites: any origin may call it (it's authenticated by the key in the body),
+// so it gets its own CORS rule ahead of the dashboard's. See audience/collect.ts and audience/snippet.ts.
+app.use('/v1/collect', cors({ origin: '*', allowMethods: ['POST'], allowHeaders: ['Content-Type', 'Authorization'], maxAge: 86400 }))
+app.post('/v1/collect', handleCollect)
+app.get('/js/xstate.js', (c) =>
+  c.body(snippet(`https://${new URL(c.req.url).host}`), 200, {
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600',
+    'Access-Control-Allow-Origin': '*',
+  }),
+)
 
 const v1 = new Hono<AppEnv>()
 // The sign-up and onboarding pages on xstate.com call the API from the browser.
@@ -42,6 +56,9 @@ app.post('/webhooks/ses', handleSesWebhook)
 
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))
+
+// One per organization: its audience (people, events, segments). See audience/store.ts.
+export { AudienceStore } from './audience/store'
 
 export default {
   fetch: app.fetch,

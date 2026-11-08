@@ -87,6 +87,10 @@ export type EmailQuery = {
   text?: string
   /** Only mail received strictly before this time, for paging. */
   before?: string
+  /** Only mail from, to or cc'ing this address. */
+  participant?: string
+  /** One result per conversation (the default), or every matching message. */
+  collapseThreads?: boolean
   limit: number
 }
 
@@ -99,6 +103,9 @@ function emailFilter(q: EmailQuery): JmapArgs {
   if (q.pinnedOnly) conditions.push({ hasKeyword: '$flagged' })
   if (q.text) conditions.push({ text: q.text })
   if (q.before) conditions.push({ before: q.before })
+  if (q.participant) {
+    conditions.push({ operator: 'OR', conditions: [{ from: q.participant }, { to: q.participant }, { cc: q.participant }] })
+  }
   return conditions.length === 1 ? conditions[0]! : { operator: 'AND', conditions }
 }
 
@@ -110,14 +117,14 @@ export async function queryEmails(
   if (!queries.length) return new Map()
   const calls: [string, JmapArgs][] = []
   queries.forEach(({ accountId, query }, i) => {
-    // collapseThreads: one result per conversation, its newest message that matches the filter.
+    // collapseThreads (unless turned off): one result per conversation, its newest message that matches the filter.
     calls.push([
       'Email/query',
       {
         accountId,
         filter: emailFilter(query),
         sort: [{ property: 'receivedAt', isAscending: false }],
-        collapseThreads: true,
+        collapseThreads: query.collapseThreads ?? true,
         limit: query.limit,
       },
     ])

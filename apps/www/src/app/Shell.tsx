@@ -146,7 +146,7 @@ function Rail() {
             title={p.label}
             aria-current={page === p.id ? 'page' : undefined}
             onClick={() =>
-              void (p.id === 'mail' || p.id === 'storage'
+              void (p.id === 'mail' || p.id === 'storage' || p.id === 'users'
                 ? navigate({ to: `/${p.id}` })
                 : navigate({ to: '/$page', params: { page: p.id } }))
             }

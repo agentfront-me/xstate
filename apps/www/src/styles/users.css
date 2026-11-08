@@ -1,0 +1,110 @@
+/* Users: follows the Users screen of the "xstate App" design. Reuses the Storage layout (storage.css: sidebar,
+   bordered table, header) and adds the segment items, the profile panel and the segment builder. */
+
+.users { overflow: hidden; }
+
+/* Sidebar */
+.u-side-label { padding: 14px 10px 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.u-seg-item { position: relative; }
+.u-seg-item .s-section { padding-right: 10px; }
+.u-seg-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; opacity: 0; background: var(--bg-muted); }
+.u-seg-item:hover .u-seg-more, .u-seg-more:focus-visible { opacity: 1; }
+.u-seg-item:hover .s-section-meta { visibility: hidden; }
+
+/* Header: the title keeps its place; the search box gives way first on narrow windows. */
+.users .s-head-text { flex: 0 1 auto; min-width: 90px; }
+.users .s-head .spacer-grow { flex: 1; }
+.users .s-search { flex: 0 1 240px; min-width: 120px; }
+.u-domain { position: relative; height: 30px; max-width: 200px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--text-toned); flex-shrink: 0; }
+.u-domain:hover { border-color: var(--border-strong); }
+.u-domain:focus-within { border-color: var(--border-hi); }
+.u-domain .icon { color: var(--text-muted); }
+.u-domain select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+
+/* Table */
+.u-row { grid-template-columns: minmax(0, 2.6fr) 80px minmax(0, 1.3fr) minmax(0, 1.2fr) 100px; padding: 8px 16px; }
+.u-row.s-row-head { padding: 9px 16px; }
+.u-row.is-selected { background: var(--s-selected); }
+.u-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.u-person-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.u-avatar { border-radius: 50%; background: var(--bg-muted); border: 1px solid var(--border); color: var(--text-toned); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-weight: 500; letter-spacing: 0.02em; }
+.u-type { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; background: var(--bg-muted); color: var(--text-toned); font-size: 11px; }
+
+/* Profile panel: over the right of the table, as in the design. */
+.u-panel { position: absolute; top: 50px; right: 0; bottom: 0; width: 340px; max-width: 100%; z-index: 10; background: var(--panel); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.12); display: flex; flex-direction: column; min-height: 0; }
+:root.dark .u-panel { box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45); }
+.u-panel-head { display: flex; align-items: center; gap: 12px; padding: 16px 12px 16px 18px; border-bottom: 1px solid var(--border); }
+.u-panel-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.u-panel-title .row-gap { min-width: 0; }
+.u-panel-scroll { flex: 1; overflow-y: auto; }
+.u-kv { margin: 0; padding: 14px 18px; display: flex; flex-direction: column; gap: 9px; }
+.u-kv-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; font-size: 13px; }
+.u-kv-row dt { color: var(--text-muted); flex-shrink: 0; }
+.u-kv-row dd { margin: 0; color: var(--text-hi); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-kv-row .mono { font-size: 12px; }
+.u-section { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.u-section .u-kv { padding: 0; }
+.u-label { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.u-label-row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.u-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.u-chip { height: 24px; padding: 0 9px; border-radius: 99px; background: var(--bg-muted); color: var(--text-hi); font-size: 12px; }
+.u-chip:hover { box-shadow: 0 0 0 1px var(--border-strong); }
+.u-panel-foot { padding: 14px 18px 18px; border-top: 1px solid var(--border); }
+.link { color: var(--text-hi); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; }
+
+/* Activity */
+.u-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.u-timeline li { position: relative; display: flex; gap: 12px; padding-bottom: 16px; }
+.u-timeline li:not(:last-child)::before { content: ""; position: absolute; left: 12px; top: 26px; bottom: 2px; width: 1px; background: var(--border); }
+.u-dot { width: 25px; height: 25px; border-radius: 50%; background: var(--bg-muted); color: var(--text-muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.u-event { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-top: 3px; font-size: 13px; }
+.u-event-text { overflow-wrap: anywhere; }
+.u-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.u-props { display: flex; flex-wrap: wrap; gap: 4px; }
+.u-prop { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg-muted); color: var(--text-toned); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Segment builder and person dialog */
+.seg-body { gap: 14px; }
+.seg-match { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.seg-match .seg button { min-width: 36px; height: 24px; }
+.seg-rows { display: flex; flex-direction: column; gap: 8px; }
+.seg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seg-row .select.sm { height: 30px; font-size: 13px; background: var(--bg); max-width: 170px; }
+.seg-row > .grow { flex: 1 1 140px; min-width: 120px; }
+.seg-row .x-btn { margin-left: auto; }
+.text-input.sm { height: 30px; font-size: 13px; padding: 0 9px; width: auto; min-width: 0; }
+.seg-days { display: inline-flex; align-items: center; gap: 6px; }
+.seg-days .text-input.sm { width: 64px; }
+.seg-count { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Setup: no one tracked yet */
+.u-setup { max-width: 720px; margin: 24px auto; display: flex; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; }
+.u-setup-head { display: flex; gap: 12px; align-items: flex-start; }
+.u-setup-head p { margin-top: 2px; }
+.u-setup code, .settings code { font-size: 12px; background: var(--bg-muted); padding: 1px 5px; border-radius: 4px; }
+.u-code { position: relative; border: 1px solid var(--border); border-radius: 9px; background: var(--card); }
+.u-code pre { margin: 0; padding: 14px 16px; padding-right: 86px; font-size: 12px; line-height: 1.6; color: var(--text-toned); white-space: pre-wrap; word-break: break-all; }
+.u-code .btn { position: absolute; top: 8px; right: 8px; }
+
+/* Settings → API keys */
+.key-card .card-row { flex-wrap: wrap; align-items: flex-start; }
+.key-head { display: flex; gap: 12px; width: 100%; align-items: flex-start; }
+.key-head .text { flex: 1; min-width: 0; }
+.key-head .when { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.key-line { display: flex; gap: 8px; width: 100%; padding-left: 27px; }
+.key-line .text-input { flex: 1; min-width: 0; height: 32px; font-family: var(--mono); font-size: 12px; background: var(--bg); }
+.key-line .btn { height: 32px; }
+.key-line .btn.icon-only { width: 32px; padding: 0; }
+
+@media (max-width: 1100px) {
+  .u-row { grid-template-columns: minmax(0, 2.4fr) 70px minmax(0, 1.3fr) 90px; }
+  /* storage.css hides a Storage table's second column here; in this table that's Type, which stays. */
+  .s-row.u-row > :nth-child(2) { display: block; }
+  .u-row > :nth-child(4) { display: none; }
+}
+@media (max-width: 680px) {
+  .u-row { grid-template-columns: minmax(0, 1fr) 64px 80px; }
+  .u-row > :nth-child(3) { display: none; }
+  .u-domain { display: none; }
+  .u-panel { top: 0; width: 100%; }
+}

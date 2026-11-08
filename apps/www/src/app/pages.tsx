@@ -6,6 +6,7 @@ export const PAGES: Page[] = [
   { id: 'mail', label: 'Email', icon: 'inbox' },
   { id: 'storage', label: 'Storage', icon: 'hard-drive' },
   { id: 'databases', label: 'Databases', icon: 'database' },
+  { id: 'users', label: 'Users', icon: 'users' },
   { id: 'agents', label: 'Agents', icon: 'bot' },
   { id: 'sites', label: 'Sites', icon: 'globe' },
 ]

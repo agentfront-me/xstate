@@ -1,6 +1,6 @@
-// Settings: Account, Members, Domains, Secrets, Billing, Integrations.
+// Settings: Account, Members, Domains, Secrets, API keys, Billing, Integrations.
 //
-// Account and Domains use the API when signed in. Members, Secrets, Billing and Integrations have no API yet:
+// Account, Domains and API keys use the API when signed in. Members, Secrets, Billing and Integrations have no API yet:
 // they show sample data (./store), marked "Sample data" in the header when signed in, and changes stay in memory.
 
 import { useQueryClient } from '@tanstack/react-query'
@@ -24,10 +24,13 @@ import {
 } from '../lib/core'
 import type { Member } from '../lib/sample'
 import type { Domain } from '../lib/types'
+import { ConfirmDialog } from '../storage/dialogs'
+import { type ApiKeys, keysApi } from '../users/api'
+import { CodeBlock, snippetFor } from '../users/UsersPage'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'secrets' | 'billing' | 'integrations'
+  id: 'account' | 'members' | 'domains' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
   label: string
   icon: IconName
   sample?: boolean
@@ -57,6 +60,7 @@ const SECTIONS: Section[] = [
     },
   },
   { id: 'secrets', label: 'Secrets', icon: 'key-round', sample: true, sub: (_a, d) => `${d.secrets.length} organization secrets` },
+  { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
   { id: 'billing', label: 'Billing', icon: 'credit-card', sample: true, sub: (_a, d) => `${d.billing.plan} · renews ${d.billing.renewsShort}` },
   {
     id: 'integrations',
@@ -116,6 +120,7 @@ export function SettingsPage({ section }: { section: string }) {
             {s.id === 'members' && <MembersSection account={account} data={data} />}
             {s.id === 'domains' && <DomainsSection account={account} />}
             {s.id === 'secrets' && <SecretsSection data={data} />}
+            {s.id === 'api-keys' && <ApiKeysSection account={account} />}
             {s.id === 'billing' && <BillingSection data={data} />}
             {s.id === 'integrations' && <IntegrationsSection data={data} />}
           </div>
@@ -672,6 +677,120 @@ function SecretsSection({ data }: { data: SettingsData }) {
         )}
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// API keys: the organization's two keys (design: Settings → API keys). They serve every public API: tracking in the
+// Users section today, sending email later.
+
+function ApiKeysSection({ account }: { account: Account }) {
+  const admin = account.org.role === 'owner' || account.org.role === 'admin'
+  const [keys, setKeys] = useState<ApiKeys | null>(null)
+  const [secret, setSecret] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [rolling, setRolling] = useState(false)
+
+  useEffect(() => {
+    if (account.mode !== 'live' || !admin) return
+    keysApi.get(account.org.id).then((r) => setKeys(r.keys), (err: unknown) => setError(errorMessage(err)))
+  }, [account.mode, account.org.id, admin])
+
+  if (account.mode !== 'live') return <p className="muted">Sign in to see your organization's API keys.</p>
+  if (!admin) return <p className="muted">Only owners and admins can see the organization's API keys.</p>
+  if (error) return <p className="form-error">{error}</p>
+  if (!keys) return <div className="loading"><span className="spinner" /></div>
+
+  const copy = async (text: string) => toast((await copyText(text)) ? 'Copied' : "Couldn't copy")
+  const reveal = async () => {
+    if (secret) return setSecret(null)
+    try {
+      setSecret((await keysApi.reveal(account.org.id)).key)
+    } catch (err) {
+      toast(errorMessage(err))
+    }
+  }
+  const copySecret = async () => {
+    try {
+      await copy(secret ?? (await keysApi.reveal(account.org.id)).key)
+    } catch (err) {
+      toast(errorMessage(err))
+    }
+  }
+  const lastUsed = keys.secret.lastUsedAt
+  const ago = lastUsed ? `Last used ${new Date(lastUsed).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : 'Never used'
+  const created = new Date(keys.publishable.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+
+  return (
+    <>
+      <div className="group">
+        <GroupHead
+          title="API keys"
+          sub="Keys for your organization. Use the publishable key in browsers and client apps to identify visitors and track events. Keep the secret key on your servers; it has full access to your organization."
+        />
+        <div className="card key-card">
+          <div className="card-row">
+            <div className="key-head">
+              <span className="lead"><Icon name="globe" size={15} /></span>
+              <div className="text">
+                <span className="name">Publishable key</span>
+                <span className="sub">Safe to use in browsers and client apps. Identifies visitors and records events.</span>
+              </div>
+              <span className="when">Created {created}</span>
+            </div>
+            <div className="key-line">
+              <input className="text-input" readOnly value={keys.publishable.key} aria-label="Publishable key" onFocus={(e) => e.target.select()} />
+              <button className="btn" onClick={() => void copy(keys.publishable.key)}><Icon name="copy" size={13} />Copy</button>
+            </div>
+          </div>
+          <div className="card-row">
+            <div className="key-head">
+              <span className="lead"><Icon name="lock" size={15} /></span>
+              <div className="text">
+                <span className="name">Secret key</span>
+                <span className="sub">Server-side only. Full access to users, segments and sending on behalf of your organization.</span>
+              </div>
+              <span className="when">{ago}</span>
+            </div>
+            <div className="key-line">
+              <input className="text-input" readOnly value={secret ?? keys.secret.masked} aria-label="Secret key" onFocus={(e) => secret && e.target.select()} />
+              <button className="btn icon-only" title={secret ? 'Hide' : 'Reveal'} aria-label={secret ? 'Hide secret key' : 'Reveal secret key'} onClick={() => void reveal()}>
+                <Icon name={secret ? 'eye-off' : 'eye'} size={14} />
+              </button>
+              <button className="btn" onClick={() => void copySecret()}><Icon name="copy" size={13} />Copy</button>
+              <button className="btn" onClick={() => setRolling(true)}><Icon name="refresh-cw" size={13} />Roll</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="group">
+        <GroupHead title="Install" sub="Add this to every page of your website. Visitors appear under Users." />
+        <CodeBlock code={snippetFor(keys.publishable.key)} />
+        <p className="muted small">
+          Identify signed-in people with <code>xstate('identify', userId, {'{ email, name }'}, userHash)</code>. Make userHash on your
+          server: the hex HMAC-SHA256 of the user id, keyed with the secret key. Server code can call{' '}
+          <code>POST /v1/collect</code> with <code>Authorization: Bearer</code> and the secret key instead.
+        </p>
+      </div>
+      {rolling && (
+        <ConfirmDialog
+          title="Roll secret key"
+          body="Make a new secret key? The current one stops working right away, so update your servers with the new key."
+          action="Roll key"
+          onClose={() => setRolling(false)}
+          onConfirm={async () => {
+            try {
+              const r = await keysApi.roll(account.org.id)
+              setKeys(r.keys)
+              setSecret(r.key)
+              toast('New secret key created')
+            } catch (err) {
+              toast(errorMessage(err))
+            }
+          }}
+        />
+      )}
+    </>
   )
 }
 

@@ -12,6 +12,9 @@ JWT_SECRET=
 # so set it before the first run. Any long random string: openssl rand -base64 32
 STALWART_WEBHOOK_SECRET=
 
+# Encrypts organizations' secret API keys (Settings → API keys). Any long random string: openssl rand -base64 48
+API_KEYS_ENCRYPTION_KEY=
+
 # Written by `pnpm mail:dev` (local Stalwart on port 18080). Never put the production mx.xstate.io key here.
 STALWART_URL=http://localhost:18080
 STALWART_API_KEY=

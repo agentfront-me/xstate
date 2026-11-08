@@ -20,6 +20,40 @@
         "dev"
       ],
       "port": 8787
+    },
+    {
+      "name": "api-audience",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8790",
+        "--inspector-port",
+        "9231",
+        "--var",
+        "APP_ORIGINS:http://localhost:8791,http://localhost:8787"
+      ],
+      "port": 8790
+    },
+    {
+      "name": "www-audience",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8790/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/www",
+        "exec",
+        "vite",
+        "--port",
+        "8791",
+        "--strictPort"
+      ],
+      "port": 8791
     }
   ]
 }

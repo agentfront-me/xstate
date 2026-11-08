@@ -5,6 +5,7 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, Navigate
 import { MailPage } from '../mail/MailPage'
 import { SettingsPage } from '../settings/SettingsPage'
 import { type StorageSearch, type StorageView, StoragePage } from '../storage/StoragePage'
+import { type UsersSearch, UsersPage } from '../users/UsersPage'
 import { Shell } from './Shell'
 import { PAGES, SoonPage } from './pages'
 
@@ -31,6 +32,20 @@ const storage = createRoute({
   }),
   component: function Storage() {
     return <StoragePage search={storage.useSearch()} />
+  },
+})
+
+const users = createRoute({
+  getParentRoute: () => root,
+  path: '/users',
+  validateSearch: (raw: Record<string, unknown>): UsersSearch => ({
+    segment: str(raw.segment),
+    domain: typeof raw.domain === 'string' && raw.domain && raw.domain.length <= 253 ? raw.domain : undefined,
+    q: typeof raw.q === 'string' && raw.q.trim() ? raw.q.slice(0, 200) : undefined,
+    person: str(raw.person),
+  }),
+  component: function Users() {
+    return <UsersPage search={users.useSearch()} />
   },
 })
 
@@ -61,7 +76,7 @@ const soon = createRoute({
 })
 
 export const router = createRouter({
-  routeTree: root.addChildren([index, mail, storage, settingsIndex, settings, soon]),
+  routeTree: root.addChildren([index, mail, storage, users, settingsIndex, settings, soon]),
   history: createHashHistory(),
   defaultNotFoundComponent: () => <Navigate to="/mail" replace />,
 })

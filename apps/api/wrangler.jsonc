@@ -70,7 +70,15 @@
   ],
   // storage_search: 60 calls a minute per user (each one is an embedding call and up to several Vectorize queries).
   // The namespace id only has to be unique within this Worker.
-  "ratelimits": [{ "name": "SEARCH_RATE", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
+  // COLLECT_RATE: audience events from browsers, 300 a minute per organization and visitor IP (audience/collect.ts).
+  "ratelimits": [
+    { "name": "SEARCH_RATE", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "COLLECT_RATE", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } }
+  ],
+  // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
+  // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
+  "durable_objects": { "bindings": [{ "name": "AUDIENCE", "class_name": "AudienceStore" }] },
+  "migrations": [{ "tag": "v1-audience", "new_sqlite_classes": ["AudienceStore"] }],
   // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
@@ -78,6 +86,8 @@
   // AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY: IAM user that manages SES identities (not sending).
   // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY: an R2 API token's S3 keys, Object Read & Write on all buckets.
   // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
+  // API_KEYS_ENCRYPTION_KEY: encrypts organizations' secret API keys at rest (audience/keys.ts). Any long random
+  // string (openssl rand -base64 48). Changing it makes every stored secret key unreadable, so set it once.
   // DOMAIN_CONNECT_PRIVATE_KEY (optional until DOMAIN_CONNECT_ENABLED is "true"): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {
@@ -89,7 +99,8 @@
       "CLOUDFLARE_API_TOKEN",
       "STALWART_WEBHOOK_SECRET",
       "AWS_SES_ACCESS_KEY_ID",
-      "AWS_SES_SECRET_ACCESS_KEY"
+      "AWS_SES_SECRET_ACCESS_KEY",
+      "API_KEYS_ENCRYPTION_KEY"
     ]
   }
 }

@@ -28,7 +28,9 @@ export const desktop: DesktopBridge | null = window.xstateDesktop ?? null
 export const isMac = desktop ? desktop.platform === 'darwin' : /Mac/.test(navigator.platform)
 
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname)
-const API = desktop?.apiUrl ?? (LOCAL ? 'http://localhost:8788/v1' : 'https://api.xstate.com/v1')
+// Dev only: VITE_API_URL points the dashboard at another local API (e.g. a second wrangler dev on its own port).
+const DEV_API = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:8788/v1'
+const API = desktop?.apiUrl ?? (LOCAL ? DEV_API : 'https://api.xstate.com/v1')
 const SESSION_KEY = 'xstate.session'
 export const PROGRESS_KEY = 'xstate.onboarding'
 const THEME_KEY = 'theme'

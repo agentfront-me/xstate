@@ -36,6 +36,7 @@ export {
   getThread,
   listFolders,
   listMessages,
+  messagesWith,
   sendMessage,
   updateMessage,
   uploadAttachment,

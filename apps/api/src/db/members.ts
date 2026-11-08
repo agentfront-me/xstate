@@ -1,7 +1,7 @@
 // members table: people in an organization, their role and permissions.
 
 export type Role = 'owner' | 'admin' | 'member'
-export type OrgPermission = 'domains.create' | 'domains.delete' | 'members.manage'
+export type OrgPermission = 'domains.create' | 'domains.delete' | 'members.manage' | 'audience.manage'
 export type DomainAccess = 'read' | 'manage'
 /** Stored as JSONB in members.permissions. `domains['*']` applies to every domain in the organization. */
 export type Permissions = { org: OrgPermission[]; domains: Record<string, DomainAccess> }

@@ -54,7 +54,7 @@ export function Menu({ x, y, items, onClose }: { x: number; y: number; items: Me
 // ---------------------------------------------------------------------------------------------------------------
 // Modal shell
 
-function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
