@@ -48,6 +48,7 @@ export {
   type Message,
   type MessageSummary,
 } from './messages'
+export { evaluateSender, sendingHourly, sendingStatus } from './sending'
 export { grantMailboxAccess, listMailboxAccess, revokeMailboxAccess } from './sharing'
 export type {
   Actor,

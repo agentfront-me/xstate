@@ -10,8 +10,8 @@
 #   3. moves its listeners to localhost-only dev ports and sends all outbound mail to a dead relay, so nothing is
 #      ever delivered to real outside addresses (it stays in the queue, then bounces back to the sender). The spam
 #      filter is off, so test mail from made-up senders lands in the inbox;
-#   4. creates an API key and a mail-sync webhook to the local API, and writes STALWART_URL and STALWART_API_KEY
-#      into apps/api/.dev.vars.
+#   4. creates an API key and a mail-sync webhook to the local API, adds the SMTP sending caps
+#      (scripts/stalwart-limits.mjs), and writes STALWART_URL and STALWART_API_KEY into apps/api/.dev.vars.
 #
 # Ports (127.0.0.1 only): HTTP/JMAP + admin UI 18080, SMTP 2525, SMTP submission (TLS) 2465, IMAP (TLS) 2993.
 # Test inbound mail with e.g.: swaks --server 127.0.0.1:2525 --to someone@acme.test --from me@example.com
@@ -200,6 +200,8 @@ print(json.dumps([["x:WebHook/set", {"create": {"w": {
   else
     log "STALWART_WEBHOOK_SECRET isn't set in .dev.vars, so no webhook (mail sync then only runs hourly)"
   fi
+  log "adding the SMTP sending caps (same as production)"
+  node "$API_DIR/scripts/stalwart-limits.mjs" --dev >/dev/null
   stop_bg
 
   set_dev_var STALWART_URL "http://localhost:$HTTP_PORT"
@@ -229,6 +231,7 @@ EOF
 }
 
 RESET_SQL="DELETE FROM files; DELETE FROM mailbox_sync; DELETE FROM mailbox_access; DELETE FROM addresses;
+DELETE FROM send_log; DELETE FROM delivery_counts; DELETE FROM sending_suspensions; DELETE FROM sending_blocks;
 DELETE FROM mailboxes; DELETE FROM email_events; DELETE FROM suppressions; DELETE FROM domains;
 UPDATE members SET permissions = jsonb('{\"org\":[],\"domains\":{}}') WHERE role NOT IN ('owner', 'admin');"
 

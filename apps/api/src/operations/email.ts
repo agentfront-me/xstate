@@ -331,7 +331,9 @@ export const emailSend = defineOperation({
     "Send a message from a mailbox's address. Needs write access to the mailbox. For a reply pass inReplyTo (the " +
     "message id) so mail apps keep it in the same conversation; for a forward pass forwardOf, which brings the " +
     'original attachments along. attachments are blobs from the upload endpoint. The sent copy lands in Sent. ' +
-    'At most 50 recipients in total.',
+    'At most 50 recipients in total. Outside recipients are capped per mailbox (100 an hour, 500 a day) and per ' +
+    'organization (400 an hour, 2,000 a day): past that it fails with send_limit_reached (429). A mailbox or ' +
+    'organization suspended for bounces or spam complaints gets sending_suspended (403).',
   input: z.object({
     mailboxId: id,
     to: addresses.default([]),
@@ -356,6 +358,18 @@ export const emailSend = defineOperation({
       bcc: input.bcc?.map((a) => ({ email: a.email, name: a.name ?? null })),
     }),
   }),
+})
+
+export const emailGetSendingStatus = defineOperation({
+  name: 'email_get_sending_status',
+  description:
+    "The organization's outbound sending limits, how many outside recipients it sent to in the last hour and day, " +
+    'and any active suspensions (a mailbox, or mailboxId null for the whole organization) with the reason. ' +
+    'Owners and admins only.',
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/email/orgs/:organizationId/sending' },
+  mcp: { readOnly: true },
+  run: ({ env, actor }, input) => mailserver.sendingStatus(env, actor, input.organizationId),
 })
 
 export const emailOperations = [
@@ -386,4 +400,5 @@ export const emailOperations = [
   emailGetMailState,
   emailGetAttachment,
   emailSend,
+  emailGetSendingStatus,
 ]

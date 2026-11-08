@@ -1,7 +1,7 @@
 // Amazon SES, for outbound mail. Stalwart relays every message for a non-local domain to SES (docs/stalwart-api.md
 // §8). SES only sends for verified identities and signs with each domain's own DKIM key, so every customer domain
-// is registered here: Easy DKIM (three CNAMEs the customer publishes) plus bounce and complaint notifications to
-// our SNS topic (POST /webhooks/ses).
+// is registered here: Easy DKIM (three CNAMEs the customer publishes) plus bounce, complaint and delivery notifications
+// to our SNS topic (POST /webhooks/ses).
 //
 // Credentials: AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY, an IAM user allowed to manage identities only
 // (not send). Without them, registration is skipped and domains fall back to Stalwart's DKIM record.
@@ -109,7 +109,7 @@ export async function getDomainIdentity(env: SesEnv, domain: string): Promise<Se
 }
 
 /**
- * Registers a domain with SES (Easy DKIM, 2048-bit) and sends its bounces and complaints to our topic. Safe to
+ * Registers a domain with SES (Easy DKIM, 2048-bit) and sends its bounces, complaints and deliveries to our topic. Safe to
  * call again: an existing identity is read and its notification topics set again.
  */
 export async function registerDomain(env: SesEnv, domain: string): Promise<SesIdentity> {
@@ -127,7 +127,8 @@ export async function registerDomain(env: SesEnv, domain: string): Promise<SesId
   }
   const topic = env.SES_SNS_TOPIC_ARNS.split(',')[0]?.trim()
   if (topic) {
-    for (const type of ['Bounce', 'Complaint']) {
+    // Deliveries too: they are the denominator for each sender's bounce and complaint rates (mailserver/sending.ts).
+    for (const type of ['Bounce', 'Complaint', 'Delivery']) {
       await v1(env, { Action: 'SetIdentityNotificationTopic', Identity: domain, NotificationType: type, SnsTopic: topic })
     }
   }

@@ -47,12 +47,3 @@ export async function suppressedFor(db: D1Database, organizationId: string, addr
     .all<{ address: string; reason: 'bounce' | 'complaint' }>()
   return results
 }
-
-/** Complaints against a mailbox's mail since `since`, the main abuse signal. */
-export async function complaintsSince(db: D1Database, mailboxId: string, since: string): Promise<number> {
-  const row = await db
-    .prepare("SELECT count(*) AS n FROM email_events WHERE mailbox_id = ? AND type = 'complaint' AND created_at >= ?")
-    .bind(mailboxId, since)
-    .first<{ n: number }>()
-  return row?.n ?? 0
-}

@@ -365,6 +365,43 @@ AWS blocks outbound port 25 on EC2, so Stalwart hands mail for outside addresses
 - **Testing:** SES's mailbox simulator (`bounce@simulator.amazonses.com`, `complaint@simulator.amazonses.com`)
   produces real notifications without hurting reputation.
 
+### Sending limits and suspension
+
+One spammer could get the shared SES account reviewed or paused (SES reviews at about a 5% bounce rate or a 0.1%
+complaint rate), which would stop mail for every customer. Code: `apps/api/src/mailserver/sending.ts` and
+`sending-rules.ts`; tables in `migrations/0011_sending_limits.sql`.
+
+- **API caps (`email_send`):** outside recipients (not on an xstate domain) per rolling hour and day: 100 / 500 per
+  mailbox, 400 / 2,000 per organization. Past them: 429 `send_limit_reached`. `GET
+  /v1/email/orgs/:organizationId/sending` (`email_get_sending_status`, owners and admins) shows the caps, usage and
+  suspensions.
+- **SMTP caps (mail apps):** Stalwart throttles from `apps/api/scripts/stalwart-limits.mjs`, only for signed-in
+  sessions: 40 messages an hour and 200 a day per user, 150 / 800 per sending domain, and at most 25 recipients per
+  message (100 for mail coming in). Stalwart throttles count messages, not recipients. Run it again after changing
+  the numbers; it replaces its own `xstate:` throttles and reloads settings (`x:Action` `ReloadSettings`), with no
+  restart:
+  `STALWART_URL=https://mx.xstate.io STALWART_API_KEY=… node apps/api/scripts/stalwart-limits.mjs` (add `--dry-run`
+  first to see the changes).
+- **Delivery counts:** SES delivery notifications (set on each domain identity together with bounces and
+  complaints; `registerDomain` in `mailserver/ses.ts`, rerun by "Check DNS") are counted per mailbox per day in
+  `delivery_counts`. They are the denominator for rates, and cover every path: API, SMTP and Stalwart's own mail.
+- **Automatic suspension:** after each bounce or complaint, the sender's last 7 days are judged. A mailbox is
+  suspended at 3 complaints and ≥ 0.05%, or 10 hard bounces and ≥ 3%; a whole organization at 5 complaints or 25
+  hard bounces at the same rates. A suspended mailbox gets 403 `sending_suspended` from the API, and its Stalwart
+  account loses `emailSend` and `jmapEmailSubmissionCreate` (permissions `Merge` with those disabled; any other
+  changes on the account are kept). That makes SMTP sign-in fail with "not authorized to use this service";
+  IMAP and reading mail keep working. Admin-role accounts are never changed in Stalwart, since the API key belongs
+  to one; the API still refuses them. Shared mailboxes have no sign-in, so only the API blocks them.
+  `sending_blocks` records which accounts were changed. The worker logs `sending: SUSPENDED …` as a warning.
+- **Lifting a suspension:** D1 is the source of truth, and the hourly cron makes Stalwart match it.
+  ```
+  wrangler d1 execute xstate --remote --command "UPDATE sending_suspensions SET lifted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), lifted_note = 'reviewed: <why>' WHERE id = '<id>'"
+  ```
+  The API allows sending again at once; SMTP comes back within the hour. A suspension can also be added by hand
+  with reason `manual`.
+- **Not covered yet:** Stalwart's own mail (vacation replies, forwarding rules, bounce notices) isn't capped, only
+  counted. An organization can use both paths at once, so its real ceiling is the API caps plus the SMTP caps.
+
 ## 9. Local development
 
 `wrangler dev` must never reach mx.xstate.io, production SES or the Cloudflare account. Domains created while

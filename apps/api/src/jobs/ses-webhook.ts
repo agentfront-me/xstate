@@ -4,17 +4,18 @@
 // - Notification: an SES bounce or complaint. Recorded in email_events against the sending mailbox. A permanent
 //   bounce suppresses the address for everyone (it doesn't exist); a complaint suppresses it for the sending
 //   organization. email_send then refuses those recipients with a clear error instead of sending more bounces.
-// - Complaints against one mailbox are logged loudly past a threshold, so abuse is spotted early.
+// - Delivery: counted per sending mailbox per day (delivery_counts), the denominator for bounce and complaint rates.
+// - After a bounce or complaint, the sender's last 7 days are checked and the mailbox or its whole organization is
+//   suspended when they cross the thresholds in mailserver/sending.ts.
 //
 // Handles SES identity notifications ("notificationType") and configuration-set events ("eventType").
 
 import type { Context } from 'hono'
 import * as addressesDb from '../db/addresses'
 import * as eventsDb from '../db/email-events'
+import * as sendingDb from '../db/sending'
+import { evaluateSender } from '../mailserver'
 import { isSnsUrl, verifySnsMessage, type SnsMessage } from './sns'
-
-/** Complaints against one mailbox within a week that get flagged for review. */
-const COMPLAINT_ALERT = 3
 
 type SesNotification = {
   notificationType?: string
@@ -26,6 +27,7 @@ type SesNotification = {
     bouncedRecipients?: { emailAddress: string; diagnosticCode?: string }[]
     timestamp?: string
   }
+  delivery?: { recipients?: string[]; timestamp?: string }
   complaint?: { complainedRecipients?: { emailAddress: string }[]; complaintFeedbackType?: string; timestamp?: string }
 }
 
@@ -59,10 +61,21 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
     return c.json({ ignored: 'not an SES notification' })
   }
   const kind = (n.notificationType ?? n.eventType ?? '').toLowerCase()
-  if (kind !== 'bounce' && kind !== 'complaint') return c.json({ ignored: kind || 'unknown' })
+  if (kind !== 'bounce' && kind !== 'complaint' && kind !== 'delivery') return c.json({ ignored: kind || 'unknown' })
 
   const sender = (n.mail?.source ?? '').toLowerCase()
   const owner = sender ? await addressesDb.findByAddress(c.env.DB, sender) : null
+
+  if (kind === 'delivery') {
+    // A notification SNS redelivers is counted twice; that only makes rates look slightly better, never worse.
+    const count = n.delivery?.recipients?.length ?? 0
+    if (!owner || !count) return c.json({ ignored: 'delivery from an unknown sender' })
+    const day = (n.delivery?.timestamp ?? new Date().toISOString()).slice(0, 10)
+    await c.env.DB.batch([
+      sendingDb.addDelivered(c.env.DB, { mailboxId: owner.mailbox_id, organizationId: owner.organization_id, day, count }),
+    ])
+    return c.json({ recorded: count, kind })
+  }
   const now = new Date().toISOString()
   const writes: D1PreparedStatement[] = []
 
@@ -99,12 +112,13 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
   })
   if (writes.length) await c.env.DB.batch(writes)
 
-  if (kind === 'complaint' && owner) {
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-    const count = await eventsDb.complaintsSince(c.env.DB, owner.mailbox_id, weekAgo)
-    if (count >= COMPLAINT_ALERT) {
-      console.warn(`ses-webhook: ABUSE? mailbox ${owner.mailbox_id} (${sender}) has ${count} complaints in 7 days`)
-    }
+  // Suspend the sender if this pushed it over the line. A failure here mustn't make SNS redeliver the event.
+  let suspended: string | null = null
+  if (owner) {
+    suspended = await evaluateSender(c.env, owner.organization_id, owner.mailbox_id).catch((err) => {
+      console.error('ses-webhook: evaluating sender failed', err)
+      return null
+    })
   }
-  return c.json({ recorded: recipients.length, kind })
+  return c.json({ recorded: recipients.length, kind, suspended })
 }

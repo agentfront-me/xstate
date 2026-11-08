@@ -7,6 +7,7 @@ import type { MailboxRow } from '../db/mailboxes'
 import * as usersDb from '../db/users'
 import { mailContext, readableMailboxes } from './access'
 import { EmailError } from './errors'
+import { reserveSend } from './sending'
 import * as jmap from './stalwart/mail'
 import type { FolderRole, JmapAddress, JmapBodyPart, JmapEmail, JmapEmailSummary, JmapFolder } from './stalwart/mail'
 import type { Actor, EmailEnv } from './types'
@@ -410,7 +411,12 @@ export async function sendMessage(
       }
     : body
 
-  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email })
+  // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
+  const reservation = await reserveSend(env, mailbox, recipients.map((r) => r.email))
+  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email }).catch(async (err) => {
+    await reservation.release()
+    throw err
+  })
   if (original) {
     await jmap
       .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')

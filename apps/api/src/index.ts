@@ -8,6 +8,7 @@ import { requireAuth } from './auth/middleware'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
+import { sendingHourly } from './mailserver'
 import type { AppEnv } from './http/types'
 import { operations } from './operations'
 
@@ -51,11 +52,12 @@ export default {
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
       : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
-  // search backfill and sweep.
+  // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>
     ctx.waitUntil(
       Promise.all([
         hourly(env),
+        sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
         searchHourly(env).then((r) => {
           if (r.queued || r.retried || r.swept || r.sweepFailed) console.log('search-hourly', JSON.stringify(r))
         }),

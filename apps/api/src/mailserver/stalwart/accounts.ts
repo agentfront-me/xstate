@@ -1,6 +1,6 @@
 // Stalwart x:Account objects. Users sign in with a password; groups are shared mailboxes opened by their members.
 
-import { create, destroy, indexed, update, type StalwartEnv } from './client'
+import { create, destroy, indexed, jmap, update, type StalwartEnv } from './client'
 
 type AccountFields = {
   /** Local part of the address; the domain comes from domainId. */
@@ -60,6 +60,39 @@ export function setMemberGroups(env: StalwartEnv, id: string, groupIds: string[]
 /** Deletes the account at once; Stalwart removes its mail and other data in a background task. */
 export function destroyAccount(env: StalwartEnv, id: string): Promise<void> {
   return destroy(env, 'x:Account', id)
+}
+
+/** The permissions a sending suspension turns off: SMTP submission (and sign-in on SMTP) and JMAP sending. */
+const SEND_PERMISSIONS = ['emailSend', 'jmapEmailSubmissionCreate']
+
+type Permissions =
+  | { '@type': 'Inherit' }
+  | { '@type': 'Merge' | 'Replace'; enabledPermissions: Record<string, boolean>; disabledPermissions: Record<string, boolean> }
+
+/**
+ * Turns an account's sending on or off, keeping any other permission changes it has. Off blocks SMTP sign-in
+ * ("not authorized to use this service") and JMAP submission; IMAP and reading mail keep working. Returns 'admin'
+ * without changing anything for an administrator account (the API key belongs to one), and 'missing' for an
+ * account that no longer exists.
+ */
+export async function setSendingBlocked(env: StalwartEnv, id: string, blocked: boolean): Promise<'done' | 'admin' | 'missing'> {
+  const [result] = await jmap(env, [['x:Account/get', { ids: [id], properties: ['permissions', 'roles'] }]])
+  const account = (result?.list as { permissions?: Permissions; roles?: { '@type'?: string } }[] | undefined)?.[0]
+  if (!account) return 'missing'
+  if (account.roles?.['@type'] === 'Admin') return 'admin'
+
+  const current = account.permissions ?? { '@type': 'Inherit' }
+  const next: Permissions =
+    current['@type'] === 'Inherit'
+      ? { '@type': 'Merge', enabledPermissions: {}, disabledPermissions: {} }
+      : { ...current, enabledPermissions: { ...current.enabledPermissions }, disabledPermissions: { ...current.disabledPermissions } }
+  for (const p of SEND_PERMISSIONS) {
+    if (blocked) next.disabledPermissions[p] = true
+    else delete next.disabledPermissions[p]
+  }
+  const empty = next['@type'] === 'Merge' && !Object.keys(next.enabledPermissions).length && !Object.keys(next.disabledPermissions).length
+  await update(env, 'x:Account', id, { permissions: empty ? { '@type': 'Inherit' } : next })
+  return 'done'
 }
 
 function common(fields: AccountFields) {
