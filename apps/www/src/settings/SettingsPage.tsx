@@ -329,7 +329,7 @@ function MembersSection({ account, data }: { account: Account; data: SettingsDat
   return (
     <>
       <div className="group">
-        <GroupHead title="Invite" sub="Members can use the shared inbox, agents and databases. Admins can also manage billing and secrets." />
+        <GroupHead title="Invite" sub="Members can use the shared inbox, storage and agents. Admins can also manage billing and secrets." />
         <form className="inline-form" noValidate onSubmit={invite}>
           <input
             className="text-input"

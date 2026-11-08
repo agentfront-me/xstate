@@ -1,15 +1,19 @@
 import { Icon, type IconName } from '../components/Icon'
 
-export type Page = { id: string; label: string; icon: IconName }
+export type Page = { id: string; label: string; icon: IconName; hidden?: boolean }
 
-export const PAGES: Page[] = [
+const ALL_PAGES: Page[] = [
   { id: 'mail', label: 'Email', icon: 'inbox' },
   { id: 'storage', label: 'Storage', icon: 'hard-drive' },
-  { id: 'databases', label: 'Databases', icon: 'database' },
+  // Hidden for now: not in the rail, and their links go to Email. Remove `hidden` to bring them back.
+  { id: 'databases', label: 'Databases', icon: 'database', hidden: true },
   { id: 'users', label: 'Users', icon: 'users' },
   { id: 'agents', label: 'Agents', icon: 'bot' },
-  { id: 'sites', label: 'Sites', icon: 'globe' },
+  { id: 'sites', label: 'Sites', icon: 'globe', hidden: true },
 ]
+
+/** The pages in the rail. */
+export const PAGES: Page[] = ALL_PAGES.filter((p) => !p.hidden)
 
 export function SoonPage({ page }: { page: Page }) {
   return (

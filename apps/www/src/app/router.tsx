@@ -64,7 +64,7 @@ const settings = createRoute({
   },
 })
 
-/** Databases, Agents and Sites: not built yet. Anything else goes to Email. */
+/** Agents: not built yet. Anything else, including hidden pages, goes to Email. */
 const soon = createRoute({
   getParentRoute: () => root,
   path: '/$page',
