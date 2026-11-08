@@ -28,7 +28,7 @@ export function useUploads(source: MailSource, initial: PickedFile[] = []) {
         const id = `f${Date.now()}${Math.random().toString(36).slice(2, 6)}`
         const set = (patch: Partial<PickedFile>) => setFiles((all) => all.map((f) => (f.id === id ? { ...f, ...patch } : f)))
         if (file.size > MAX_ATTACHMENT_BYTES) {
-          setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'error', error: 'Larger than 25 MB' }])
+          setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'error', error: 'Over the 25 MB limit' }])
           continue
         }
         setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'uploading' }])
@@ -49,7 +49,8 @@ export function useUploads(source: MailSource, initial: PickedFile[] = []) {
 /** The uploaded attachments, or why the message can't be sent yet. */
 export function readyAttachments(files: PickedFile[]): { attachments: Upload[]; error?: undefined } | { error: string } {
   if (files.some((f) => f.status === 'uploading')) return { error: 'Wait for attachments to finish uploading.' }
-  if (files.some((f) => f.status === 'error')) return { error: 'Remove the attachments that failed to upload.' }
+  const failed = files.find((f) => f.status === 'error')
+  if (failed) return { error: `${failed.name}: ${failed.error ?? 'Upload failed'}. Remove it to send.` }
   return { attachments: files.flatMap((f) => (f.attachment ? [f.attachment] : [])) }
 }
 
@@ -61,7 +62,7 @@ export function FileChips({ files, onRemove }: { files: PickedFile[]; onRemove: 
         <span key={f.id} className={`attachment${f.status === 'error' ? ' is-error' : ''}`} title={f.error ?? f.name}>
           {f.status === 'uploading' ? <span className="spinner" /> : <Icon name={f.status === 'error' ? 'circle-alert' : 'paperclip'} size={14} />}
           <span className="ellipsis">{f.name}</span>
-          <span className="muted small">{formatSize(f.size)}</span>
+          <span className="muted small">{f.status === 'error' ? (f.error ?? 'Upload failed') : formatSize(f.size)}</span>
           <button type="button" className="x-btn" onClick={() => onRemove(f.id)} aria-label={`Remove ${f.name}`}>
             <Icon name="x" size={12} />
           </button>
