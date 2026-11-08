@@ -125,14 +125,21 @@ export async function registerDomain(env: SesEnv, domain: string): Promise<SesId
     if (!(err instanceof SesAlreadyExists)) throw err
     identity = (await getDomainIdentity(env, domain))!
   }
-  const topic = env.SES_SNS_TOPIC_ARNS.split(',')[0]?.trim()
-  if (topic) {
-    // Deliveries too: they are the denominator for each sender's bounce and complaint rates (mailserver/sending.ts).
-    for (const type of ['Bounce', 'Complaint', 'Delivery']) {
-      await v1(env, { Action: 'SetIdentityNotificationTopic', Identity: domain, NotificationType: type, SnsTopic: topic })
-    }
-  }
+  await setNotificationTopics(env, domain)
   return identity
+}
+
+/**
+ * Sends the domain's bounces, complaints and deliveries to our SNS topic. Deliveries are the denominator for each
+ * sender's bounce and complaint rates (mailserver/sending.ts). Safe to call again.
+ */
+export async function setNotificationTopics(env: SesEnv, domain: string): Promise<void> {
+  if (mode(env) !== 'live') return
+  const topic = env.SES_SNS_TOPIC_ARNS.split(',')[0]?.trim()
+  if (!topic) return
+  for (const type of ['Bounce', 'Complaint', 'Delivery']) {
+    await v1(env, { Action: 'SetIdentityNotificationTopic', Identity: domain, NotificationType: type, SnsTopic: topic })
+  }
 }
 
 /** Removes a domain from SES. One that isn't registered is fine. */

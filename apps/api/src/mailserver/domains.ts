@@ -48,6 +48,11 @@ async function syncSes(env: EmailEnv, domain: domainsDb.DomainRow): Promise<doma
     ? ((await ses.getDomainIdentity(env, domain.name)) ?? (await ses.registerDomain(env, domain.name)))
     : await ses.registerDomain(env, domain.name)
   if (identity.status === domain.ses_status && JSON.stringify(identity.dkimTokens) === domain.ses_dkim_tokens) return domain
+  // Set the topics again as the domain becomes verified: one registered before delivery notifications existed
+  // only has bounces and complaints. A failure here mustn't block verification; the next check doesn't retry it.
+  if (identity.status === 'verified') {
+    await ses.setNotificationTopics(env, domain.name).catch((err) => console.error(`ses: notification topics for ${domain.name} failed`, err))
+  }
   await domainsDb.setSes(env.DB, domain.id, identity, new Date().toISOString()).run()
   return (await domainsDb.find(env.DB, domain.id))!
 }
