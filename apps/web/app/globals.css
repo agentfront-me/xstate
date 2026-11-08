@@ -1,0 +1,16 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Tailwind doesn't scan node_modules; this generates the classes Fumadocs' components use. */
+@source '../node_modules/fumadocs-ui/dist';
+
+/* The docs use Fumadocs' neutral theme; these bring it in line with the marketing site's ink and paper. */
+:root {
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #18181b;
+}
+.dark {
+  --color-fd-background: #18181b;
+  --color-fd-foreground: #ffffff;
+}

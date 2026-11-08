@@ -12,9 +12,10 @@
   "vars": {
     "ENVIRONMENT": "production",
     "STALWART_URL": "https://mx.xstate.io",
-    // Browser origins allowed to call the API (comma-separated): the site's sign-up pages and dashboard, and the
-    // desktop app, which serves the dashboard from app://xstate.
-    "APP_ORIGINS": "https://xstate.com,https://www.xstate.com,app://xstate",
+    // Browser origins allowed to call the API (comma-separated): the dashboard and sign-up pages (go.xstate.com),
+    // and the desktop app, which serves the dashboard from app://xstate. xstate.com stays listed because Domain
+    // Connect returns there (a redirect_uri is only signed when it's on one of these origins).
+    "APP_ORIGINS": "https://go.xstate.com,https://xstate.com,https://www.xstate.com,app://xstate",
     // Cloudflare account that holds the organizations' R2 buckets (xstate-org-<id>).
     "CLOUDFLARE_ACCOUNT_ID": "99322c1871edd6eb7fba729f872c1832",
     // SNS topics allowed to post SES bounces and complaints to /webhooks/ses (comma-separated).

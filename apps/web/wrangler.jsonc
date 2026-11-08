@@ -1,0 +1,22 @@
+{
+  // xstate.com: the marketing site and docs (Next.js via vinext). The dashboard, sign-up and sign-in live on
+  // go.xstate.com (apps/app). `pnpm deploy` builds first; vinext writes the final config to dist/server/wrangler.json.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "xstate-web",
+  "compatibility_date": "2026-11-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "vinext/server/fetch-handler",
+  "assets": {
+    "directory": "dist/client",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "binding": "ASSETS",
+    "run_worker_first": ["/*", "!/_next/static/*", "!/*/_next/static/*"]
+  },
+  // xstate.com and www.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "xstate.com", "custom_domain": true },
+    { "pattern": "www.xstate.com", "custom_domain": true }
+  ]
+}

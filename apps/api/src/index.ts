@@ -33,7 +33,7 @@ app.get('/js/xstate.js', (c) =>
 )
 
 const v1 = new Hono<AppEnv>()
-// The sign-up and onboarding pages on xstate.com call the API from the browser.
+// The dashboard, sign-up and onboarding pages on go.xstate.com call the API from the browser.
 v1.use('*', (c, next) =>
   cors({
     origin: (origin) => (c.env.APP_ORIGINS.split(',').includes(origin) ? origin : null),

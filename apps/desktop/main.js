@@ -1,4 +1,4 @@
-// xstate desktop: an Electron shell around the dashboard (apps/www, built into apps/www/dist).
+// xstate desktop: an Electron shell around the dashboard (apps/app, built into apps/app/dist).
 //
 // The dashboard files are served from app://xstate/ (bundled into the app as resources/web), so the app opens
 // offline and needs no web server. Sign-in pages (/login, /signup) come along too. Pass --dev (or set XSTATE_DEV_URL) to load a
@@ -13,7 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === 'darwin'
 const DEV_URL = process.env.XSTATE_DEV_URL || (process.argv.includes('--dev') ? 'http://localhost:8787/app/' : null)
 const START_URL = DEV_URL ?? 'app://xstate/app/'
-const WEB_ROOT = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(here, '../www/dist')
+const WEB_ROOT = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(here, '../app/dist')
 const API_URL = process.env.XSTATE_API_URL || null
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json')
 const DEFAULTS = { notifications: true, menuBar: false, autoUpdate: true }

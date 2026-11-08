@@ -12,14 +12,34 @@
       "port": 8788
     },
     {
-      "name": "www",
+      "name": "app",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [
         "--filter",
-        "@xstate/www",
+        "@xstate/app",
         "dev"
       ],
       "port": 8787
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/web",
+        "dev"
+      ],
+      "port": 8785
+    },
+    {
+      "name": "web-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/web",
+        "preview"
+      ],
+      "port": 8785
     },
     {
       "name": "api-audience",
@@ -40,13 +60,13 @@
       "port": 8790
     },
     {
-      "name": "www-audience",
+      "name": "app-audience",
       "runtimeExecutable": "env",
       "runtimeArgs": [
         "VITE_API_URL=http://localhost:8790/v1",
         "pnpm",
         "--filter",
-        "@xstate/www",
+        "@xstate/app",
         "exec",
         "vite",
         "--port",

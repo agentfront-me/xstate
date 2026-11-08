@@ -4,7 +4,7 @@
 # STALWART_API_KEY below, SES runs in fake mode, domains ending in .test pass DNS checks, and files go to the shared
 # xstate-dev bucket through a token that can't reach any other bucket.
 ENVIRONMENT=development
-# The www dev server, so its sign-up pages can call this API.
+# The app dev server (apps/app), so its sign-up pages can call this API.
 APP_ORIGINS=http://localhost:8787,app://xstate
 # Signs session JWTs (HS256). Any long random string: openssl rand -base64 48
 JWT_SECRET=

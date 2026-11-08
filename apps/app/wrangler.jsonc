@@ -1,0 +1,16 @@
+{
+  // go.xstate.com: the dashboard (/app/), sign-up and sign-in (/signup/, /login/) and public file links (/s/), built
+  // by Vite into dist/. Static assets on Cloudflare Workers, no Worker script; public/_redirects sends / to /app/.
+  // `pnpm deploy` builds dist/ first. The marketing site and docs on xstate.com are apps/web.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "xstate-app",
+  "compatibility_date": "2026-09-20",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // go.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
+  "workers_dev": false,
+  "routes": [{ "pattern": "go.xstate.com", "custom_domain": true }]
+}

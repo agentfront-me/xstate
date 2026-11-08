@@ -1,0 +1,116 @@
+/* The marketing pages. Everything is scoped to .mk so none of it reaches the docs, which share the root layout. */
+.mk { --ink: #18181b; --paper: #ffffff; --surface: #f4f4f5; --line: #e4e4e7; --muted: #71717a; --faint: #a1a1aa; --mono: ui-monospace, Menlo, monospace; }
+.dark .mk { --ink: #ffffff; --paper: #18181b; --surface: #202023; --line: #3f3f46; --muted: #a1a1aa; --faint: #71717a; }
+.mk { flex: 1; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; background: var(--paper); color: var(--ink); }
+.mk a { color: var(--ink); text-decoration: none; } .mk a:hover { color: var(--muted); }
+.mk h1, .mk h2, .mk h3, .mk p { margin: 0; }
+.mk details > summary { list-style: none; cursor: pointer; } .mk details > summary::-webkit-details-marker { display: none; }
+.mk details[open] .fq-plus { display: none; } .mk details:not([open]) .fq-minus { display: none; }
+
+.mk .page { max-width: 1200px; margin: 0 auto; padding: 0 24px 64px; font-size: 14px; line-height: 1.5; }
+.mk .mono { font-family: var(--mono); }
+.mk .muted { color: var(--muted); }
+.mk .faint { color: var(--faint); }
+.mk .small { font-size: 12px; }
+.mk .btn { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); }
+.mk .btn-solid { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.mk .btn-solid:hover { color: var(--paper); opacity: 0.85; }
+.mk .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Header */
+.mk .site-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; border-bottom: 1px solid var(--line); }
+.mk .site-header nav { display: flex; gap: 20px; font-size: 12px; }
+.mk .site-header nav a, .mk .header-actions a.quiet { color: var(--muted); }
+.mk .site-header nav a:hover, .mk .header-actions a.quiet:hover { color: var(--ink); }
+.mk .header-actions { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.mk .header-actions .btn-solid { padding: 6px 12px; }
+.mk .theme-toggle { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+
+/* Gridded panels: 1px gaps on a line-coloured background draw the rules */
+.mk .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.mk .grid > * { background: var(--paper); min-width: 0; }
+
+/* Hero */
+.mk .hero { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); border-top: none; }
+.mk .hero-copy { padding: 48px 32px; display: flex; flex-direction: column; gap: 20px; }
+.mk .hero h1 { font-size: 32px; line-height: 1.15; font-weight: 400; letter-spacing: -0.02em; text-wrap: pretty; }
+.mk .hero-copy > p { max-width: 48ch; text-wrap: pretty; }
+.mk .hero-art { padding: 24px; display: flex; align-items: center; }
+.mk .hero-art svg { display: block; width: 100%; height: auto; }
+
+/* Sections */
+.mk .section { margin-top: 56px; display: flex; flex-direction: column; gap: 16px; }
+.mk .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.mk .section-head h2 { font-size: 14px; font-weight: 400; }
+
+.mk .card { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.mk .card-meta { display: flex; justify-content: space-between; }
+.mk .card h3 { font-size: 14px; font-weight: 400; }
+.mk .card p { text-wrap: pretty; }
+.mk .card ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.mk .card li { display: flex; gap: 8px; }
+.mk .card li::before { content: "—"; color: var(--faint); }
+
+.mk .quote { margin: 0; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.mk .quote p { text-wrap: pretty; }
+.mk .quote footer { display: flex; justify-content: space-between; gap: 12px; }
+
+/* Pricing */
+.mk .billing { display: flex; align-items: center; gap: 8px; }
+.mk .billing button { background: none; border: none; padding: 0; font: inherit; font-size: 12px; cursor: pointer; color: var(--muted); }
+.mk .billing button[aria-pressed="true"] { color: var(--ink); }
+.mk .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+.mk .pricing { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 12px; }
+.mk .pricing th, .mk .pricing td { text-align: left; font-weight: 400; border-bottom: 1px solid var(--line); }
+.mk .pricing th + th, .mk .pricing td { border-left: 1px solid var(--line); }
+.mk .pricing thead th { padding: 14px 16px; vertical-align: top; }
+.mk .pricing thead th:first-child { color: var(--muted); width: 34%; }
+.mk .pricing tbody th, .mk .pricing td { padding: 10px 16px; }
+.mk .pricing td { font-family: var(--mono); }
+.mk .pricing td:nth-child(2) { color: var(--muted); }
+.mk .plan { display: flex; flex-direction: column; gap: 6px; }
+.mk .plan-name { font-size: 14px; }
+.mk .plan-price { font-size: 20px; font-family: var(--mono); letter-spacing: -0.02em; }
+.mk .plan a { margin-top: 6px; align-self: flex-start; border: 1px solid var(--line); padding: 5px 10px; border-radius: 6px; }
+
+/* Blog */
+.mk .posts { border-top: 1px solid var(--line); }
+.mk .post { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 16px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.mk .post-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mk .post .read { white-space: nowrap; }
+
+/* FAQ */
+.mk .faq { margin-top: 56px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; }
+.mk .faq-intro { display: flex; flex-direction: column; gap: 8px; }
+.mk .faq-intro h2 { font-size: 14px; font-weight: 400; }
+.mk .faq-list { grid-column: span 2; border-top: 1px solid var(--line); min-width: 0; }
+.mk .faq-list details { border-bottom: 1px solid var(--line); }
+.mk .faq-list summary { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.mk .faq-list details p { padding: 0 0 14px; max-width: 64ch; text-wrap: pretty; }
+
+/* CTA */
+.mk .cta { margin-top: 56px; border: 1px solid var(--line); background: var(--surface); padding: 32px; display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+.mk .cta-copy { display: flex; flex-direction: column; gap: 6px; }
+.mk .cta h2 { font-size: 20px; font-weight: 400; letter-spacing: -0.01em; }
+
+/* Footer */
+.mk .site-footer { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 24px; display: flex; flex-direction: column; gap: 24px; font-size: 12px; }
+.mk .footer-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 24px; }
+.mk .footer-cols > div { display: flex; flex-direction: column; gap: 6px; }
+.mk .footer-cols > div:first-child { gap: 8px; }
+.mk .machine { border: 1px solid var(--line); padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; font-family: var(--mono); color: var(--muted); }
+.mk .machine a { color: var(--muted); }
+.mk .machine a:hover { color: var(--ink); }
+.mk .machine .note { margin-left: auto; color: var(--faint); }
+.mk .footer-base { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--faint); }
+
+@media (max-width: 720px) {
+  .mk .site-header nav { display: none; }
+  .mk .faq-list { grid-column: auto; }
+  .mk .hero-copy { padding: 32px 20px; }
+  .mk .post { grid-template-columns: minmax(0, 1fr) auto; }
+  .mk .post time { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk .hero-art svg * { animation: none !important; }
+}

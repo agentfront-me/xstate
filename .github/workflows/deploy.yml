@@ -49,5 +49,7 @@ jobs:
 
       - name: Deploy api
         run: pnpm --filter @xstate/api run deploy
-      - name: Deploy www
-        run: pnpm --filter @xstate/www run deploy
+      - name: Deploy app (go.xstate.com)
+        run: pnpm --filter @xstate/app run deploy
+      - name: Deploy web (xstate.com)
+        run: pnpm --filter @xstate/web run deploy

@@ -18,7 +18,7 @@ onboarding looks the same as it does today.
 | API operation | `email_domain_connect_url`, `GET /v1/email/domains/:domainId/domain-connect?redirectUri=…` → `{ applyUrl, provider }` |
 | Tests (signature checked against OpenSSL) | `pnpm --filter @xstate/api test` |
 | Key pair generator | [`apps/api/scripts/domain-connect-key.sh`](../../apps/api/scripts/domain-connect-key.sh) |
-| Onboarding button and return handling | [`apps/www/src/onboarding/VerifyStep.tsx`](../../apps/www/src/onboarding/VerifyStep.tsx) and `state.ts` |
+| Onboarding button and return handling | [`apps/app/src/onboarding/VerifyStep.tsx`](../../apps/app/src/onboarding/VerifyStep.tsx) and `state.ts` |
 | Switch | `DOMAIN_CONNECT_ENABLED` in [`apps/api/wrangler.jsonc`](../../apps/api/wrangler.jsonc) (now `"false"`) |
 
 The template sets:
@@ -98,7 +98,7 @@ Send this to **domain-connect@cloudflare.com** once the PR is open (merged is be
 - **Template link:** the PR, or the merged file at
   `https://github.com/Domain-Connect/Templates/blob/master/xstate.io.mail.json`
 - **Public key FQDN:** `_dck1.xstate.io` (`syncPubKeyDomain` `xstate.io`, key host `_dck1`)
-- **SVG logo:** `apps/www/public/brand/logo.svg`, attached, and https://xstate.com/brand/logo.svg
+- **SVG logo:** `apps/web/public/brand/logo.svg`, attached, and https://xstate.com/brand/logo.svg
 - **Proxy default:** DNS only. These are mail records: MX and TXT can't be proxied, and the DKIM CNAMEs must
   resolve to `dkim.amazonses.com` unproxied.
 - **Test account ID:** the Cloudflare account to enable the template on first, for testing. It could be the account

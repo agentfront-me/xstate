@@ -1,0 +1,2 @@
+# go.xstate.com/ has no page of its own: the dashboard is at /app/ (it sends signed-out people to /login/).
+/ /app/ 302
