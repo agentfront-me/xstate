@@ -172,7 +172,6 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .input.search { height: 30px; width: 200px; padding: 0 10px; color: var(--text-dim); background: var(--panel); }
 .input.search input { font-size: 12px; }
 .plan-table .tr { grid-template-columns: 20px minmax(0, 1.6fr) 60px 60px 222px minmax(0, 1.3fr); }
-.include { flex-wrap: nowrap; }
 .plan-table .tr.is-selected { background: var(--primary-10); }
 .plan-table .tr.is-skipped .who, .plan-table .tr.is-skipped .num { opacity: 0.55; }
 .include { display: flex; gap: 4px; flex-wrap: wrap; }

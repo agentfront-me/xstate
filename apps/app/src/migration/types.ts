@@ -1,5 +1,5 @@
 // What the Google Workspace migration wizard works with: the shapes the migration API returns
-// (apps/api/src/migration/service.ts). ./api.ts simulates the steps the API doesn't do yet, and everything in demo mode.
+// (apps/api/src/migration/service.ts). ./api.ts calls the API when signed in and simulates everything in demo mode.
 
 export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive'
 

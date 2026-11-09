@@ -11,7 +11,7 @@ export type GoogleKeyEnv = { GOOGLE_MIGRATION_KEY?: string }
 export type ServiceAccount = { clientEmail: string; clientId: string; privateKey: CryptoKey }
 
 /** Why Google refused a token or a call. `status` is Google's HTTP status. */
-export type GoogleErrorCode = 'not_configured' | 'not_authorized' | 'no_such_user' | 'rate_limited' | 'forbidden' | 'not_found' | 'google_error'
+export type GoogleErrorCode = 'not_configured' | 'not_authorized' | 'no_such_user' | 'rate_limited' | 'forbidden' | 'not_found' | 'google_error' | 'too_large'
 
 export class GoogleError extends Error {
   readonly code: GoogleErrorCode
@@ -99,10 +99,18 @@ function base64url(bytes: Uint8Array): string {
 }
 
 /** GET a Google API as `token`. Retries twice on rate limits and server errors, then throws GoogleError. */
-export async function googleGet<T>(token: string, url: string | URL): Promise<T> {
+export async function googleGet<T>(token: string, url: string | URL, options: { maxBytes?: number } = {}): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    if (res.ok) return (await res.json()) as T
+    if (res.ok) {
+      // Too big to hold: say so before reading the body (the caller decides what to do with the item).
+      const length = Number(res.headers.get('Content-Length') ?? 0)
+      if (options.maxBytes && length > options.maxBytes) {
+        await res.body?.cancel()
+        throw new GoogleError('too_large', `${length} bytes`, 200)
+      }
+      return (await res.json()) as T
+    }
     const text = await res.text()
     const rateLimited = res.status === 429 || (res.status === 403 && /rateLimitExceeded|userRateLimitExceeded/.test(text))
     if ((rateLimited || res.status >= 500) && attempt < 2) {

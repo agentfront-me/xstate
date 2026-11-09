@@ -35,6 +35,21 @@ export function insertInvited(db: D1Database, user: { id: string; email: string;
 }
 
 /** Sets the password, and the name if they give one. Only while there's no password yet (accepting an invite). */
+/** Deletes an invited user who never set a password and belongs to no organization (any more). */
+export function removeIfUnclaimed(db: D1Database, id: string): D1PreparedStatement {
+  return db.prepare('DELETE FROM users WHERE id = ? AND password_hash IS NULL AND NOT EXISTS (SELECT 1 FROM members WHERE user_id = users.id)').bind(id)
+}
+
+/** Deletes an invited user whose every invitation has expired, so the email can sign up afresh. */
+export function removeIfLapsed(db: D1Database, id: string, now: string): D1PreparedStatement {
+  return db
+    .prepare(
+      `DELETE FROM users WHERE id = ? AND password_hash IS NULL
+         AND NOT EXISTS (SELECT 1 FROM invitations i JOIN members m ON m.id = i.member_id WHERE m.user_id = users.id AND i.expires_at > ?)`,
+    )
+    .bind(id, now)
+}
+
 export function setFirstPassword(db: D1Database, id: string, passwordHash: string, name: string | null, now: string): D1PreparedStatement {
   return db
     .prepare('UPDATE users SET password_hash = ?, name = COALESCE(?, name), updated_at = ? WHERE id = ? AND password_hash IS NULL')

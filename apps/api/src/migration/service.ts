@@ -106,7 +106,14 @@ async function view(env: MigrationEnv, m: MigrationRow, previousSeen: string | n
 export type MigrationView = Awaited<ReturnType<typeof view>>
 
 /** Which of these addresses already have a mailbox in the organization. */
-async function existingAddresses(env: MigrationEnv, organizationId: string, emails: string[]): Promise<Set<string>> {
+/** Throws unless every address is on a domain the organization has verified in DNS. */
+async function requireOwnDomains(env: MigrationEnv, organizationId: string, emails: string[], why: string): Promise<void> {
+  const verified = new Set((await domainsDb.listByOrganization(env.DB, organizationId)).filter((d) => d.status === 'verified').map((d) => d.name))
+  const foreign = [...new Set(emails.map((e) => e.split('@')[1] ?? '').filter((d) => !verified.has(d)))]
+  if (foreign.length) throw new ApiError('domain_not_verified', `${why}: ${foreign.slice(0, 3).join(', ')}${foreign.length > 3 ? ' and others' : ''}.`, 403)
+}
+
+export async function existingAddresses(env: Pick<Env, 'DB'>, organizationId: string, emails: string[]): Promise<Set<string>> {
   if (!emails.length) return new Set()
   const { results } = await env.DB.prepare(
     'SELECT address FROM addresses WHERE organization_id = ? AND address IN (SELECT value FROM json_each(?))',
@@ -145,18 +152,20 @@ function toUserPlan(u: MigrationUserRow): UserPlan {
 // ---------------------------------------------------------------------------------------------------------------
 // Access
 
-async function context(env: MigrationEnv, actor: Actor, organizationId: string, need: 'read' | 'admin') {
+export async function requireMigrationAccess(env: EmailEnv, actor: Actor, organizationId: string, need: 'read' | 'admin') {
   const member = await loadMember(env, organizationId, actor.userId)
   if (need === 'admin' && !isAdmin(member)) throw new ApiError('forbidden', 'Only owners and admins can run a migration', 403)
   return member
 }
+const context = requireMigrationAccess
 
 /** The active migration; for reading (`finished: true`), the latest finished one too. */
-async function active(env: MigrationEnv, organizationId: string, finished = false): Promise<MigrationRow> {
+export async function requireActive(env: Pick<Env, 'DB'>, organizationId: string, finished = false): Promise<MigrationRow> {
   const m = finished ? await migrationsDb.findCurrent(env.DB, organizationId) : await migrationsDb.findActive(env.DB, organizationId)
   if (!m) throw new ApiError('migration_not_found', 'There is no migration in progress. Open the import again to start one.', 404)
   return m
 }
+const active = requireActive
 
 // ---------------------------------------------------------------------------------------------------------------
 // Operations
@@ -185,6 +194,16 @@ export async function getMigration(env: MigrationEnv, actor: Actor, organization
   return view(env, m, previous)
 }
 
+/** Done → "Import again": a fresh migration, once the last one is finished or cancelled. */
+export async function startNew(env: MigrationEnv, actor: Actor, organizationId: string): Promise<MigrationView> {
+  await context(env, actor, organizationId, 'admin')
+  const current = await migrationsDb.findActive(env.DB, organizationId)
+  if (current) return view(env, current, null)
+  const now = new Date().toISOString()
+  await migrationsDb.insert(env.DB, { id: crypto.randomUUID(), organizationId, startedBy: actor.userId, now }).run()
+  return view(env, (await migrationsDb.findActive(env.DB, organizationId))!, null)
+}
+
 export async function setStage(env: MigrationEnv, actor: Actor, organizationId: string, stage: Stage): Promise<MigrationView> {
   await context(env, actor, organizationId, 'admin')
   const m = await active(env, organizationId)
@@ -194,7 +213,12 @@ export async function setStage(env: MigrationEnv, actor: Actor, organizationId: 
     throw new ApiError('already_started', 'The migration has started; the plan can no longer change', 409)
   }
   const patch: Parameters<typeof migrationsDb.update>[2] = { stage }
-  if (stage === 'done') Object.assign(patch, { status: 'finished', finished_at: new Date().toISOString() })
+  if (stage === 'done') {
+    // Finishing stops nothing, so it waits for the copy and the final sync (jobs that run on and a second import
+    // that could never start would follow).
+    if (m.apply_state !== 'done' || m.final_state !== 'done') throw new ApiError('not_finished', 'The final sync has to finish before the import can', 409)
+    Object.assign(patch, { status: 'finished', finished_at: new Date().toISOString() })
+  }
   await migrationsDb.update(env.DB, m.id, patch).run()
   return view(env, (await migrationsDb.find(env.DB, m.id))!, null)
 }
@@ -220,6 +244,9 @@ export async function verify(env: MigrationEnv, actor: Actor, organizationId: st
       400,
     )
   }
+  // xstate's service account is the same for every customer, so Google accepting the admin proves nothing about
+  // whose Workspace it is. Owning the admin's domain in xstate (verified in DNS) does.
+  await requireOwnDomains(env, organizationId, [email], 'The admin must be on a domain this organization has verified in xstate (Settings → Domains)')
   // A new admin or a different Workspace starts discovery over.
   const changed = m.admin_email !== email
   await migrationsDb
@@ -306,6 +333,14 @@ export async function start(env: MigrationEnv, actor: Actor, organizationId: str
   if (missing.length) {
     throw new ApiError('domains_missing', `Add ${missing.join(', ')} to xstate first (Settings → Domains). Addresses on ${missing.length === 1 ? 'it' : 'them'} can't be created until then.`, 409)
   }
+  // And everyone whose data is copied, whatever the plan does with it, must be on a domain this organization has
+  // verified: that's what shows the Workspace is theirs to copy.
+  await requireOwnDomains(
+    env,
+    organizationId,
+    users.filter((u) => u.action !== 'skip').map((u) => u.email),
+    'Every person copied must be on a domain this organization has verified in xstate. Verify the domain, or skip them',
+  )
   // An address that has a mailbox already can't be created again: the admin picks "Use existing" for it.
   const taken = await existingAddresses(env, organizationId, needed)
   if (taken.size) {
@@ -374,7 +409,7 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
     if (drive) {
       processed += drive.done
       total += drive.total
-      files += u.drive_state === 'done' ? u.drive_done : u.drive_done
+      files += u.drive_done
     }
     const mailState = !mail ? 'done' : u.mail_state === 'done' ? 'done' : u.mail_state === 'attention' ? 'attention' : u.mail_state === 'copying' ? (u.mail_note === 'slowed' ? 'slowed' : 'copying') : 'waiting'
     const contactsState = !contacts ? 'done' : u.contacts_state === 'done' ? 'done' : u.contacts_state === 'attention' ? 'attention' : u.contacts_state === 'copying' ? 'copying' : 'waiting'
@@ -491,7 +526,7 @@ export async function checkAccess(env: MigrationEnv, actor: Actor, organizationI
 /**
  * Unblocks one person whose copy needs attention: 'raise' removes the quota of their xstate mailbox (it was too
  * small for their Gmail), 'retry' tries again (after restoring a suspended account in Google, say), 'skip' gives up on
- * the rest of their mail (what was copied stays; the report lists them).
+ * whichever of their parts needs attention (what was copied stays; the report lists them).
  */
 export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: string, googleId: string, fix: 'raise' | 'retry' | 'skip'): Promise<void> {
   await context(env, actor, organizationId, 'admin')
@@ -522,9 +557,6 @@ export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: s
     )
       .bind(m.id, googleId)
       .run()
-    await env.DB.prepare("UPDATE migration_drives SET state = 'done', note = 'Skipped by an admin' WHERE migration_id = ? AND drive_id = ? AND state = 'attention'")
-      .bind(m.id, googleId.replace(/^drive:/, ''))
-      .run()
     return
   }
   if (fix === 'raise') {
@@ -542,11 +574,6 @@ export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: s
      WHERE migration_id = ? AND google_id = ?`,
   )
     .bind(m.id, googleId)
-    .run()
-  await env.DB.prepare(
-    "UPDATE migration_drives SET state = CASE WHEN cursor IS NULL AND folder_id IS NULL THEN NULL ELSE 'copying' END, note = NULL WHERE migration_id = ? AND drive_id = ? AND state = 'attention'",
-  )
-    .bind(m.id, googleId.replace(/^drive:/, ''))
     .run()
   if (!m.paused_at && !m.access_lost_at) await restart(env, m.id, googleId)
 }

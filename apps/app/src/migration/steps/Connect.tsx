@@ -10,9 +10,9 @@ import type { Ctx } from '../main'
 import type { Connection } from '../types'
 import { CopyButton, CopyLink, Panel, Title } from '../ui'
 
-const ALL_SCOPES = migrationApi.SCOPES.map((s) => s.url).join(',')
-
 export function ConnectStep({ ctx }: { ctx: Ctx }) {
+  // Read at render: the API's scope list replaces the demo one once the migration loads.
+  const ALL_SCOPES = migrationApi.SCOPES.map((s) => s.url).join(',')
   const [email, setEmail] = useState(ctx.migration.connection?.adminEmail ?? (ctx.isAdmin ? ctx.user.email : ''))
   const [connection, setConnection] = useState<Connection | null>(ctx.migration.connection)
   const [message, setMessage] = useState<Message>(null)

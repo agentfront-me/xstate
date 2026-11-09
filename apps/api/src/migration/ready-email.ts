@@ -1,5 +1,7 @@
 // The email to the admin who started a Google Workspace import, once everything is copied (./watchdog.ts).
 
+import { paragraph, systemMailHtml } from '../mailserver/mail-html.ts'
+
 export function readyEmail(v: {
   url: string
   organization: string
@@ -32,23 +34,9 @@ Open the import:
 ${v.url}
 `
 
-  const e = escapeHtml
-  const p = (s: string, extra = '') => `<p style="margin:0 0 14px;font-size:14px;line-height:1.55${extra}">${e(s)}</p>`
-  const html = `<!DOCTYPE html>
-<html><body style="margin:0;padding:24px;background:#f6f6f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a19">
-<div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e6e6e2;border-radius:10px;padding:28px">
-<p style="margin:0 0 20px;font-weight:600;font-size:15px">xstate</p>
-${p(greeting)}
-${p(copied)}
-${attention ? p(attention, ';color:#8a4b00') : ''}
-${p(next, ';margin-bottom:22px')}
-<p style="margin:0"><a href="${e(v.url)}" style="display:inline-block;background:#1a1a19;color:#fff;text-decoration:none;font-size:14px;font-weight:500;padding:10px 18px;border-radius:7px">Open the import</a></p>
-</div>
-</body></html>`
-
+  const html = systemMailHtml({
+    paragraphs: [paragraph(greeting), paragraph(copied), ...(attention ? [paragraph(attention, ';color:#8a4b00')] : []), paragraph(next, ';margin-bottom:22px')],
+    button: { text: 'Open the import', url: v.url },
+  })
   return { subject, text, html }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }

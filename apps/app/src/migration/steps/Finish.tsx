@@ -1,7 +1,7 @@
 // 8 · Finish: remove xstate's access in Google (with a live check), invite the team, keep the report. Then the
 // final "<Org> is on xstate" screen.
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../../components/Icon'
 import { errorMessage, initials } from '../../lib/core'
 import * as migrationApi from '../api'
@@ -31,10 +31,18 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
   const [links, setLinks] = useState<migrationApi.InviteLink[]>([])
   const tick = useTick(1000)
 
+  const inFlight = useRef(false)
   useEffect(() => {
     let live = true
-    // The access check runs every few seconds (every minute on the server); the countdown ticks every second.
-    if (!status || tick % 5 === 0) void migrationApi.finishStatus(orgId).then((s) => live && setStatus(s))
+    // The access check runs every few seconds (every minute on the server); the countdown ticks every second. One
+    // request at a time, so a slow first answer doesn't pile up requests.
+    if ((!status || tick % 5 === 0) && !inFlight.current) {
+      inFlight.current = true
+      migrationApi
+        .finishStatus(orgId)
+        .then((s) => live && setStatus(s), (err: unknown) => live && setError(errorMessage(err)))
+        .finally(() => (inFlight.current = false))
+    }
     return () => {
       live = false
     }
@@ -177,8 +185,8 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
               <span className="num">Contacts</span>
               <span className="num">Files</span>
             </div>
-            {status.report.slice(0, REPORT_ROWS).map((r) => (
-              <div className="tr" role="row" key={r.name}>
+            {status.report.slice(0, REPORT_ROWS).map((r, i) => (
+              <div className="tr" role="row" key={`${i}-${r.name}`}>
                 <span className="hi ellipsis">
                   {r.name}
                   {r.shared && <span className="muted"> (shared)</span>}
@@ -237,8 +245,16 @@ function Numbered({ n, children }: { n: number; children: ReactNode }) {
 export function DoneStep({ ctx }: { ctx: Ctx }) {
   const orgId = ctx.org.id
   const [status, setStatus] = useState<FinishStatus | null>(null)
+  const [error, setError] = useState('')
   useEffect(() => {
-    void migrationApi.finishStatus(orgId).then(setStatus)
+    let live = true
+    migrationApi.finishStatus(orgId).then(
+      (s) => live && setStatus(s),
+      (err: unknown) => live && setError(errorMessage(err)),
+    )
+    return () => {
+      live = false
+    }
   }, [orgId])
   const totals = migrationApi.copiedTotals(orgId)
   const app = `/app/${ctx.demo ? '?demo' : ''}`
@@ -276,11 +292,25 @@ export function DoneStep({ ctx }: { ctx: Ctx }) {
         </a>
       </div>
       {status && (
-        <button className="text-btn" onClick={() => void download(orgId, status, ctx.org.name)}>
+        <button className="text-btn" onClick={() => download(orgId, status, ctx.org.name).catch((err: unknown) => setError(errorMessage(err)))}>
           Download the report (CSV)
         </button>
       )}
       {status && <KeptNote status={status} />}
+      {ctx.isAdmin && (
+        <button
+          className="text-btn"
+          onClick={() =>
+            migrationApi
+              .startNew(orgId)
+              .then((m) => ctx.setMigration(m))
+              .catch((err: unknown) => setError(errorMessage(err)))
+          }
+        >
+          Import another Google Workspace
+        </button>
+      )}
+      {error && <Notice kind="error">{error}</Notice>}
     </div>
   )
 }

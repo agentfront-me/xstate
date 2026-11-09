@@ -15,7 +15,14 @@ export const PAGEVIEW = '$pageview'
 // Segment filters
 
 const days = z.number().int().min(1).max(3650)
-const attrKey = z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_ .-]+$/, 'Attribute names use letters, numbers, spaces, _ . -')
+const attrKey = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_ .-]+$/, 'Attribute names use letters, numbers, spaces, _ . -')
+  // Set by imports only: it names the object in the organization's bucket that the photo endpoint serves.
+  .refine((k) => k !== 'photoKey', 'photoKey is set by imports')
 const eventName = z.string().trim().min(1).max(100)
 
 export const condition = z.discriminatedUnion('kind', [

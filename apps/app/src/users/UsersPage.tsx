@@ -10,7 +10,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
-import { useAccount } from '../lib/account'
+import { isOrgAdmin, useAccount } from '../lib/account'
 import { apiUrl, copyText, errorMessage } from '../lib/core'
 import { ConfirmDialog, Menu, type MenuItem } from '../storage/dialogs'
 import { saveBlob } from '../storage/api'
@@ -35,7 +35,7 @@ export function UsersPage({ search }: { search: UsersSearch }) {
       </section>
     )
   }
-  const canManage = account.org.role === 'owner' || account.org.role === 'admin'
+  const canManage = isOrgAdmin(account.org)
   return <Users orgId={account.org.id} memberId={account.org.memberId} canManage={canManage} search={search} />
 }
 

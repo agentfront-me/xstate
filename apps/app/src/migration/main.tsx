@@ -10,7 +10,7 @@ import '../styles/migration.css'
 import { StrictMode, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Icon } from '../components/Icon'
-import { isDemo } from '../lib/account'
+import { isDemo, isOrgAdmin } from '../lib/account'
 import { api, ApiError, applyTheme, errorMessage, session } from '../lib/core'
 import { sampleOrg } from '../lib/sample'
 import type { Domain, Mailbox, Org, User } from '../lib/types'
@@ -79,7 +79,7 @@ async function loadAccount(): Promise<Loaded> {
     domain: domains[0]?.name ?? 'yourcompany.com',
     domains: domains.map((d) => d.name),
     mailboxes,
-    isAdmin: org.role === 'owner' || org.role === 'admin',
+    isAdmin: isOrgAdmin(org),
     demo,
   }
 }
@@ -115,7 +115,11 @@ function Migrate() {
   const go = useCallback(
     async (next: Stage) => {
       if (!loaded) return
-      setMigration(await migrationApi.setStage(loaded.org.id, next))
+      try {
+        setMigration(await migrationApi.setStage(loaded.org.id, next))
+      } catch (err) {
+        setError(errorMessage(err))
+      }
     },
     [loaded],
   )

@@ -21,7 +21,14 @@ type Invite = {
 
 type Accepted = { organization: { id: string; name: string }; signIn: true } | ({ organization: { id: string; name: string }; signIn: false } & Session)
 
-const token = decodeURIComponent(location.hash.slice(1))
+const token = (() => {
+  try {
+    return decodeURIComponent(location.hash.slice(1))
+  } catch {
+    // A mail client mangled the link: the page says the code is missing instead of going blank.
+    return ''
+  }
+})()
 // Out of the address bar (and history) as soon as it's read.
 if (token) history.replaceState(null, '', location.pathname)
 

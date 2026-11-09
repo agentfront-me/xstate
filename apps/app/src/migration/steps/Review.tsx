@@ -96,7 +96,7 @@ export function ReviewStep({ ctx }: { ctx: Ctx }) {
         <button className="btn btn-auto" onClick={() => void ctx.go('plan')}>
           Back to plan
         </button>
-        <button className="btn btn-primary btn-auto" disabled={pending} aria-busy={pending || undefined} onClick={() => void startCopy()}>
+        <button className="btn btn-primary btn-auto" disabled={pending || !ctx.isAdmin} aria-busy={pending || undefined} onClick={() => void startCopy()}>
           {pending ? <span className="spinner spinner-on-primary" /> : <Icon name="download" size={14} />}
           Start copying
         </button>

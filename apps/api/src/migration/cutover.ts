@@ -7,23 +7,26 @@ import * as migrationsDb from '../db/migrations'
 import type { MigrationRow } from '../db/migrations'
 import { ApiError } from '../errors'
 import { domainConnectUrl, verifyDomain } from '../mailserver'
-import { isAdmin, loadMember } from '../mailserver/access'
+import { isAdmin } from '../mailserver/access'
 import { migrationInvite } from '../members/service'
 import { startFinalPass } from './final'
 import { workspace } from './google/workspace'
-import type { MigrationEnv } from './service'
+import { requireActive, requireMigrationAccess } from './service'
 import { migrationStore } from './store'
 import { KEEP_AFTER_FINISH_DAYS, reportKeptUntil } from './watchdog'
 
-type Env2 = MigrationEnv & Env
+type Env2 = Env
 
+/** The active migration, for an admin. */
 async function active(env: Env2, actor: Actor, organizationId: string, need: 'read' | 'admin'): Promise<MigrationRow> {
-  const member = await loadMember(env, organizationId, actor.userId)
-  if (need === 'admin' && !isAdmin(member)) throw new ApiError('forbidden', 'Only owners and admins can run a migration', 403)
-  // Reading also works on the latest finished migration (its Done screen and report); changes need an active one.
-  const m = need === 'read' ? await migrationsDb.findCurrent(env.DB, organizationId) : await migrationsDb.findActive(env.DB, organizationId)
-  if (!m) throw new ApiError('migration_not_found', 'There is no migration in progress', 404)
-  return m
+  await requireMigrationAccess(env, actor, organizationId, need)
+  return requireActive(env, organizationId)
+}
+
+/** The active migration, or the latest finished one (its Done screen and report stay readable), and who's asking. */
+async function current(env: Env2, actor: Actor, organizationId: string, adminOnly = false) {
+  const member = await requireMigrationAccess(env, actor, organizationId, adminOnly ? 'admin' : 'read')
+  return { m: await requireActive(env, organizationId, true), admin: isAdmin(member) }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -141,7 +144,7 @@ const REASONS: Record<string, { label: string; reason: string }> = {
 const reasonOf = (reason: string) => REASONS[reason] ?? (reason.startsWith('google_') ? { label: `Google ${reason.slice(7)} files`, reason: 'no file format to export' } : { label: reason, reason: '' })
 
 export async function finishStatus(env: Env2, actor: Actor, organizationId: string) {
-  const m = await active(env, actor, organizationId, 'read')
+  const { m, admin } = await current(env, actor, organizationId)
 
   // Is xstate's access gone? Asked at most once a minute. Also after finishing: an admin may finish first and remove
   // the access later.
@@ -165,7 +168,8 @@ export async function finishStatus(env: Env2, actor: Actor, organizationId: stri
     accessRemovedAt: removedAt,
     nextCheckAt: new Date(Date.parse(checkedAt ?? new Date().toISOString()) + ACCESS_CHECK_MS).toISOString(),
     invitesSent: !!m.invites_sent_at,
-    newMembers: invited.map((u) => ({ name: u.name, email: u.email, sendTo: u.recovery_email })),
+    // Where each invite goes is a personal address: admins only (they send the invites).
+    newMembers: invited.map((u) => ({ name: u.name, email: u.email, ...(admin && { sendTo: u.recovery_email }) })),
     report,
     skipped,
     // The list of skipped items is deleted 30 days after finishing (./watchdog.ts); the counts stay.
@@ -219,7 +223,7 @@ export async function sendInvites(env: Env2, actor: Actor, organizationId: strin
 
 /** The report as CSV: one row per person and shared drive, then every skipped item with its reason. */
 export async function reportCsv(env: Env2, actor: Actor, organizationId: string): Promise<Response> {
-  const m = await active(env, actor, organizationId, 'read')
+  const { m } = await current(env, actor, organizationId, true)
   const users = await migrationsDb.listUsers(env.DB, m.id)
   const drives = await migrationsDb.listDrives(env.DB, m.id)
   const names = new Map<string, string>([...users.map((u) => [u.google_id, `${u.name} <${u.email}>`] as const), ...drives.map((d) => [d.drive_id, `${d.name} (shared drive)`] as const)])

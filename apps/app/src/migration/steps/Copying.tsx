@@ -34,9 +34,9 @@ export function CopyingStep({ ctx }: { ctx: Ctx }) {
     }
   }, [orgId, tick])
 
-  // Everything copied: the next step is the switch.
+  // Everything copied: the next step is the switch (moved by an admin's browser; others follow on their next load).
   useEffect(() => {
-    if (status?.finished) void ctx.go('switch')
+    if (status?.finished && ctx.isAdmin) void ctx.go('switch')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.finished])
 

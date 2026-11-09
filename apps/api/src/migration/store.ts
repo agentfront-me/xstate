@@ -32,9 +32,9 @@ CREATE TABLE IF NOT EXISTS problems (
 );
 `
 
-const CLAIM_STALE_MS = 10 * 60_000
-/** SQLite's limit on bound parameters is far above this; it keeps statements small. */
-const CHUNK = 100
+/** Longer than a queue job can run (15 minutes), so a live job's claim is never taken over mid-import. */
+const CLAIM_STALE_MS = 20 * 60_000
+
 
 export type Problem = { sourceId: string; reason: string; detail?: string }
 
@@ -57,33 +57,31 @@ export class MigrationStore extends DurableObject<Env> {
     const now = Date.now()
     const mine: string[] = []
     let held = 0
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      for (const id of ids.slice(i, i + CHUNK)) {
-        if (this.sql.exec('SELECT 1 FROM problems WHERE kind = ? AND owner = ? AND source_id = ?', kind, owner, id).toArray().length) continue
-        const row = this.sql
-          .exec<{ target_id: string | null; claim: string | null; claimed_at: number | null }>(
-            'SELECT target_id, claim, claimed_at FROM items WHERE kind = ? AND owner = ? AND source_id = ?',
-            kind,
-            owner,
-            id,
-          )
-          .toArray()[0]
-        if (row?.target_id) continue
-        if (row && row.claim !== claim && now - (row.claimed_at ?? 0) < CLAIM_STALE_MS) {
-          held++
-          continue
-        }
-        this.sql.exec(
-          `INSERT INTO items (kind, owner, source_id, claim, claimed_at) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (kind, owner, source_id) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at`,
+    for (const id of ids) {
+      if (this.sql.exec('SELECT 1 FROM problems WHERE kind = ? AND owner = ? AND source_id = ?', kind, owner, id).toArray().length) continue
+      const row = this.sql
+        .exec<{ target_id: string | null; claim: string | null; claimed_at: number | null }>(
+          'SELECT target_id, claim, claimed_at FROM items WHERE kind = ? AND owner = ? AND source_id = ?',
           kind,
           owner,
           id,
-          claim,
-          now,
         )
-        mine.push(id)
+        .toArray()[0]
+      if (row?.target_id) continue
+      if (row && row.claim !== claim && now - (row.claimed_at ?? 0) < CLAIM_STALE_MS) {
+        held++
+        continue
       }
+      this.sql.exec(
+        `INSERT INTO items (kind, owner, source_id, claim, claimed_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (kind, owner, source_id) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at`,
+        kind,
+        owner,
+        id,
+        claim,
+        now,
+      )
+      mine.push(id)
     }
     return { mine, held }
   }

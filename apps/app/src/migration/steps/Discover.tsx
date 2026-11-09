@@ -16,14 +16,17 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
   const [done, setDone] = useState(0)
   const [error, setError] = useState('')
   const started = useRef(false)
+  const leaving = useRef(new AbortController())
 
   const run = async () => {
     setError('')
     setDone(0)
+    const signal = leaving.current.signal
     try {
-      ctx.setMigration(await migrationApi.discover(ctx.org.id, domain, ctx.demo ? null : ctx.domains, setDone))
+      const m = await migrationApi.discover(ctx.org.id, domain, ctx.demo ? null : ctx.domains, setDone, signal)
+      if (!signal.aborted) ctx.setMigration(m)
     } catch (err) {
-      setError(errorMessage(err))
+      if (!signal.aborted) setError(errorMessage(err))
     }
   }
 
@@ -31,6 +34,9 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
     if (discovery || started.current) return
     started.current = true
     void run()
+    // Leaving the step stops the polling; the server keeps counting.
+    const controller = leaving.current
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -144,14 +150,16 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
         <button className="btn btn-auto" onClick={() => void ctx.go('connect')}>
           Back
         </button>
-        <button className="btn btn-primary btn-auto" onClick={() => void ctx.go('plan')}>
+        <button className="btn btn-primary btn-auto" disabled={!ctx.isAdmin} onClick={() => void ctx.go('plan')}>
           Continue to plan
           <Icon name="chevron-right" size={14} />
         </button>
-        <button className="text-btn" onClick={() => void run()}>
-          <Icon name="refresh-cw" size={12} />
-          Count again
-        </button>
+        {ctx.isAdmin && (
+          <button className="text-btn" onClick={() => void run()}>
+            <Icon name="refresh-cw" size={12} />
+            Count again
+          </button>
+        )}
       </div>
     </>
   )

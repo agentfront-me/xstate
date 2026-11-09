@@ -106,7 +106,8 @@ export interface Workspace {
   gmailLabels(email: string): Promise<GLabel[]>
   /** One page of message ids, newest first. `q` is a Gmail search (the date range: "after:2021/11/08"). */
   gmailList(email: string, options: { q?: string; pageToken?: string | null; pageSize: number }): Promise<GPage>
-  gmailRaw(email: string, id: string): Promise<GRawMessage>
+  /** Throws GoogleError('too_large') without reading the body when the message is over `maxBytes`. */
+  gmailRaw(email: string, id: string, maxBytes?: number): Promise<GRawMessage>
 
   // Contacts, acting as the user. 'connections' are their contacts; 'other' are Google's auto-saved "Other contacts".
   contactsPage(email: string, which: 'connections' | 'other', pageToken: string | null): Promise<GContactPage>
@@ -366,11 +367,13 @@ function liveWorkspace(env: WorkspaceEnv): Workspace {
       return { ids: (r.messages ?? []).map((m) => m.id), nextPageToken: r.nextPageToken ?? null, resultSizeEstimate: r.resultSizeEstimate ?? 0 }
     },
 
-    async gmailRaw(email, id) {
+    async gmailRaw(email, id, maxBytes) {
       const t = await token(email, 'gmail')
+      // Base64 is a third bigger than the message, plus a little JSON around it.
       const m = await googleGet<{ id: string; labelIds?: string[]; internalDate: string; sizeEstimate?: number; raw: string }>(
         t,
         `${GMAIL}/messages/${encodeURIComponent(id)}?format=raw`,
+        maxBytes ? { maxBytes: Math.ceil(maxBytes * 1.37) + 4096 } : {},
       )
       const raw = Uint8Array.from(atob(m.raw.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
       return { id: m.id, labelIds: m.labelIds ?? [], internalDate: Number(m.internalDate), sizeEstimate: m.sizeEstimate ?? raw.byteLength, raw }

@@ -566,22 +566,25 @@ export async function getLimits(env: StalwartEnv): Promise<MailLimits> {
 }
 
 /** Puts a message in exactly these folders with exactly these keywords (the final pass: labels changed in Gmail). */
-export async function setEmailPlacement(env: StalwartEnv, accountId: string, emailId: string, folderIds: string[], keywords: string[]): Promise<boolean> {
-  const [result] = await mail(env, [
-    [
-      'Email/set',
-      {
-        accountId,
-        update: {
-          [emailId]: {
-            mailboxIds: Object.fromEntries(folderIds.map((id) => [id, true])),
-            keywords: Object.fromEntries(keywords.map((k) => [k, true])),
-          },
+/** Moves messages and sets their keywords, many in one call. Returns how many Stalwart updated. */
+export async function setEmailPlacements(env: StalwartEnv, accountId: string, placements: Record<string, { folderIds: string[]; keywords: string[] }>): Promise<number> {
+  const ids = Object.keys(placements)
+  if (!ids.length) return 0
+  let updated = 0
+  // Stalwart caps Email/set at a few hundred objects per call.
+  for (let i = 0; i < ids.length; i += 200) {
+    const update = Object.fromEntries(
+      ids.slice(i, i + 200).map((id) => [
+        id,
+        {
+          mailboxIds: Object.fromEntries(placements[id]!.folderIds.map((f) => [f, true])),
+          keywords: Object.fromEntries(placements[id]!.keywords.map((k) => [k, true])),
         },
-      },
-    ],
-  ])
-  // JMAP reports a successful update as `updated: { <id>: null }`.
-  const updated = result!.updated as Record<string, unknown> | null
-  return !!updated && emailId in updated
+      ]),
+    )
+    const [result] = await mail(env, [['Email/set', { accountId, update }]])
+    // JMAP reports a successful update as `updated: { <id>: null }`.
+    updated += Object.keys((result!.updated as Record<string, unknown> | null) ?? {}).length
+  }
+  return updated
 }

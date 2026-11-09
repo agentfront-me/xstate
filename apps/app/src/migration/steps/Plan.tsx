@@ -2,9 +2,9 @@
 // "Import as shared mailbox" (or Skip when nearly empty). A bulk bar appears on selection. Groups and shared drives
 // sit below, and the mail date range applies to everyone. The plan is saved as it changes.
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../components/Icon'
-import { initials } from '../../lib/core'
+import { errorMessage, initials } from '../../lib/core'
 import * as migrationApi from '../api'
 import type { Ctx } from '../main'
 import { sizes } from '../sample'
@@ -56,12 +56,46 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
 
   // The latest plan, so quick successive changes build on each other; saving happens outside any state updater.
   const current = useRef(plan)
+  // Saves are gathered for a moment and sent one at a time, so the server never ends with an older plan than this
+  // screen shows. Non-admins can look but their changes aren't kept.
+  const [saving, setSaving] = useState<'saved' | 'saving' | 'failed'>('saved')
+  const [saveError, setSaveError] = useState('')
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inFlight = useRef<Promise<unknown> | null>(null)
+  const save = () => {
+    saveTimer.current = null
+    const plan = current.current
+    const run = async () => {
+      try {
+        await migrationApi.savePlan(ctx.org.id, plan)
+        if (current.current === plan) setSaving('saved')
+      } catch (err) {
+        setSaving('failed')
+        setSaveError(errorMessage(err))
+      }
+    }
+    inFlight.current = (inFlight.current ?? Promise.resolve()).then(run)
+  }
+  useEffect(
+    () => () => {
+      // Leaving the step: send what's pending now.
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current)
+        save()
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
   const setPlan = (fn: (p: Plan) => Plan) => {
+    if (!ctx.isAdmin) return
     const next = fn(current.current)
     current.current = next
     setPlanState(next)
-    void migrationApi.savePlan(ctx.org.id, next)
     ctx.setMigration({ ...ctx.migration, plan: next })
+    setSaving('saving')
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(save, 400)
   }
 
   const setUser = (id: string, fn: (p: UserPlan) => UserPlan) => setPlan((p) => ({ ...p, users: { ...p.users, [id]: fn(p.users[id]!) } }))
@@ -284,11 +318,21 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
         <button className="btn btn-auto" onClick={() => void ctx.go('discover')}>
           Back
         </button>
-        <button className="btn btn-primary btn-auto" disabled={!included} onClick={() => void ctx.go('review')}>
+        <button className="btn btn-primary btn-auto" disabled={!included || !ctx.isAdmin} onClick={() => void ctx.go('review')}>
           Continue to review
           <Icon name="chevron-right" size={14} />
         </button>
-        <span className="muted small">{included ? 'Your plan is saved as you go.' : 'Choose at least one user to move.'}</span>
+        <span className={saving === 'failed' ? 'small form-error' : 'muted small'}>
+          {!ctx.isAdmin
+            ? 'View only: owners and admins change the plan.'
+            : saving === 'failed'
+              ? `Couldn't save the plan: ${saveError}`
+              : saving === 'saving'
+                ? 'Saving…'
+                : included
+                  ? 'Your plan is saved.'
+                  : 'Choose at least one user to move.'}
+        </span>
       </div>
     </>
   )

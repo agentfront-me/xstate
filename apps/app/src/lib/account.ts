@@ -82,6 +82,9 @@ export function useAccount(): Account {
   return data
 }
 
+/** Owners and admins run the organization: members, domains, keys, imports. */
+export const isOrgAdmin = (org: Pick<Org, 'role'>) => org.role === 'owner' || org.role === 'admin'
+
 export const mailboxesOf = (account: Account, domainId: string) => account.mailboxes.filter((m) => m.domainId === domainId)
 
 // ---------------------------------------------------------------------------------------------------------------

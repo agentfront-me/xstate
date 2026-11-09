@@ -2,7 +2,7 @@
 //
 //   watchdog  restarts a part whose job chain was lost. Every hour each part still copying is fingerprinted (its
 //             state, counts and cursor); one whose fingerprint hasn't changed since the hour before is stuck, because
-//             a queue job never runs longer than 15 minutes. Restarting bumps its chain, so if the old chain was
+//             a queue job never runs longer than 15 minutes (and a claim stays live for 20, store.ts). Restarting bumps its chain, so if the old chain was
 //             only slow it stops, and the MigrationStore's claims mean nothing is copied twice.
 //   ready     emails the admin who started the import once nothing is left to copy. Also checked after every copy
 //             job (jobs.ts), so the email usually goes out within seconds; the hourly run is the backstop.
@@ -14,7 +14,7 @@
 
 import type { Actor } from '../auth/types'
 import * as migrationsDb from '../db/migrations'
-import type { MigrationDriveRow, MigrationRow, MigrationUserRow } from '../db/migrations'
+import { copyPending, copyPendingSql as PENDING_SQL, type MigrationDriveRow, type MigrationRow, type MigrationUserRow } from '../db/migrations'
 import * as usersDb from '../db/users'
 import { isAdmin, loadMember } from '../mailserver/access'
 import { sendSystemEmail } from '../mailserver/system-mail'
@@ -113,11 +113,7 @@ async function watchOne(env: Env, m: MigrationRow): Promise<void> {
 }
 
 /** Whether any of a person's parts still has pages to copy: the same test as startMailCopies. */
-function userCopying(u: MigrationUserRow): boolean {
-  if (u.action === 'skip' || !u.applied_at) return false
-  const pending = (state: string | null) => !state || state === 'copying'
-  return (!!u.copy_mail && !!u.mailbox_id && pending(u.mail_state)) || (!!u.copy_contacts && pending(u.contacts_state)) || (!!u.copy_drive && pending(u.drive_state))
-}
+const userCopying = (u: MigrationUserRow) => copyPending.mail(u) || copyPending.contacts(u) || copyPending.drive(u)
 
 /** Everything a page of work changes. Equal an hour apart means no page ran. */
 const userFingerprint = (u: MigrationUserRow) =>
@@ -135,12 +131,9 @@ const driveFingerprint = (d: MigrationDriveRow) => JSON.stringify([d.state, d.do
 
 /** People or shared drives with pages still to copy (or not yet set up). */
 const PENDING = `
-  EXISTS (SELECT 1 FROM migration_users u WHERE u.migration_id = migrations.id AND u.action != 'skip' AND (
-    u.applied_at IS NULL
-    OR (u.copy_mail = 1 AND u.mailbox_id IS NOT NULL AND (u.mail_state IS NULL OR u.mail_state = 'copying'))
-    OR (u.copy_contacts = 1 AND (u.contacts_state IS NULL OR u.contacts_state = 'copying'))
-    OR (u.copy_drive = 1 AND (u.drive_state IS NULL OR u.drive_state = 'copying'))))
-  OR EXISTS (SELECT 1 FROM migration_drives d WHERE d.migration_id = migrations.id AND (d.state IS NULL OR d.state = 'copying'))`
+  EXISTS (SELECT 1 FROM migration_users u WHERE u.migration_id = migrations.id AND (
+    (u.action != 'skip' AND u.applied_at IS NULL) OR ${PENDING_SQL.mail} OR ${PENDING_SQL.contacts} OR ${PENDING_SQL.drive}))
+  OR EXISTS (SELECT 1 FROM migration_drives d WHERE d.migration_id = migrations.id AND ${PENDING_SQL.sharedDrive})`
 
 /**
  * Emails the admin who started the import, once, when nothing is left to copy: they can switch mail over when they

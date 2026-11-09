@@ -177,8 +177,9 @@ export function Avatar({ person, size = 28, orgId }: { person: Person; size?: nu
     audienceApi
       .photo(orgId, person.id)
       .then((u) => {
+        if (!live) return URL.revokeObjectURL(u)
         url = u
-        if (live) setPhoto(u)
+        setPhoto(u)
       })
       .catch(() => null)
     return () => {

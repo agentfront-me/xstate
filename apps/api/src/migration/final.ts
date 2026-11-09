@@ -16,7 +16,7 @@ import * as jmap from '../mailserver/stalwart/mail'
 import { GoogleError } from './google/auth'
 import { workspace } from './google/workspace'
 import { enqueueMigrationJobs } from './jobs'
-import { folderIdsFor, folders, importIds, mailLimits } from './mail'
+import { folderIdsFor, folders, importIds, mailLimits, setIssue } from './mail'
 import { placement } from './mail-rules'
 import { migrationStore } from './store'
 
@@ -126,14 +126,17 @@ export async function mailFinalPage(env: Env, job: MailFinalJob): Promise<void> 
     throw err
   }
   if (!history) {
-    // Google's history doesn't reach back that far: list the mailbox again (only new messages get copied).
+    // Google's history doesn't reach back that far: list the mailbox again (only new messages get copied). This part
+    // of the pass stays running until that copy ends (mail.ts), and the history starts over from today so the next
+    // pass doesn't have to list again.
+    const profile = await ws.gmailProfile(u.email)
     await env.DB.prepare(
-      "UPDATE migration_users SET mail_state = 'copying', mail_cursor = NULL, mail_chain = mail_chain + 1 WHERE migration_id = ? AND google_id = ?",
+      "UPDATE migration_users SET mail_state = 'copying', mail_cursor = NULL, mail_chain = mail_chain + 1, history_id = ? WHERE migration_id = ? AND google_id = ?",
     )
-      .bind(...where)
+      .bind(profile.historyId, ...where)
       .run()
     await enqueueMigrationJobs(env, [{ kind: 'mail', migrationId: m.id, googleId: u.google_id, chain: u.mail_chain + 1 }])
-    return done(0)
+    return
   }
 
   const accountId = mailbox.stalwart_id
@@ -144,26 +147,29 @@ export async function mailFinalPage(env: Env, job: MailFinalJob): Promise<void> 
   // New messages.
   const claim = `final:${job.run}:${u.google_id}:${u.final_mail_cursor ?? 'first'}`
   const { mine } = await store.claim('message', u.google_id, history.added, claim)
-  changes += (await importIds(env, { store, email: u.email, googleId: u.google_id, accountId, place, max: (await mailLimits(env)).maxSizeUpload }, mine, claim)).copied
+  const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, accountId, place, max: (await mailLimits(env)).maxSizeUpload }, mine, claim)
+  changes += imported.copied
+  if (imported.full) {
+    // The pass gives up on this mailbox and says why; Resume after "Raise quota" copies the rest.
+    await setIssue(env, u, 'quota', 'The xstate mailbox filled up during the final sync: its quota is smaller than this Gmail account.')
+    return
+  }
 
   // Labels changed: re-file the copy and set its read and starred state.
   const labelled = await store.targets('message', u.google_id, history.labelled.map((l) => l.id))
   const userLabels = new Set(place.labels.keys())
+  const placements: Record<string, { folderIds: string[]; keywords: string[] }> = {}
   for (const l of history.labelled) {
     const target = labelled[l.id]
     const where = placement(l.labelIds, userLabels)
     if (!target || 'skip' in where) continue
-    if (await jmap.setEmailPlacement(env, accountId, target, folderIdsFor(place, where.folders), where.keywords)) changes++
+    placements[target] = { folderIds: folderIdsFor(place, where.folders), keywords: where.keywords }
   }
-
   // Deleted in Gmail: to Trash in xstate, where it can still be found.
   const deleted = await store.targets('message', u.google_id, history.deleted)
   const trash = place.roles.get('trash')
-  for (const target of Object.values(deleted)) {
-    if (!trash) break
-    await jmap.updateEmail(env, accountId, target, { folderId: trash }).catch(() => null)
-    changes++
-  }
+  if (trash) for (const target of Object.values(deleted)) placements[target] = { folderIds: [trash], keywords: [] }
+  changes += await jmap.setEmailPlacements(env, accountId, placements)
 
   if (history.added.length) {
     await enqueueMailSync(env, [{ mailboxId: mailbox.id, reason: 'import' }])

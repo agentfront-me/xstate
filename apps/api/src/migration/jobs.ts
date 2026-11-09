@@ -7,14 +7,15 @@
 //   contacts  copies one page of one person's contacts into the audience (./contacts.ts) and queues the next
 //   drive     copies a person's My Drive or a shared drive into Storage, folders then a page of files (./drive.ts)
 //   final_*   the final pass after the switch: Gmail history and Drive changes since the copy (./final.ts)
-// Each job is safe to run twice: rows are upserted, and apply skips users and groups it already handled.
+// Each job is safe to run twice: rows are upserted, apply skips users and groups it already handled, and the
+// MigrationStore's claims keep a message, contact or file from being copied twice.
 
 import type { Actor } from '../auth/types'
 import * as addressesDb from '../db/addresses'
 import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import * as migrationsDb from '../db/migrations'
-import type { MigrationRow, MigrationUserRow } from '../db/migrations'
+import { copyPendingSql as PENDING_SQL, type MigrationRow, type MigrationUserRow } from '../db/migrations'
 import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
 import { addAlias, createMailbox, grantMailboxAccess } from '../mailserver'
@@ -25,7 +26,7 @@ import { copyContactsPage, type ContactsJob } from './contacts'
 import { copyDrivePage, driveFinalPage, type DriveFinalJob, type DriveJob } from './drive'
 import { finishIfDone, mailFinalPage, type MailFinalJob } from './final'
 import { copyMailPage, type MailJob } from './mail'
-import type { StoredDomain, StoredDrive, StoredGroup } from './service'
+import { existingAddresses, type StoredDomain, type StoredDrive, type StoredGroup } from './service'
 import { notifyIfCopied } from './watchdog'
 
 export type MigrationJob =
@@ -104,12 +105,11 @@ async function fail(env: Env, job: MigrationJob, error: string) {
     // A final pass that keeps failing is given up for that part, so the pass can finish; the report says so.
     const sql =
       job.kind === 'final_mail'
-        ? "UPDATE migration_users SET final_mail = 'done' WHERE migration_id = ? AND google_id = ?"
+        ? "UPDATE migration_users SET final_mail = 'done', mail_note = ? WHERE migration_id = ? AND google_id = ?"
         : job.shared
           ? "UPDATE migration_drives SET final_state = 'done', note = ? WHERE migration_id = ? AND drive_id = ?"
           : "UPDATE migration_users SET final_drive = 'done', drive_note = ? WHERE migration_id = ? AND google_id = ?"
-    const stmt = env.DB.prepare(sql)
-    await (job.kind === 'final_mail' ? stmt.bind(job.migrationId, job.owner) : stmt.bind(`Final pass failed: ${error}`.slice(0, 500), job.migrationId, job.owner)).run()
+    await env.DB.prepare(sql).bind(`Final pass failed: ${error}`.slice(0, 500), job.migrationId, job.owner).run()
     await finishIfDone(env, job.migrationId)
   } else if (job.kind === 'drive') {
     const sql = job.shared
@@ -141,24 +141,10 @@ export async function startMailCopies(env: Pick<Env, 'DB' | 'MIGRATION'>, migrat
   const sharedDrives = only ? (sharedDrive ? 'AND drive_id = ?2' : 'AND 0') : ''
   // D1 wants exactly the parameters a query uses: the second only where a query filters on it.
   const bind = (sql: string) => (sql.includes('?2') ? env.DB.prepare(sql).bind(migrationId, user ?? sharedDrive) : env.DB.prepare(sql).bind(migrationId))
-  const { results: mail } = await bind(
-    `SELECT google_id, mail_chain FROM migration_users
-     WHERE migration_id = ?1 AND copy_mail = 1 AND mailbox_id IS NOT NULL AND action != 'skip'
-       AND (mail_state IS NULL OR mail_state = 'copying') ${users}`,
-  ).all<{ google_id: string; mail_chain: number }>()
-  const { results: contacts } = await bind(
-    `SELECT google_id, contacts_chain FROM migration_users
-     WHERE migration_id = ?1 AND copy_contacts = 1 AND action != 'skip' AND applied_at IS NOT NULL
-       AND (contacts_state IS NULL OR contacts_state = 'copying') ${users}`,
-  ).all<{ google_id: string; contacts_chain: number }>()
-  const { results: drive } = await bind(
-    `SELECT google_id, drive_chain FROM migration_users
-     WHERE migration_id = ?1 AND copy_drive = 1 AND action != 'skip' AND applied_at IS NOT NULL
-       AND (drive_state IS NULL OR drive_state = 'copying') ${users}`,
-  ).all<{ google_id: string; drive_chain: number }>()
-  const { results: drives } = await bind(
-    `SELECT drive_id, chain FROM migration_drives WHERE migration_id = ?1 AND (state IS NULL OR state = 'copying') ${sharedDrives}`,
-  ).all<{ drive_id: string; chain: number }>()
+  const { results: mail } = await bind(`SELECT google_id, mail_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.mail} ${users}`).all<{ google_id: string; mail_chain: number }>()
+  const { results: contacts } = await bind(`SELECT google_id, contacts_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.contacts} ${users}`).all<{ google_id: string; contacts_chain: number }>()
+  const { results: drive } = await bind(`SELECT google_id, drive_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.drive} ${users}`).all<{ google_id: string; drive_chain: number }>()
+  const { results: drives } = await bind(`SELECT drive_id, chain FROM migration_drives d WHERE migration_id = ?1 AND ${PENDING_SQL.sharedDrive} ${sharedDrives}`).all<{ drive_id: string; chain: number }>()
   await enqueueMigrationJobs(env, [
     ...mail.map((r) => ({ kind: 'mail' as const, migrationId, googleId: r.google_id, chain: r.mail_chain })),
     ...contacts.map((r) => ({ kind: 'contacts' as const, migrationId, googleId: r.google_id, chain: r.contacts_chain })),
@@ -188,11 +174,7 @@ async function discover(env: Env, migrationId: string): Promise<void> {
   for (const g of groups) storedGroups.push({ ...g, memberEmails: await ws.groupMemberEmails(admin, g.id) })
 
   // Addresses that already have an xstate mailbox in this organization: the plan copies into those.
-  const existing = new Set<string>()
-  for (const u of users) {
-    const found = await addressesDb.findByAddress(env.DB, u.email)
-    if (found?.organization_id === m.organization_id) existing.add(u.email)
-  }
+  const existing = await existingAddresses(env, m.organization_id, users.map((u) => u.email))
 
   const now = new Date().toISOString()
   const writes: D1PreparedStatement[] = users.map((u) => {
@@ -309,8 +291,12 @@ async function apply(env: Env, migrationId: string): Promise<void> {
       ),
     )
   }
-  await migrationsDb.update(env.DB, migrationId, { apply_state: 'done' }).run()
-  await startMailCopies(env, migrationId)
+  // Only the job that flips the state starts the copies: a second apply (one the watchdog restarted while this one
+  // was slow) must not queue a second chain per person.
+  const flipped = await env.DB.prepare("UPDATE migrations SET apply_state = 'done', updated_at = ? WHERE id = ? AND apply_state = 'running'")
+    .bind(new Date().toISOString(), migrationId)
+    .run()
+  if (flipped.meta.changes) await startMailCopies(env, migrationId)
 }
 
 const localPart = (email: string) => email.split('@')[0]!

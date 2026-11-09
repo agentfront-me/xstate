@@ -113,7 +113,8 @@ export async function personPhoto(env: Env, actor: Actor, organizationId: string
   const { s, viewer } = await reader(env, actor, organizationId)
   const result = (await s.getPerson(personId, viewer)) as PersonDetail | null
   const key = result?.person.attributes.photoKey
-  if (typeof key !== 'string') throw notFound('photo')
+  // Only a key the import wrote for this contact's owner: never any other object in the bucket.
+  if (typeof key !== 'string' || !key.startsWith(`contacts/${result?.person.owner ?? 'shared'}/`)) throw notFound('photo')
   const object = await getObject(env, await organizationBucket(env, organizationId), key)
   if (!object?.body) throw notFound('photo')
   return new Response(object.body, {

@@ -25,7 +25,9 @@ export async function register(
   // Invited and never accepted: the account is theirs to claim through the invite link, which proves the email is
   // theirs. Signing up here doesn't, so it can't take over the invite.
   if (existing && !existing.password_hash) {
-    throw new ApiError('invited', "You've been invited to xstate. Use the link in your invite email to set your password.", 409)
+    // Unless every invite has lapsed: then the email is free again (its memberships go with the placeholder).
+    const lapsed = await usersDb.removeIfLapsed(env.DB, existing.id, new Date().toISOString()).run()
+    if (!lapsed.meta.changes) throw new ApiError('invited', "You've been invited to xstate. Use the link in your invite email to set your password.", 409)
   }
   if (existing) throw emailTaken()
 

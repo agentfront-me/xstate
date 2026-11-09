@@ -11,6 +11,7 @@ import {
   setStage,
   start,
   startDiscovery,
+  startNew,
   STAGES,
   verify,
 } from '../migration/service'
@@ -124,7 +125,7 @@ export const migrationCheckAccess = defineOperation({
 
 export const migrationFixUser = defineOperation({
   name: 'migration_fix_user',
-  description: "Unblocks one person's copy: 'raise' removes their xstate mailbox quota, 'retry' tries again, 'skip' gives up on the rest of their mail.",
+  description: "Unblocks one person's copy: 'raise' removes their xstate mailbox quota, 'retry' tries again, 'skip' gives up on the part (mail, contacts or Drive) that needs attention.",
   input: z.object({ organizationId, googleId: z.string().min(1).max(64), fix: z.enum(['raise', 'retry', 'skip']) }),
   http: { method: 'POST', path: '/migration/orgs/:organizationId/users/:googleId/fix' },
   mcp: false,
@@ -157,7 +158,17 @@ export const migrationAccessReminder = orgOp(
   accessReminder,
 )
 
+export const migrationStartNew = defineOperation({
+  name: 'migration_start_new',
+  description: 'Starts another import once the last one is finished or cancelled (the Done screen). Returns the one in progress if there is one.',
+  input: z.object({ organizationId }),
+  http: { method: 'POST', path: '/migration/orgs/:organizationId/new' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ migration: await startNew(env, actor, input.organizationId) }),
+})
+
 export const migrationOperations = [
+  migrationStartNew,
   migrationAccessReminder,
   migrationSwitchStatus,
   migrationTtlDone,

@@ -111,6 +111,8 @@ export async function removeMember(env: MembersEnv, actor: Actor, memberId: stri
     )
   }
   await membersDb.remove(env.DB, memberId).run()
+  // Invited and never accepted: the placeholder account goes too, or they could never sign up on their own.
+  if (target.status === 'invited') await usersDb.removeIfUnclaimed(env.DB, target.user_id).run()
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -167,26 +169,16 @@ export async function resendInvite(env: MembersEnv, actor: Actor, memberId: stri
   const { target, me } = await memberContext(env, actor, memberId)
   requireOrgPermission(me, 'members.manage')
   if (target.status !== 'invited') throw new ApiError('already_accepted', `${target.email} has already joined`, 409)
-  const token = newToken()
-  await invitationsDb
-    .upsert(env.DB, {
-      memberId,
-      organizationId: target.organization_id,
-      tokenHash: await sha256(token),
-      invitedBy: actor.userId,
-      sentAt: null,
-      expiresAt: expiry(),
-      now: new Date().toISOString(),
-    })
-    .run()
+  const token = await newInvitation(env, actor, target)
   const delivery = await deliver(env, actor, memberId, token)
   return { member: toMember((await membersDb.findById(env.DB, memberId))!, actor), email: delivery }
 }
 
-async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: string): Promise<Delivery> {
+/** Emails the invite link to the member (or to `sendTo`, the personal address a migration knows for them). */
+async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: string, sendTo?: string): Promise<Delivery> {
   const [target, inviter] = await Promise.all([membersDb.findById(env.DB, memberId), usersDb.findById(env.DB, actor.userId)])
   const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(target!.organization_id).first<{ name: string }>()
-  const url = `${env.APP_URL.replace(/\/+$/, '')}/invite/#${token}`
+  const url = inviteUrl(env, token)
   // The link is only handed back outside production: there it's how you test, since local mail goes nowhere.
   const devUrl = env.ENVIRONMENT === 'production' ? {} : { inviteUrl: url }
 
@@ -199,7 +191,7 @@ async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: s
   })
   try {
     const result = await sendSystemEmail(env, {
-      to: { name: target!.name, email: target!.email },
+      to: { name: target!.name, email: sendTo ?? target!.email },
       replyTo: inviter ? { name: inviter.name, email: inviter.email } : undefined,
       ...message,
     })
@@ -224,10 +216,20 @@ async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: s
 export async function migrationInvite(env: MembersEnv, actor: Actor, memberId: string, sendTo: string | null): Promise<{ url: string; sent: boolean }> {
   const target = await membersDb.findById(env.DB, memberId)
   if (!target || target.status !== 'invited') throw new ApiError('already_accepted', 'Already joined', 409)
+  const token = await newInvitation(env, actor, target)
+  const url = inviteUrl(env, token)
+  if (!sendTo) return { url, sent: false }
+  return { url, sent: (await deliver(env, actor, memberId, token, sendTo)).sent }
+}
+
+const inviteUrl = (env: MembersEnv, token: string) => `${env.APP_URL.replace(/\/+$/, '')}/invite/#${token}`
+
+/** A new invite link for the member (the old one stops working). Returns the token to put in the link. */
+async function newInvitation(env: MembersEnv, actor: Actor, target: { id: string; organization_id: string }): Promise<string> {
   const token = newToken()
   await invitationsDb
     .upsert(env.DB, {
-      memberId,
+      memberId: target.id,
       organizationId: target.organization_id,
       tokenHash: await sha256(token),
       invitedBy: actor.userId,
@@ -236,19 +238,7 @@ export async function migrationInvite(env: MembersEnv, actor: Actor, memberId: s
       now: new Date().toISOString(),
     })
     .run()
-  const url = `${env.APP_URL.replace(/\/+$/, '')}/invite/#${token}`
-  if (!sendTo) return { url, sent: false }
-  const [inviter, org] = await Promise.all([
-    usersDb.findById(env.DB, actor.userId),
-    env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(target.organization_id).first<{ name: string }>(),
-  ])
-  const message = inviteEmail({ url, organization: org?.name ?? 'your organization', inviter: inviter?.name || inviter?.email || 'Your admin', inviteeName: target.name, days: INVITE_DAYS })
-  const result = await sendSystemEmail(env, { to: { name: target.name, email: sendTo }, replyTo: inviter ? { name: inviter.name, email: inviter.email } : undefined, ...message }).catch((err) => {
-    console.error('migration invite failed', err)
-    return { sent: false as const, reason: 'error' }
-  })
-  if (result.sent) await invitationsDb.markSent(env.DB, memberId, new Date().toISOString()).run()
-  return { url, sent: result.sent }
+  return token
 }
 
 // ---------------------------------------------------------------------------------------------------------------

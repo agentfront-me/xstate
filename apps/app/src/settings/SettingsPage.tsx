@@ -9,7 +9,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
-import { addDomain, isDemo, mailboxesOf, removeDomain, useAccount, verifyDomain, type Account } from '../lib/account'
+import { addDomain, isDemo, isOrgAdmin, mailboxesOf, removeDomain, useAccount, verifyDomain, type Account } from '../lib/account'
 import {
   applyTheme,
   copyText,
@@ -163,7 +163,7 @@ function migrationSub(account: Account): string {
 }
 
 function MigrationSection({ account }: { account: Account }) {
-  const admin = account.org.role === 'owner' || account.org.role === 'admin'
+  const admin = isOrgAdmin(account.org)
   const m = migrationSummary(account.org.id)
   const started = !!m && m.stage !== 'connect'
   // After an import ends, a reminder until xstate's access to Google Workspace is removed.
@@ -397,7 +397,7 @@ function DesktopSettingsCard() {
 // ---------------------------------------------------------------------------------------------------------------
 // Members
 
-const canManageMembers = (account: Account) => account.org.role === 'owner' || account.org.role === 'admin'
+const canManageMembers = (account: Account) => isOrgAdmin(account.org)
 
 function sentLabel(m: OrgMember): string {
   if (!m.invite) return ''
@@ -978,7 +978,7 @@ function SecretsSection({ data }: { data: SettingsData }) {
 // Users section today, sending email later.
 
 function ApiKeysSection({ account }: { account: Account }) {
-  const admin = account.org.role === 'owner' || account.org.role === 'admin'
+  const admin = isOrgAdmin(account.org)
   const [keys, setKeys] = useState<ApiKeys | null>(null)
   const [secret, setSecret] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

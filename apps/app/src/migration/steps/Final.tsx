@@ -25,7 +25,7 @@ export function FinalStep({ ctx }: { ctx: Ctx }) {
 
   const domain = ctx.migration.discovery!.domain
   // From the API, progress is people finished (the number of changes isn't known until a pass ends).
-  const share = status.mail.people ? (status.mail.people.total ? status.mail.people.done / status.mail.people.total : 1) : status.mail.done / status.mail.total
+  const share = status.mail.people ? (status.mail.people.total ? status.mail.people.done / status.mail.people.total : 1) : status.mail.total ? status.mail.done / status.mail.total : 1
   const left = Math.max(1, Math.round((1 - share) * 25))
   const tomorrow = new Date(status.rerunAt).toDateString() === new Date(Date.now() + 86_400_000).toDateString()
 
@@ -56,7 +56,7 @@ export function FinalStep({ ctx }: { ctx: Ctx }) {
         </div>
       </div>
       <div className="actions">
-        <button className="btn btn-primary btn-auto" disabled={!status.finished} onClick={() => void ctx.go('finish')}>
+        <button className="btn btn-primary btn-auto" disabled={!status.finished || !ctx.isAdmin} onClick={() => void ctx.go('finish')}>
           Continue to finish
           <Icon name="chevron-right" size={14} />
         </button>

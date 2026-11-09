@@ -15,6 +15,7 @@ import * as jmap from '../mailserver/stalwart/mail'
 import type { FolderRole, JmapFolder } from '../mailserver/stalwart/mail'
 import { GoogleError } from './google/auth'
 import { workspace, type GLabel } from './google/workspace'
+import { finishIfDone } from './final'
 import { enqueueMigrationJobs, HELD_RETRY_SECONDS } from './jobs'
 import { placement, rangeQuery } from './mail-rules'
 import { migrationStore } from './store'
@@ -25,8 +26,8 @@ export type MailJob = { kind: 'mail'; migrationId: string; googleId: string; cha
 const PAGE_SIZE = 100
 /** Messages imported per Email/import call. */
 const IMPORT_BATCH = 25
-/** Raw messages fetched from Gmail at once. Each is held in memory until uploaded, so this stays small. */
-const FETCH_CONCURRENCY = 4
+/** Raw messages fetched from Gmail at once. Each is held in memory (about twice over) until uploaded, so this stays small. */
+const FETCH_CONCURRENCY = 2
 
 // ---------------------------------------------------------------------------------------------------------------
 // Folders
@@ -143,7 +144,6 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
   // With a date range Gmail's total counts everything; its estimate for the search is closer.
   if (q && !u.mail_cursor) total = page.resultSizeEstimate
   const place = await folders(env, organizationId, u.google_id, accountId, labels)
-  const userLabels = new Set(place.labels.keys())
   const max = (await mailLimits(env)).maxSizeUpload
 
   const claim = `${job.migrationId}:${u.google_id}:${job.chain}:${u.mail_cursor ?? 'first'}`
@@ -171,7 +171,15 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
     await env.DB.prepare("UPDATE migration_users SET mail_state = 'done', mail_note = NULL, mail_updated_at = ? WHERE migration_id = ? AND google_id = ?")
       .bind(now(), u.migration_id, u.google_id)
       .run()
+    await endFinalMail(env, u)
   }
+}
+
+/** A final pass that had to list the mailbox again (./final.ts) is over for this person once that copy is. */
+async function endFinalMail(env: Env, u: MigrationUserRow) {
+  if (u.final_mail !== 'running') return
+  await env.DB.prepare("UPDATE migration_users SET final_mail = 'done' WHERE migration_id = ? AND google_id = ? AND final_mail = 'running'").bind(u.migration_id, u.google_id).run()
+  await finishIfDone(env, u.migration_id)
 }
 
 export type ImportContext = {
@@ -197,13 +205,22 @@ export async function importIds(env: Env, c: ImportContext, ids: string[], claim
     const ready: { sourceId: string; item: jmap.ImportEmail }[] = []
     const skipped: { sourceId: string; reason: string; detail?: string }[] = []
     await inBatches(chunk, FETCH_CONCURRENCY, async (id) => {
-      const msg = await ws.gmailRaw(c.email, id)
+      let msg
+      try {
+        msg = await ws.gmailRaw(c.email, id, c.max)
+      } catch (err) {
+        if (err instanceof GoogleError && err.code === 'too_large') {
+          return void skipped.push({ sourceId: id, reason: 'too_large', detail: `over ${Math.round(c.max / 1e6)} MB, the most the mail server takes` })
+        }
+        throw err
+      }
       const where = placement(msg.labelIds, userLabels)
       if ('skip' in where) return void skipped.push({ sourceId: id, reason: where.skip })
       if (msg.raw.byteLength > c.max) {
         return void skipped.push({ sourceId: id, reason: 'too_large', detail: `${Math.round(msg.raw.byteLength / 1e6)} MB; the mail server takes up to ${Math.round(c.max / 1e6)} MB` })
       }
-      const blob = await jmap.uploadBlob(env, c.accountId, msg.raw.slice().buffer as ArrayBuffer, 'message/rfc822', msg.raw.byteLength)
+      // The decoded bytes are exactly the message, so their buffer is handed over as is.
+      const blob = await jmap.uploadBlob(env, c.accountId, msg.raw.buffer as ArrayBuffer, 'message/rfc822', msg.raw.byteLength)
       bytes += msg.raw.byteLength
       ready.push({ sourceId: id, item: { blobId: blob.blobId, folderIds: folderIdsFor(c.place, where.folders), keywords: where.keywords, receivedAt: new Date(msg.internalDate).toISOString() } })
     })
@@ -251,12 +268,14 @@ async function saveProgress(
     .run()
 }
 
-async function setIssue(env: Env, u: MigrationUserRow, issue: 'quota' | 'suspended' | 'error', message: string) {
+export async function setIssue(env: Env, u: MigrationUserRow, issue: 'quota' | 'suspended' | 'error', message: string) {
   await env.DB.prepare(
     "UPDATE migration_users SET mail_state = 'attention', mail_issue = ?, mail_note = ?, mail_updated_at = ? WHERE migration_id = ? AND google_id = ?",
   )
     .bind(issue, message, new Date().toISOString(), u.migration_id, u.google_id)
     .run()
+  // Stopped for good: a final pass waiting on this copy mustn't wait forever.
+  await endFinalMail(env, u)
 }
 
 async function inBatches<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {

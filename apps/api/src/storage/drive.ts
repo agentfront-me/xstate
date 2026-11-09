@@ -16,6 +16,7 @@ import { isAdmin, mailContext, readableMailboxes } from '../mailserver/access'
 import type { Actor, EmailEnv } from '../mailserver/types'
 import { organizationBucket, type BucketEnv } from './buckets'
 import { cleanFileName } from './files'
+import { hashing } from './chunks'
 import { copyObject, deleteObject, getObject, presign, putLargeObject, putObject } from './r2'
 import { atLeast, canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, type Reader, type Role } from './roles'
 import { extractText, textKind } from '../search/extract'
@@ -381,21 +382,23 @@ export async function uploadFile(
   return (await getItem(env, actor, itemId)).item
 }
 
-type Stored = { fileId: string; key: string; size: number; sha256: string }
+type Stored = { fileId: string; key: string; size: number; sha256: string; md5?: string }
 
 /** Writes one version's bytes to R2, hashing them on the way. */
 async function storeVersion(
   env: StorageEnv,
   bucket: string,
-  v: { itemId: string; name: string; contentType: string; size: number | null; body: Upload['body'] },
+  v: { itemId: string; name: string; contentType: string; size: number | null; body: Upload['body']; md5?: boolean },
 ): Promise<Stored> {
   const fileId = crypto.randomUUID()
   const key = `drive/${v.itemId}/${fileId}/${v.name}`
   const digest = new crypto.DigestStream('SHA-256')
+  // Imports also check Google's MD5; hashed on the same pass.
+  const md5 = v.md5 ? new crypto.DigestStream('MD5') : null
+  const digests = md5 ? [digest, md5] : [digest]
   let size: number
   if (v.body instanceof ReadableStream) {
-    const [toR2, toHash] = v.body.tee()
-    const hashing = toHash.pipeTo(digest)
+    const toR2 = hashing(v.body, digests)
     const metadata = { 'item-id': v.itemId }
     if (v.size === null || v.size > MAX_UPLOAD_BYTES) {
       size = (await putLargeObject(env, bucket, key, toR2, { contentType: v.contentType, metadata })).size
@@ -403,17 +406,28 @@ async function storeVersion(
       await putObject(env, bucket, key, toR2, { contentType: v.contentType, size: v.size, metadata })
       size = v.size
     }
-    await hashing
   } else {
     const bytes = typeof v.body === 'string' ? new TextEncoder().encode(v.body) : v.body
-    const writer = digest.getWriter()
-    await writer.write(bytes)
-    await writer.close()
+    for (const d of digests) {
+      const writer = d.getWriter()
+      await writer.write(bytes)
+      await writer.close()
+    }
     await putObject(env, bucket, key, bytes, { contentType: v.contentType, metadata: { 'item-id': v.itemId } })
     size = bytes.byteLength
   }
-  const sha256 = [...new Uint8Array(await digest.digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-  return { fileId, key, size, sha256 }
+  return { fileId, key, size, sha256: hex(await digest.digest), ...(md5 && { md5: hex(await md5.digest) }) }
+}
+
+const hex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+/** Drops a just-stored version whose bytes don't match what Google said they were. */
+async function checkMd5(env: StorageEnv, bucket: string, stored: Stored, expected: string | null | undefined, name: string) {
+  if (!expected || !stored.md5) return
+  if (stored.md5 !== expected.toLowerCase()) {
+    await deleteObject(env, bucket, stored.key).catch(() => null)
+    throw new ApiError('checksum_mismatch', `${name} arrived damaged (MD5 ${stored.md5}, Google says ${expected})`, 502)
+  }
 }
 
 function versionRow(
@@ -1128,23 +1142,8 @@ export async function importFile(
   const itemId = crypto.randomUUID()
   const bucket = await organizationBucket(env, t.organizationId)
 
-  let body = file.body
-  let md5: Promise<ArrayBuffer> | null = null
-  if (file.md5) {
-    const [toStore, toHash] = file.body.tee()
-    const digest = new crypto.DigestStream('MD5')
-    void toHash.pipeTo(digest)
-    md5 = digest.digest
-    body = toStore
-  }
-  const stored = await storeVersion(env, bucket, { itemId, name, contentType, size: file.size, body })
-  if (md5) {
-    const got = [...new Uint8Array(await md5)].map((b) => b.toString(16).padStart(2, '0')).join('')
-    if (got !== file.md5!.toLowerCase()) {
-      await deleteObject(env, bucket, stored.key).catch(() => null)
-      throw new ApiError('checksum_mismatch', `${file.name} arrived damaged (MD5 ${got}, Google says ${file.md5})`, 502)
-    }
-  }
+  const stored = await storeVersion(env, bucket, { itemId, name, contentType, size: file.size, body: file.body, md5: !!file.md5 })
+  await checkMd5(env, bucket, stored, file.md5, file.name)
   const now = new Date().toISOString()
   try {
     await env.DB.batch([
@@ -1202,23 +1201,8 @@ export async function importVersion(
   const item = await env.DB.prepare('SELECT * FROM storage_items WHERE id = ? AND trashed_at IS NULL').bind(itemId).first<ItemView>()
   if (!item || item.kind !== 'file') return null
   const bucket = await organizationBucket(env, item.organization_id)
-  let body = file.body
-  let md5: Promise<ArrayBuffer> | null = null
-  if (file.md5) {
-    const [toStore, toHash] = file.body.tee()
-    const digest = new crypto.DigestStream('MD5')
-    void toHash.pipeTo(digest)
-    md5 = digest.digest
-    body = toStore
-  }
-  const stored = await storeVersion(env, bucket, { itemId, name: item.name, contentType: file.contentType, size: file.size, body })
-  if (md5) {
-    const got = [...new Uint8Array(await md5)].map((b) => b.toString(16).padStart(2, '0')).join('')
-    if (got !== file.md5!.toLowerCase()) {
-      await deleteObject(env, bucket, stored.key).catch(() => null)
-      throw new ApiError('checksum_mismatch', `${item.name} arrived damaged`, 502)
-    }
-  }
+  const stored = await storeVersion(env, bucket, { itemId, name: item.name, contentType: file.contentType, size: file.size, body: file.body, md5: !!file.md5 })
+  await checkMd5(env, bucket, stored, file.md5, item.name)
   // commitVersion only reads the item and the actor's user id from its context.
   await commitVersion(env, { item } as ItemContext, bucket, stored, contentTypeFor(item.name, file.contentType), { userId })
   return stored.size

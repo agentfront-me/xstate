@@ -1,10 +1,9 @@
 // The migration API, as the wizard calls it. The screens only use what this file exports.
 //
-// Signed in, Connect, Discover, Plan, Start and Copying use the real API (apps/api/src/migration); copying moves
-// mail so far (contacts and Drive are phases 3 and 4). The steps after copying (switch, final sync, finish) are
-// phases 5 and still a simulation that runs in the browser, seeded from the real plan. In demo mode (?demo) everything is simulated. The simulation keeps its state in
-// localStorage, one migration per organization; copying, DNS detection and the final sync advance with the clock,
-// so the whole flow can be clicked through in a few minutes.
+// Signed in, every step goes to the real API (apps/api/src/migration); the only things kept in this browser are the
+// last stage and copy totals the API reported, so Settings can show them without a request. In demo mode (?demo)
+// everything is simulated in localStorage, one migration per organization; copying, DNS detection and the final
+// sync advance with the clock, so the whole flow can be clicked through in a few minutes.
 //
 // Testing hooks (simulation only): ?sim=access-lost makes Google refuse access once copying has started, and
 // ?sim=fail makes Verify fail the Gmail and Drive checks. Against the API with GOOGLE_MODE=fake, an admin
@@ -47,17 +46,15 @@ const stageKey = (orgId: string) => `xstate.migration.${orgId}.stage`
 
 type Remote = { migration: Migration | null }
 
-/** Keeps the local simulation (copying onwards) in step with the migration the API returned. */
+/**
+ * Notes what the API returned. Signed in, the API is the only source of truth: nothing from the demo simulation is
+ * read, so two admins' browsers can't disagree about which step the import is on.
+ */
 function remember(orgId: string, m: Migration): Migration {
   writeJson(stageKey(orgId), m.stage)
   if (m.google?.clientId) CLIENT_ID = m.google.clientId
   if (m.google) SCOPES = m.google.scopes.map((g) => ({ ...SCOPE_TEXT[g.id], id: g.id, url: g.scopes.join(',') }))
-  const sim = read(orgId)
-  const started = m.apply && m.apply.state !== 'idle'
-  if (sim) write(orgId, { ...sim, migration: { ...sim.migration, ...m, stage: started ? sim.migration.stage : m.stage } })
-  // Started in another browser (or before this one had a simulation): the copy begins from now.
-  else if (started) write(orgId, { migration: m, run: { startedAt: Date.now(), pausedMs: 0 } })
-  return started && sim ? { ...m, stage: sim.migration.stage } : m
+  return m
 }
 const params = new URLSearchParams(location.search)
 const wait = (ms = 350) => new Promise((r) => setTimeout(r, ms))
@@ -83,7 +80,7 @@ export async function load(orgId: string, admin: { name: string; email: string }
   if (live()) {
     const { migration } = await api<Remote>('GET', `/migration/orgs/${orgId}`)
     if (!migration) throw new Error('No import has been started for this organization yet. Ask an admin to start one.')
-    // Past copying, the (simulated) later steps show the real copy totals; fetch them in case this browser hasn't.
+    // Past copying, the later steps show the copy totals; fetch them in case this browser never saw the copy.
     if (['switch', 'final', 'finish', 'done'].includes(migration.stage)) await copyStatus(orgId).catch(() => null)
     return remember(orgId, migration)
   }
@@ -104,11 +101,14 @@ export async function load(orgId: string, admin: { name: string; email: string }
   return { ...sim.migration, lastSeenAt: previous }
 }
 
-/** Whether this organization has a migration that has started copying, for Settings. */
+/** Whether this organization has a migration that has started copying, for Settings (from what was last fetched). */
 export function summary(orgId: string): { stage: Stage; percent: number | null } | null {
+  if (live()) {
+    const stage = readJson<Stage>(stageKey(orgId))
+    if (!stage) return null
+    return { stage, percent: stage === 'copying' ? (readJson<{ percent: number }>(totalsKey(orgId))?.percent ?? null) : null }
+  }
   const sim = read(orgId)
-  const stage = live() ? readJson<Stage>(stageKey(orgId)) : null
-  if (stage && (!sim || !sim.run)) return { stage, percent: null }
   if (!sim) return null
   return { stage: sim.migration.stage, percent: sim.run && sim.migration.stage === 'copying' ? status(sim).percent : null }
 }
@@ -116,9 +116,7 @@ export function summary(orgId: string): { stage: Stage; percent: number | null }
 export async function setStage(orgId: string, stage: Stage): Promise<Migration> {
   if (live()) {
     const { migration } = await api<{ migration: Migration }>('POST', `/migration/orgs/${orgId}/stage`, { stage })
-    const m = remember(orgId, migration)
-    // The simulated steps keep their own state (switch, final sync, finish) in step too.
-    return read(orgId)?.run ? { ...simStage(orgId, stage), ...m, stage } : m
+    return remember(orgId, migration)
   }
   await wait(80)
   return simStage(orgId, stage)
@@ -189,22 +187,35 @@ export const allPassed = (c: Connection | null) => !!c && Object.values(c.checks
 // ---------------------------------------------------------------------------------------------------------------
 // 2 · Discover
 
+/** How long the Discover step waits for the server before saying it's slow (the watchdog restarts lost jobs hourly). */
+const DISCOVERY_WAIT_MS = 15 * 60_000
+
 export const DISCOVERY_PARTS = ['Users and groups', 'Domains', 'Shared drives', 'Mail size', 'Drive size', 'Contacts'] as const
 
 /**
  * Counts what's in the Workspace whose admin was verified. `onPart` reports each part as it finishes (for the
  * loading list). `xstateDomains` are the organization's domains in xstate, or null to keep the sample's answer.
  */
-export async function discover(orgId: string, domain: string, xstateDomains: string[] | null, onPart: (index: number) => void): Promise<Migration> {
+export async function discover(
+  orgId: string,
+  domain: string,
+  xstateDomains: string[] | null,
+  onPart: (index: number) => void,
+  /** Stops the wait (the step was left); the server carries on and the result shows when the step is opened again. */
+  signal?: AbortSignal,
+): Promise<Migration> {
   if (live()) {
     // Runs in the background on the server; the loading list follows its progress.
     let { migration } = await api<{ migration: Migration }>('POST', `/migration/orgs/${orgId}/discover`)
+    const until = Date.now() + DISCOVERY_WAIT_MS
     for (;;) {
       const s = migration.discoveryStatus
       onPart(s?.partsDone ?? 0)
       if (s?.state === 'failed') throw new Error(s.error ?? 'Discovery failed. Try again.')
       if (s?.state === 'done') return remember(orgId, migration)
+      if (Date.now() > until) throw new Error('Discovery is taking longer than usual. Leave this page open and come back, or count again.')
       await wait(1500)
+      if (signal?.aborted) throw new DOMException('Left the step', 'AbortError')
       migration = (await api<{ migration: Migration }>('GET', `/migration/orgs/${orgId}`)).migration
     }
   }
@@ -253,9 +264,8 @@ export const RANGE_SHARE: Record<Plan['mailRange'], number> = { all: 1, '5y': 0.
 
 export async function start(orgId: string): Promise<Migration> {
   if (live()) {
-    // The API creates members, mailboxes and shared mailboxes; copying itself is still simulated (phase 2).
+    // The API creates members, mailboxes and shared mailboxes, then starts the copy jobs.
     const { migration } = await api<{ migration: Migration }>('POST', `/migration/orgs/${orgId}/start`)
-    write(orgId, { migration, run: { startedAt: Date.now(), pausedMs: 0 } })
     return remember(orgId, migration)
   }
   await wait(600)
@@ -352,13 +362,14 @@ function status(sim: Sim): CopyStatus {
   }
 }
 
-/** The last real copy totals, for the steps after copying (still simulated) to show what was actually copied. */
+/** The last real copy status, so Settings and the steps after copying can show it without a request. */
 const totalsKey = (orgId: string) => `xstate.migration.${orgId}.totals`
+type Totals = CopyStatus['totals'] & { users: number; percent: number }
 
 export async function copyStatus(orgId: string): Promise<CopyStatus> {
   if (live()) {
     const s = await api<CopyStatus>('GET', `/migration/orgs/${orgId}/copy`)
-    writeJson(totalsKey(orgId), { ...s.totals, users: s.users.length })
+    writeJson(totalsKey(orgId), { ...s.totals, users: s.users.length, percent: s.percent } satisfies Totals)
     return s
   }
   await wait(60)
@@ -421,6 +432,17 @@ export async function fixQuota(orgId: string, fix: QuotaFix, googleId: string): 
   update(orgId, (sim) => {
     sim.run!.quotaFixed = true
   })
+}
+
+/** Done → Import again: a fresh migration from Connect (the API keeps the finished one's report until its cleanup). */
+export async function startNew(orgId: string): Promise<Migration> {
+  if (live()) {
+    const { migration } = await api<{ migration: Migration }>('POST', `/migration/orgs/${orgId}/new`)
+    writeJson(totalsKey(orgId), null)
+    return remember(orgId, migration)
+  }
+  writeJson(key(orgId), null)
+  return load(orgId, { name: 'You', email: '' })
 }
 
 /** Stops copying. Everything copied so far stays in xstate; the wizard starts again at Connect. */
@@ -501,11 +523,10 @@ export async function autoSetup(orgId: string, applyUrl?: string | null): Promis
   )
 }
 
+/** What the copy moved. Signed in, the totals last fetched (zeros until the first fetch lands). */
 export function copiedTotals(orgId: string): CopyStatus['totals'] & { users: number } {
-  const real = live() ? readJson<CopyStatus['totals'] & { users: number }>(totalsKey(orgId)) : null
-  if (real) return real
-  const sim = read(orgId)!
-  const s = status(sim)
+  if (live()) return readJson<Totals>(totalsKey(orgId)) ?? { messages: 0, contacts: 0, files: 0, users: 0 }
+  const s = status(read(orgId)!)
   return { ...s.totals, users: s.users.length }
 }
 

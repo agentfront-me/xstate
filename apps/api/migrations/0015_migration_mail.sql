@@ -1,5 +1,5 @@
 -- Copying mail from Gmail (src/migration/mail.ts). Which messages were copied is kept in the MigrationStore
--- Durable Object (one per migration); these columns hold each user's progress and the migration's run state.
+-- Durable Object (one per organization); these columns hold each user's progress and the migration's run state.
 
 ALTER TABLE migrations ADD COLUMN paused_at TEXT;          -- paused by an admin
 ALTER TABLE migrations ADD COLUMN access_lost_at TEXT;     -- Google stopped accepting xstate's access mid-copy

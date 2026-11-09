@@ -17,6 +17,7 @@ import { sharingFor, skipReason, type SharingContext } from './drive-rules'
 import { GoogleError } from './google/auth'
 import { FOLDER_MIME, GOOGLE_EXPORTS, workspace, type GDriveFile } from './google/workspace'
 import { enqueueMigrationJobs, HELD_RETRY_SECONDS } from './jobs'
+import { finishIfDone } from './final'
 import { migrationStore } from './store'
 
 /** `owner` is the Google user id for a My Drive, or the shared drive's id. */
@@ -27,7 +28,7 @@ const START: Cursor = { phase: 'folders', token: null }
 /** Files copied per job: each can be large, so few. */
 const FILE_PAGE = 20
 /** Folders created per job; a source with more continues in the next job. */
-const FOLDERS_PER_JOB = 300
+const FOLDERS_PER_JOB = 100
 /** Most folder pages listed at once (1,000 a page). */
 const MAX_FOLDER_PAGES = 20
 
@@ -60,7 +61,10 @@ export async function copyDrivePage(env: Env, job: DriveJob): Promise<void> {
     if (err instanceof GoogleError && err.code === 'no_such_user') {
       const note = 'Google won’t let xstate read this Drive (the account is suspended or deleted).'
       if (source) return source.attention(note)
-      await env.DB.prepare("UPDATE migration_users SET drive_state = 'attention', drive_note = ? WHERE migration_id = ? AND google_id = ?").bind(note, m.id, job.owner).run()
+      const sql = job.shared
+        ? "UPDATE migration_drives SET state = 'attention', note = ? WHERE migration_id = ? AND drive_id = ?"
+        : "UPDATE migration_users SET drive_state = 'attention', drive_note = ? WHERE migration_id = ? AND google_id = ?"
+      await env.DB.prepare(sql).bind(note, m.id, job.owner).run()
       return
     }
     throw err
@@ -117,9 +121,11 @@ async function userSource(env: Env, m: MigrationRow, job: DriveJob, final = fals
       await env.DB.prepare(`UPDATE migration_users SET drive_done = ?, drive_copied_bytes = ?, drive_cursor = ?, drive_state = ?, drive_note = NULL ${where}`)
         .bind(p.done, p.bytes, p.cursor ? JSON.stringify(p.cursor) : null, p.state, m.id, u.google_id)
         .run()
+      if (p.state === 'done') await endFinalDrive(env, m.id, u.google_id, false)
     },
     attention: async (note) => {
       await env.DB.prepare(`UPDATE migration_users SET drive_state = 'attention', drive_note = ? ${where}`).bind(note, m.id, u.google_id).run()
+      await endFinalDrive(env, m.id, u.google_id, false)
     },
   }
 }
@@ -133,6 +139,7 @@ async function sharedSource(env: Env, m: MigrationRow, job: DriveJob, final = fa
   const where = 'WHERE migration_id = ? AND drive_id = ?'
   const attention = async (note: string) => {
     await env.DB.prepare(`UPDATE migration_drives SET state = 'attention', note = ? ${where}`).bind(note, m.id, d.drive_id).run()
+    await endFinalDrive(env, m.id, d.drive_id, true)
   }
   const ws = workspace(env)
   const organizer = await ws.sharedDriveOrganizer(m.admin_email!, d.drive_id)
@@ -162,9 +169,19 @@ async function sharedSource(env: Env, m: MigrationRow, job: DriveJob, final = fa
       await env.DB.prepare(`UPDATE migration_drives SET done = ?, bytes = ?, cursor = ?, state = ?, note = NULL ${where}`)
         .bind(p.done, p.bytes, p.cursor ? JSON.stringify(p.cursor) : null, p.state, m.id, d.drive_id)
         .run()
+      if (p.state === 'done') await endFinalDrive(env, m.id, d.drive_id, true)
     },
     attention,
   }
+}
+
+/** A final pass that had to list this Drive again is over for it once that copy ends (or stops). */
+async function endFinalDrive(env: Env, migrationId: string, owner: string, shared: boolean) {
+  const sql = shared
+    ? "UPDATE migration_drives SET final_state = 'done' WHERE migration_id = ? AND drive_id = ? AND final_state = 'running'"
+    : "UPDATE migration_users SET final_drive = 'done' WHERE migration_id = ? AND google_id = ? AND final_drive = 'running'"
+  const r = await env.DB.prepare(sql).bind(migrationId, owner).run()
+  if (r.meta.changes) await finishIfDone(env, migrationId)
 }
 
 /** Who sharing can point at: members by email, the Workspace's groups and domains. */
@@ -296,6 +313,8 @@ async function copyOne(env: Env, s: Source, f: GDriveFile, c: CopyContext): Prom
   await importAccess(env, itemId, s.root.userId, { grants: sharing.grants, ...(sharing.orgAccess && { orgAccess: sharing.orgAccess }) })
   if (sharing.notRecreated.length) await c.store.skip('sharing', s.owner, [{ sourceId: f.id, reason: 'sharing_not_recreated', detail: `${f.name}: ${sharing.notRecreated.join(', ')}` }])
   await c.store.record('file', s.owner, [{ sourceId: f.id, targetId: itemId }])
+  // The checksum as copied, so the final pass can tell an edit from a rename.
+  if (f.md5) await c.store.record('file_md5', s.owner, [{ sourceId: f.id, targetId: f.md5 }])
   return size
 }
 
@@ -353,7 +372,8 @@ export async function driveFinalPage(env: Env, job: DriveFinalJob): Promise<void
       .run()
     const chain = (await env.DB.prepare(`SELECT ${chainCol} AS c FROM ${table} ${where}`).bind(m.id, job.owner).first<{ c: number }>())!.c
     await enqueueMigrationJobs(env, [{ ...asCopy, chain }])
-    return void (await done())
+    // This part of the pass ends when that copy does (endFinalDrive, from save/attention).
+    return
   }
 
   const ws = workspace(env)
@@ -377,10 +397,15 @@ export async function driveFinalPage(env: Env, job: DriveFinalJob): Promise<void
     }
     const target = (await store.targets('file', s.owner, [f.id]))[f.id]
     if (target) {
+      // Only a change to the content earns a new version: renames, shares and stars turn up in the feed too.
+      if (f.md5 && (await store.targets('file_md5', s.owner, [f.id]))[f.id] === f.md5) continue
       // Edited in Google after the copy: a new version.
       try {
         const download = await ws.driveDownload(s.actAs, f, s.driveId)
-        if ((await importVersion(env, target, s.root.userId, { contentType: download.contentType, size: download.size, body: download.body, md5: download.md5 })) !== null) changes++
+        if ((await importVersion(env, target, s.root.userId, { contentType: download.contentType, size: download.size, body: download.body, md5: download.md5 })) !== null) {
+          if (f.md5) await store.record('file_md5', s.owner, [{ sourceId: f.id, targetId: f.md5 }])
+          changes++
+        }
       } catch (err) {
         const reason = fileProblem(err)
         if (!reason) throw err

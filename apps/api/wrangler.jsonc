@@ -90,7 +90,7 @@
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
-  // Google Workspace imports: one MigrationStore per migration, the map of what was copied (migration/store.ts).
+  // Google Workspace imports: one MigrationStore per organization, the map of what was copied (migration/store.ts).
   "durable_objects": {
     "bindings": [
       { "name": "AUDIENCE", "class_name": "AudienceStore" },
