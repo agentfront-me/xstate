@@ -176,7 +176,7 @@ function MigrationSection({ account }: { account: Account }) {
     <div className="group">
       <GroupHead
         title="Import from Google Workspace"
-        sub="Move every user's mail, contacts and Drive files from Google Workspace to xstate. xstate only reads from Google; nothing there is changed or deleted."
+        sub="Move every user's mail, contacts, calendars and Drive files from Google Workspace to xstate. xstate only reads from Google; nothing there is changed or deleted."
       />
       <div className="card">
         <div className="card-row">
@@ -187,7 +187,7 @@ function MigrationSection({ account }: { account: Account }) {
             <span className="name">{started ? MIGRATION_STAGES[m.stage] : 'Google Workspace'}</span>
             <span className="sub">
               {!started
-                ? 'Mail with labels and attachments, contacts, My Drive and Shared drives. Calendar is coming soon.'
+                ? 'Mail with labels and attachments, contacts, calendars, My Drive and Shared drives.'
                 : m.stage === 'done'
                   ? 'Everything was moved. The report stays available on the migration page.'
                   : m.percent !== null
