@@ -1,7 +1,7 @@
 // The numbers and rules behind sending limits and suspension (./sending). No runtime imports, so `pnpm test` runs
 // this file directly under Node.
 
-import type { Reputation, Usage } from '../db/sending'
+import type { CalendarUsage, Reputation, Usage } from '../db/sending'
 
 /** Outside recipients allowed per rolling hour and rolling day. */
 export const LIMITS = {
@@ -19,6 +19,24 @@ export const SUSPEND = {
   complaintRate: 0.0005,
   mailbox: { bounces: 10, complaints: 3 },
   organization: { bounces: 25, complaints: 5 },
+}
+
+/**
+ * Invitation emails (one per guest per change, internal guests included) per mailbox. Kept under Stalwart's own
+ * throttles, which drop mail past them without telling the API: 40 messages an hour and 200 a day per signed-in
+ * sender (scripts/stalwart-limits.mjs; shared with mail apps, hence the headroom) and its default of 25 an hour from
+ * one sender to one recipient.
+ */
+export const CALENDAR_LIMITS = { hour: 30, day: 150, perRecipientHour: 20 }
+
+/** Which invitation cap usage (including the change being checked) has gone past, worded for the error, or null. */
+export function calendarOverLimit(u: CalendarUsage): string | null {
+  if (u.hour > CALENDAR_LIMITS.hour) return `${CALENDAR_LIMITS.hour} invitation emails an hour from one calendar`
+  if (u.day > CALENDAR_LIMITS.day) return `${CALENDAR_LIMITS.day} invitation emails a day from one calendar`
+  if (u.topRecipient && u.topRecipientHour > CALENDAR_LIMITS.perRecipientHour) {
+    return `${CALENDAR_LIMITS.perRecipientHour} invitation emails an hour to ${u.topRecipient}`
+  }
+  return null
 }
 
 /** Which cap usage (including the send being checked) has gone past, worded for the error, or null. */

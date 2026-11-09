@@ -2,6 +2,7 @@
 // desktop app's app:// origin, where there's no server to answer deep links.
 
 import { createHashHistory, createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router'
+import { lazy, Suspense } from 'react'
 import { MailPage } from '../mail/MailPage'
 import { SettingsPage } from '../settings/SettingsPage'
 import { type StorageSearch, type StorageView, StoragePage } from '../storage/StoragePage'
@@ -49,6 +50,19 @@ const users = createRoute({
   },
 })
 
+// FullCalendar is large (about 70 KB gzipped), so the Calendar page loads the first time it's opened.
+const CalendarPage = lazy(() => import('../calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })))
+
+const calendar = createRoute({
+  getParentRoute: () => root,
+  path: '/calendar',
+  component: () => (
+    <Suspense fallback={<div className="loading" style={{ flex: 1 }}><span className="spinner" /></div>}>
+      <CalendarPage />
+    </Suspense>
+  ),
+})
+
 const settingsIndex = createRoute({
   getParentRoute: () => root,
   path: '/settings',
@@ -76,7 +90,7 @@ const soon = createRoute({
 })
 
 export const router = createRouter({
-  routeTree: root.addChildren([index, mail, storage, users, settingsIndex, settings, soon]),
+  routeTree: root.addChildren([index, mail, storage, users, calendar, settingsIndex, settings, soon]),
   history: createHashHistory(),
   defaultNotFoundComponent: () => <Navigate to="/mail" replace />,
 })

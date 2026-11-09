@@ -19,7 +19,7 @@ import * as sendingDb from '../db/sending'
 import type { MailboxRow } from '../db/mailboxes'
 import { isAdmin, loadMember } from './access'
 import { EmailError, forbidden } from './errors'
-import { judge, LIMITS, overLimit, SUSPEND } from './sending-rules'
+import { calendarOverLimit, judge, LIMITS, overLimit, SUSPEND } from './sending-rules'
 import { setSendingBlocked } from './stalwart/accounts'
 import type { Actor, EmailEnv } from './types'
 
@@ -68,6 +68,43 @@ export async function reserveSend(
   if (over) {
     await release()
     throw new EmailError('send_limit_reached', `Sending limit reached: at most ${over}. Try again later.`, 429)
+  }
+  return { release }
+}
+
+/**
+ * Reserves invitation emails (invites, updates, cancellations, answers: one per recipient, internal ones included)
+ * against CALENDAR_LIMITS before a calendar change, or throws 429 invite_limit_reached. Stalwart would otherwise drop
+ * them past its throttles without the API knowing. Call release() if the change then fails.
+ */
+export async function reserveCalendarSends(
+  env: EmailEnv,
+  mailbox: Pick<MailboxRow, 'id' | 'organization_id'>,
+  recipients: string[],
+): Promise<{ release: () => Promise<void> }> {
+  const db = env.DB
+  const id = crypto.randomUUID()
+  const now = Date.now()
+  const hourAgo = new Date(now - 60 * 60 * 1000).toISOString()
+  const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString()
+  const unique = [...new Set(recipients.map((r) => r.toLowerCase()))]
+
+  // One batch is one transaction: two changes at the same moment can't both slip under the cap.
+  const [, used] = await db.batch([
+    sendingDb.logCalendarSends(db, { id, organizationId: mailbox.organization_id, mailboxId: mailbox.id, recipients: unique, createdAt: new Date(now).toISOString() }),
+    sendingDb.calendarUsage(db, mailbox.id, unique, hourAgo, dayAgo),
+  ])
+  const release = async () => {
+    await db.batch([sendingDb.unlogCalendarSends(db, id)]).catch((err) => console.error('calendar: release failed', err))
+  }
+  const over = calendarOverLimit((used!.results as sendingDb.CalendarUsage[])[0]!)
+  if (over) {
+    await release()
+    throw new EmailError(
+      'invite_limit_reached',
+      `Invitation limit reached: at most ${over}. Save without emailing guests, or try again later.`,
+      429,
+    )
   }
   return { release }
 }

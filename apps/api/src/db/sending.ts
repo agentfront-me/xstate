@@ -133,10 +133,52 @@ export function removeBlock(db: D1Database, stalwartId: string): D1PreparedState
   return db.prepare('DELETE FROM sending_blocks WHERE stalwart_id = ?').bind(stalwartId)
 }
 
-/** Drops send_log rows older than `before` and delivery counts older than `beforeDay`. */
+/** Drops send_log and calendar_sends rows older than `before` and delivery counts older than `beforeDay`. */
 export function prune(db: D1Database, before: string, beforeDay: string) {
   return db.batch([
     db.prepare('DELETE FROM send_log WHERE created_at < ?').bind(before),
+    db.prepare('DELETE FROM calendar_sends WHERE created_at < ?').bind(before),
     db.prepare('DELETE FROM delivery_counts WHERE day < ?').bind(beforeDay),
   ])
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// calendar_sends: invitation emails, one row per recipient. See migrations/0020_calendar_sends.sql.
+
+export type CalendarUsage = { hour: number; day: number; topRecipient: string | null; topRecipientHour: number }
+
+export function logCalendarSends(
+  db: D1Database,
+  row: { id: string; organizationId: string; mailboxId: string; recipients: string[]; createdAt: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO calendar_sends (id, organization_id, mailbox_id, recipient, created_at)
+       SELECT ?1, ?2, ?3, value, ?5 FROM json_each(?4)`,
+    )
+    .bind(row.id, row.organizationId, row.mailboxId, JSON.stringify(row.recipients), row.createdAt)
+}
+
+export function unlogCalendarSends(db: D1Database, id: string): D1PreparedStatement {
+  return db.prepare('DELETE FROM calendar_sends WHERE id = ?').bind(id)
+}
+
+/**
+ * Invitation emails from the mailbox since `hourAgo` and `dayAgo`, and, among `recipients`, the one it has emailed
+ * most since `hourAgo`.
+ */
+export function calendarUsage(db: D1Database, mailboxId: string, recipients: string[], hourAgo: string, dayAgo: string) {
+  return db
+    .prepare(
+      `SELECT
+         (SELECT count(*) FROM calendar_sends WHERE mailbox_id = ?1 AND created_at >= ?2) AS hour,
+         (SELECT count(*) FROM calendar_sends WHERE mailbox_id = ?1 AND created_at >= ?3) AS day,
+         r.recipient AS topRecipient, coalesce(r.n, 0) AS topRecipientHour
+       FROM (SELECT 1) LEFT JOIN (
+         SELECT recipient, count(*) AS n FROM calendar_sends
+         WHERE mailbox_id = ?1 AND created_at >= ?2 AND recipient IN (SELECT value FROM json_each(?4))
+         GROUP BY recipient ORDER BY n DESC LIMIT 1
+       ) r`,
+    )
+    .bind(mailboxId, hourAgo, dayAgo, JSON.stringify(recipients))
 }

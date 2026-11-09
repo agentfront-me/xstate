@@ -49,6 +49,22 @@ export {
   type Message,
   type MessageSummary,
 } from './messages'
+export {
+  createEvent,
+  deleteEvent,
+  getEvent,
+  listCalendars,
+  listEvents,
+  respondToEvent,
+  updateEvent,
+  MAX_GUESTS,
+  type Calendar,
+  type CalendarEvent,
+  type EventInput,
+  type Guest,
+  type GuestStatus,
+  type Repeat,
+} from './calendar'
 export { evaluateSender, sendingHourly, sendingStatus } from './sending'
 export { grantMailboxAccess, listMailboxAccess, revokeMailboxAccess } from './sharing'
 export type {

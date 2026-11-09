@@ -2,6 +2,7 @@
 
 import { audienceOperations } from './audience'
 import { authOperations } from './auth'
+import { calendarOperations } from './calendar'
 import type { AnyOperation } from './define'
 import { emailOperations } from './email'
 import { memberOperations } from './members'
@@ -11,6 +12,7 @@ import { storageOperations } from './storage'
 export const operations: readonly AnyOperation[] = [
   ...authOperations,
   ...emailOperations,
+  ...calendarOperations,
   ...memberOperations,
   ...migrationOperations,
   ...storageOperations,

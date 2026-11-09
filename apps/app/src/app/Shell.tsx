@@ -9,7 +9,7 @@ import { applyTheme, desktop, initials, isMac } from '../lib/core'
 import { useIsDark } from '../lib/theme'
 import { MailSync, useUnreadCount } from '../mail/data'
 import { requestMail } from '../mail/intents'
-import { PAGES } from './pages'
+import { PAGES, ROUTED } from './pages'
 
 const COLLAPSED_KEY = 'xstate.rail-collapsed'
 
@@ -146,7 +146,7 @@ function Rail() {
             title={p.label}
             aria-current={page === p.id ? 'page' : undefined}
             onClick={() =>
-              void (p.id === 'mail' || p.id === 'storage' || p.id === 'users'
+              void (ROUTED.has(p.id)
                 ? navigate({ to: `/${p.id}` })
                 : navigate({ to: '/$page', params: { page: p.id } }))
             }

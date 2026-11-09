@@ -10,7 +10,11 @@ const ALL_PAGES: Page[] = [
   { id: 'users', label: 'Users', icon: 'users' },
   { id: 'agents', label: 'Agents', icon: 'bot' },
   { id: 'sites', label: 'Sites', icon: 'globe', hidden: true },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' },
 ]
+
+/** Pages with their own route; the rest go to the "coming soon" page. */
+export const ROUTED = new Set(['mail', 'storage', 'users', 'calendar'])
 
 /** The pages in the rail. */
 export const PAGES: Page[] = ALL_PAGES.filter((p) => !p.hidden)

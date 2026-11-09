@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { judge, LIMITS, overLimit, SUSPEND } from './sending-rules.ts'
+import { CALENDAR_LIMITS, calendarOverLimit, judge, LIMITS, overLimit, SUSPEND } from './sending-rules.ts'
 
 const box = SUSPEND.mailbox
 const org = SUSPEND.organization
@@ -45,5 +45,21 @@ describe('overLimit', () => {
     assert.match(overLimit({ ...ok, mailboxDay: ok.mailboxDay + 1 })!, /a day from one mailbox/)
     assert.match(overLimit({ ...ok, orgHour: ok.orgHour + 1 })!, /an hour for your organization/)
     assert.match(overLimit({ ...ok, orgDay: ok.orgDay + 1 })!, /a day for your organization/)
+  })
+})
+
+describe('calendarOverLimit', () => {
+  const ok = { hour: 0, day: 0, topRecipient: null, topRecipientHour: 0 }
+  it('allows up to the caps, inclusive', () => {
+    assert.equal(calendarOverLimit({ ...ok, hour: CALENDAR_LIMITS.hour, day: CALENDAR_LIMITS.day }), null)
+    assert.equal(calendarOverLimit({ ...ok, topRecipient: 'a@b.co', topRecipientHour: CALENDAR_LIMITS.perRecipientHour }), null)
+  })
+  it('names the cap that was passed', () => {
+    assert.match(calendarOverLimit({ ...ok, hour: CALENDAR_LIMITS.hour + 1 })!, /an hour from one calendar/)
+    assert.match(calendarOverLimit({ ...ok, day: CALENDAR_LIMITS.day + 1 })!, /a day from one calendar/)
+    assert.match(calendarOverLimit({ ...ok, topRecipient: 'a@b.co', topRecipientHour: CALENDAR_LIMITS.perRecipientHour + 1 })!, /to a@b\.co/)
+  })
+  it('stays under Stalwart: 40 an hour and 200 a day per sender, 25 an hour per recipient', () => {
+    assert.ok(CALENDAR_LIMITS.hour < 40 && CALENDAR_LIMITS.day < 200 && CALENDAR_LIMITS.perRecipientHour < 25)
   })
 })

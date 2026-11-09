@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-11-06T08:19:40.763Z",
         "reason": "Claude: flagged rule is the Markdown blockquote bar in .md-doc (standard quote rendering, neutral --border-strong, matches .message-text.quoted in dashboard.css), not a card accent"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/styles/calendar.css"
+        ],
+        "createdAt": "2026-11-09T07:56:09.124Z",
+        "reason": "Claude design: the Calendar screen in the user's design file xstate App.dc.html draws a left bar on event blocks (solid for Work, muted for Personal)"
       }
     ]
   }
