@@ -7,6 +7,8 @@ export type Domain = {
   id: string
   name: string
   status: 'pending' | 'verified'
+  /** Proven to be the organization's (ownership TXT record or mail records), even before mail moves. */
+  owned?: boolean
   /** Amazon SES state: whether mail from this domain can reach outside addresses yet. */
   sending?: 'pending' | 'verified' | 'failed' | null
   enabled: boolean

@@ -814,9 +814,10 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
             </span>
           ) : (
             <>
-              <span className="status pending">
-                <Icon name="clock" size={14} />
-                Pending DNS
+              {/* Owned (the ownership TXT record) but mail not moved yet: what an import from Google needs to start. */}
+              <span className={`status${d.owned ? '' : ' pending'}`} title={d.owned ? 'Proven to be yours. Mail moves when its records are in place.' : undefined}>
+                <Icon name={d.owned ? 'circle-check' : 'clock'} size={14} />
+                {d.owned ? 'Ownership proven' : 'Pending DNS'}
               </span>
               <button className="btn" disabled={checking} aria-busy={checking} onClick={() => void check()}>
                 Check DNS
@@ -830,6 +831,12 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
       </div>
       {records.length > 0 && (
         <div className="records">
+          {records.some((r) => r.purpose === 'Ownership') && (
+            <p className="records-note">
+              Moving from Google Workspace? The first record (TXT, xstate-verification) only proves the domain is yours, so you can start the import
+              while mail still goes to Google. Add the mail records when you switch.
+            </p>
+          )}
           <table>
             <thead>
               <tr>

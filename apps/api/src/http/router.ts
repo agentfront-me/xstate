@@ -30,7 +30,9 @@ export function mountOperations(app: Hono<AppEnv>, operations: readonly AnyOpera
 }
 
 export const onError: ErrorHandler<AppEnv> = (err, c) => {
-  if (err instanceof ApiError) return c.json({ error: { code: err.code, message: err.message } }, err.status)
+  if (err instanceof ApiError) {
+    return c.json({ error: { code: err.code, message: err.message, ...(err.details && { details: err.details }) } }, err.status)
+  }
   if (err instanceof z.ZodError) {
     return c.json({ error: { code: 'invalid_input', message: z.prettifyError(err), issues: err.issues } }, 400)
   }

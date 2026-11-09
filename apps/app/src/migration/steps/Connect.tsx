@@ -3,12 +3,15 @@
 
 import { useState, type FormEvent } from 'react'
 import { Icon } from '../../components/Icon'
-import { errorMessage, isEmail } from '../../lib/core'
+import { ApiError, errorMessage, isEmail } from '../../lib/core'
 import { Help, usePending, type Message } from '../../onboarding/ui'
 import * as migrationApi from '../api'
 import type { Ctx } from '../main'
 import type { Connection } from '../types'
 import { CopyButton, CopyLink, Panel, Title } from '../ui'
+
+/** From the API's domain_not_owned error (migration/service.ts requireOwnDomains). */
+type OwnershipRecord = { domain: string; type: string; name: string; value: string }
 
 export function ConnectStep({ ctx }: { ctx: Ctx }) {
   // Read at render: the API's scope list replaces the demo one once the migration loads.
@@ -16,6 +19,8 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
   const [email, setEmail] = useState(ctx.migration.connection?.adminEmail ?? (ctx.isAdmin ? ctx.user.email : ''))
   const [connection, setConnection] = useState<Connection | null>(ctx.migration.connection)
   const [message, setMessage] = useState<Message>(null)
+  // The ownership TXT records to add, when Verify says the admin's domain isn't proven to be this organization's.
+  const [ownership, setOwnership] = useState<OwnershipRecord[]>([])
   const [pending, run] = usePending()
   const passed = migrationApi.allPassed(connection)
   const failed = connection ? migrationApi.SCOPES.filter((s) => !connection.checks[s.id]).length : 0
@@ -28,8 +33,11 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
     await run(async () => {
       try {
         setConnection(await migrationApi.verify(ctx.org.id, value))
+        setOwnership([])
       } catch (err) {
-        setMessage({ text: errorMessage(err) })
+        const records = err instanceof ApiError && err.code === 'domain_not_owned' ? ((err.details?.records as OwnershipRecord[] | undefined) ?? []) : []
+        setOwnership(records)
+        setMessage({ text: records.length ? `Prove ${records.map((r) => r.domain).join(' and ')} ${records.length === 1 ? 'is' : 'are'} yours first. Mail keeps going to Google until you switch.` : errorMessage(err) })
       }
     })
   }
@@ -114,6 +122,32 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
                 </button>
               </div>
               <Help message={message} />
+              {ownership.length > 0 && (
+                <div className="ownership">
+                  <p className="small muted">
+                    At your DNS host, add this TXT record, then verify again. It only proves the domain is yours: mail isn’t moved until the Switch step.
+                  </p>
+                  {ownership.map((r) => (
+                    <div key={r.domain} className="scope-table">
+                      <div className="scope">
+                        <span className="scope-name">Domain</span>
+                        <code>{r.domain}</code>
+                        <span />
+                      </div>
+                      <div className="scope">
+                        <span className="scope-name">Type · Name</span>
+                        <code>TXT · @</code>
+                        <span />
+                      </div>
+                      <div className="scope">
+                        <span className="scope-name">Value</span>
+                        <code title={r.value}>{r.value}</code>
+                        <CopyButton text={r.value} label="Copy TXT value" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </form>
             <ul className="checks">
               {migrationApi.SCOPES.map((s) => {

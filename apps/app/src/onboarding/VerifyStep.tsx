@@ -150,7 +150,8 @@ export function VerifyStep({
     }
   }
 
-  const list = records ?? []
+  // Onboarding moves mail now; the ownership record is only for starting a Google import before the switch.
+  const list = (records ?? []).filter((r) => r.purpose !== 'Ownership')
   const required = list.filter((r) => r.required)
   const found = required.filter((r) => r.found).length
   const missing = required.filter((r) => !r.found)

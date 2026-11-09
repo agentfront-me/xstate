@@ -84,6 +84,8 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly status: number,
+    /** Structured data some errors carry, such as the DNS record to add. */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message)
   }
@@ -124,12 +126,12 @@ async function request(method: string, path: string, body?: unknown, { file, ano
     throw new ApiError('network', "Couldn't reach xstate. Check your connection and try again.", 0)
   }
   if (res.ok) return res
-  const data = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } }
+  const data = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
   if (res.status === 401 && token) {
     signOut()
     throw new ApiError('signed_out', 'Your session ended. Sign in again.', 401)
   }
-  throw new ApiError(data.error?.code ?? 'error', data.error?.message ?? 'Something went wrong. Try again.', res.status)
+  throw new ApiError(data.error?.code ?? 'error', data.error?.message ?? 'Something went wrong. Try again.', res.status, data.error?.details)
 }
 
 export const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'Something went wrong. Try again.')

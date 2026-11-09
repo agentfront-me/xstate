@@ -14,7 +14,7 @@ import { isAdmin, loadMember } from '../mailserver/access'
 import type { EmailEnv } from '../mailserver/types'
 import { GoogleError } from './google/auth'
 import { PERMISSIONS, SCOPES, workspace, type Permission, type WorkspaceEnv } from './google/workspace'
-import { updateMailbox } from '../mailserver'
+import { checkOwnership, ownershipRecord, updateMailbox } from '../mailserver'
 import { enqueueMigrationJobs, GROUP_DEFAULT_MAX_MEMBERS, startMailCopies } from './jobs'
 
 export type MigrationEnv = EmailEnv & WorkspaceEnv & Pick<Env, 'MIGRATION'>
@@ -106,11 +106,32 @@ async function view(env: MigrationEnv, m: MigrationRow, previousSeen: string | n
 export type MigrationView = Awaited<ReturnType<typeof view>>
 
 /** Which of these addresses already have a mailbox in the organization. */
-/** Throws unless every address is on a domain the organization has verified in DNS. */
+/**
+ * Throws unless every address is on a domain the organization has added to xstate and proven it owns: with the
+ * ownership TXT record, or with its mail records (looked up live, so adding the record and trying again works).
+ * Mail doesn't have to move first: that's the switch, later. The error carries the records to add (`details`).
+ */
 async function requireOwnDomains(env: MigrationEnv, organizationId: string, emails: string[], why: string): Promise<void> {
-  const verified = new Set((await domainsDb.listByOrganization(env.DB, organizationId)).filter((d) => d.status === 'verified').map((d) => d.name))
-  const foreign = [...new Set(emails.map((e) => e.split('@')[1] ?? '').filter((d) => !verified.has(d)))]
-  if (foreign.length) throw new ApiError('domain_not_verified', `${why}: ${foreign.slice(0, 3).join(', ')}${foreign.length > 3 ? ' and others' : ''}.`, 403)
+  const names = [...new Set(emails.map((e) => (e.split('@')[1] ?? '').toLowerCase()).filter(Boolean))]
+  const rows = new Map((await domainsDb.listByOrganization(env.DB, organizationId)).map((d) => [d.name, d]))
+  const list = (xs: string[]) => `${xs.slice(0, 3).join(', ')}${xs.length > 3 ? ' and others' : ''}`
+
+  const missing = names.filter((n) => !rows.has(n))
+  if (missing.length) {
+    throw new ApiError('domain_not_added', `${why}. Add ${list(missing)} in Settings → Domains first.`, 403, { domains: missing })
+  }
+  const unproven: domainsDb.DomainRow[] = []
+  for (const n of names) if (!(await checkOwnership(env, rows.get(n)!))) unproven.push(rows.get(n)!)
+  if (unproven.length) {
+    const records = unproven.map((d) => ({ domain: d.name, ...ownershipRecord(d) }))
+    const how = records.map((r) => `a TXT record on ${r.domain} with the value ${r.value}`).join('; ')
+    throw new ApiError(
+      'domain_not_owned',
+      `${why}. To prove ${list(unproven.map((d) => d.name))} ${unproven.length === 1 ? 'is' : 'are'} yours, add ${how} at your DNS host, then try again. Mail keeps going to Google until you switch.`,
+      403,
+      { records },
+    )
+  }
 }
 
 export async function existingAddresses(env: Pick<Env, 'DB'>, organizationId: string, emails: string[]): Promise<Set<string>> {
@@ -246,8 +267,8 @@ export async function verify(env: MigrationEnv, actor: Actor, organizationId: st
     )
   }
   // xstate's service account is the same for every customer, so Google accepting the admin proves nothing about
-  // whose Workspace it is. Owning the admin's domain in xstate (verified in DNS) does.
-  await requireOwnDomains(env, organizationId, [email], 'The admin must be on a domain this organization has verified in xstate (Settings → Domains)')
+  // whose Workspace it is. Owning the admin's domain in xstate (proven in DNS) does.
+  await requireOwnDomains(env, organizationId, [email], 'The admin must be on a domain this organization owns in xstate')
   // A new admin or a different Workspace starts discovery over.
   const changed = m.admin_email !== email
   await migrationsDb
@@ -337,12 +358,12 @@ export async function start(env: MigrationEnv, actor: Actor, organizationId: str
     throw new ApiError('domains_missing', `Add ${missing.join(', ')} to xstate first (Settings → Domains). Addresses on ${missing.length === 1 ? 'it' : 'them'} can't be created until then.`, 409)
   }
   // And everyone whose data is copied, whatever the plan does with it, must be on a domain this organization has
-  // verified: that's what shows the Workspace is theirs to copy.
+  // proven it owns: that's what shows the Workspace is theirs to copy.
   await requireOwnDomains(
     env,
     organizationId,
     users.filter((u) => u.action !== 'skip').map((u) => u.email),
-    'Every person copied must be on a domain this organization has verified in xstate. Verify the domain, or skip them',
+    'Every person copied must be on a domain this organization owns in xstate (or skip them)',
   )
   // An address that has a mailbox already can't be created again: the admin picks "Use existing" for it.
   const taken = await existingAddresses(env, organizationId, needed)

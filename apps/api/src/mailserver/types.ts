@@ -26,6 +26,8 @@ export type Domain = {
   name: string
   /** Receiving: the MX, SPF, DKIM and DMARC records are in place. */
   status: 'pending' | 'verified'
+  /** Proven to be the organization's (the ownership TXT record or the mail records), even before mail moves. */
+  owned: boolean
   /** Sending to outside addresses: Amazon SES has verified the domain. null when it isn't registered with SES. */
   sending: 'pending' | 'verified' | 'failed' | null
   enabled: boolean
@@ -55,6 +57,7 @@ export function toDomain(row: DomainRow): Domain {
     organizationId: row.organization_id,
     name: row.name,
     status: row.status,
+    owned: row.status === 'verified' || !!row.owned_at,
     sending: row.ses_status,
     enabled: row.enabled === 1,
     verifiedAt: row.verified_at,

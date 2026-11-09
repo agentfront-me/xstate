@@ -11,6 +11,10 @@ export type DomainRow = {
   ses_status: 'pending' | 'verified' | 'failed' | null
   /** JSON array of Easy DKIM tokens. */
   ses_dkim_tokens: string | null
+  /** Random; the domain's ownership TXT record is xstate-verification=<token>. */
+  ownership_token: string | null
+  /** When ownership was proven: the TXT record, or the mail records. */
+  owned_at: string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -38,10 +42,10 @@ export function insert(
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO domains (id, organization_id, name, stalwart_id, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO domains (id, organization_id, name, stalwart_id, created_by, created_at, updated_at, ownership_token)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(domain.id, domain.organizationId, domain.name, domain.stalwartId, domain.createdBy, domain.now, domain.now)
+    .bind(domain.id, domain.organizationId, domain.name, domain.stalwartId, domain.createdBy, domain.now, domain.now, crypto.randomUUID().replaceAll('-', ''))
 }
 
 export function setEnabled(db: D1Database, id: string, enabled: boolean, now: string): D1PreparedStatement {
@@ -49,9 +53,14 @@ export function setEnabled(db: D1Database, id: string, enabled: boolean, now: st
 }
 
 export function setVerified(db: D1Database, id: string, now: string): D1PreparedStatement {
+  // Mail records found prove ownership too.
   return db
-    .prepare("UPDATE domains SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ?")
-    .bind(now, now, id)
+    .prepare("UPDATE domains SET status = 'verified', verified_at = ?, owned_at = COALESCE(owned_at, ?), updated_at = ? WHERE id = ?")
+    .bind(now, now, now, id)
+}
+
+export function setOwned(db: D1Database, id: string, now: string): D1PreparedStatement {
+  return db.prepare('UPDATE domains SET owned_at = COALESCE(owned_at, ?), updated_at = ? WHERE id = ?').bind(now, now, id)
 }
 
 export function setSes(db: D1Database, id: string, ses: { status: string; dkimTokens: string[] }, now: string): D1PreparedStatement {

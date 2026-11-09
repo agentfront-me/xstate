@@ -12,7 +12,7 @@ export type DnsRecord = {
   /** Relative to the domain: '@' for the apex, 'v1-rsa-20261103._domainkey' for a DKIM key. */
   name: string
   value: string
-  purpose: 'Mail' | 'SPF' | 'DKIM' | 'DMARC'
+  purpose: 'Mail' | 'SPF' | 'DKIM' | 'DMARC' | 'Ownership'
   /** Mail works without it. DMARC is recommended but doesn't block verification. */
   required: boolean
   found: boolean

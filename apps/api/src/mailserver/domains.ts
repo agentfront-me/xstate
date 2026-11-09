@@ -124,15 +124,45 @@ export async function verifyDomain(
   })
   const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
   if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
-  const expected = essentialRecords(zone, domain.name, sesDkimRecords(domain))
+  // Until mail moves, the ownership TXT record comes first: it's all a Google Workspace import needs to start.
+  const owner = domain.status === 'verified' ? [] : [ownershipRecord(domain)]
+  const expected = [...owner, ...essentialRecords(zone, domain.name, sesDkimRecords(domain))]
   const records = isTestDomain(env, domain.name)
     ? expected.map((r) => ({ ...r, found: true }))
     : await checkRecords(expected, domain.name)
-  if (domain.status !== 'verified' && records.every((r) => r.found || !r.required)) {
-    await domainsDb.setVerified(env.DB, domain.id, new Date().toISOString()).run()
+  const now = new Date().toISOString()
+  const mailReady = records.every((r) => r.found || !r.required)
+  if (domain.status !== 'verified' && mailReady) {
+    await domainsDb.setVerified(env.DB, domain.id, now).run()
+    return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
+  }
+  if (!domain.owned_at && owner.length && records[0]!.found) {
+    await domainsDb.setOwned(env.DB, domain.id, now).run()
     return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
   }
   return { domain: toDomain(domain), records }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Ownership: proving the domain is the organization's without moving its mail (a Google Workspace import needs
+// this before the switch). A TXT record at the apex, like Google's and Microsoft's own domain checks.
+
+const OWNERSHIP_PREFIX = 'xstate-verification='
+
+export function ownershipRecord(domain: Pick<domainsDb.DomainRow, 'ownership_token'>): Omit<DnsRecord, 'found'> {
+  return { type: 'TXT', name: '@', value: `${OWNERSHIP_PREFIX}${domain.ownership_token ?? ''}`, purpose: 'Ownership', required: false }
+}
+
+/**
+ * Whether the organization has proven it owns the domain: its mail records are verified, or the ownership TXT
+ * record was found before. Otherwise looks the record up now (and remembers a match), so adding the record and
+ * trying again is enough. `.test` domains count as owned outside production.
+ */
+export async function checkOwnership(env: EmailEnv, domain: domainsDb.DomainRow): Promise<boolean> {
+  if (domain.status === 'verified' || domain.owned_at) return true
+  const found = isTestDomain(env, domain.name) || (!!domain.ownership_token && (await resolveTxt(domain.name).catch(() => [] as string[])).some((v) => v.trim() === ownershipRecord(domain).value))
+  if (found) await domainsDb.setOwned(env.DB, domain.id, new Date().toISOString()).run()
+  return found
 }
 
 /**

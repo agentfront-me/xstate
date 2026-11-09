@@ -50,7 +50,8 @@ export async function switchStatus(env: Env2, actor: Actor, organizationId: stri
   for (const d of ours) {
     const { records: rs } = await verifyDomain(env, actor, d.id)
     const qualify = (name: string) => (d.name === m.google_domain ? name : name === '@' ? d.name : `${name}.${d.name}`)
-    for (const r of rs) records.push({ type: r.type, name: qualify(r.name), value: r.value, found: r.found, required: r.required, domain: d.name })
+    // The switch is about mail; the ownership record was for starting the import.
+    for (const r of rs.filter((x) => x.purpose !== 'Ownership')) records.push({ type: r.type, name: qualify(r.name), value: r.value, found: r.found, required: r.required, domain: d.name })
   }
   const detected = records.length > 0 && records.every((r) => r.found || !r.required)
   let detectedAt = m.switch_detected_at
