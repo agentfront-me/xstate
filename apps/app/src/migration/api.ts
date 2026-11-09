@@ -143,6 +143,7 @@ const SCOPE_TEXT: Record<Permission, { label: string; detail: string }> = {
   gmail: { label: 'Gmail', detail: 'Read messages, labels and attachments' },
   contacts: { label: 'Contacts', detail: 'Read personal and other contacts' },
   drive: { label: 'Drive', detail: 'Read My Drive, Shared drives and sharing' },
+  calendar: { label: 'Calendar', detail: 'Read the calendars people own and their events' },
 }
 
 /** One line per permission. Signed in, the scopes come from the API, so they always match what Verify checks. */
@@ -161,6 +162,7 @@ export let SCOPES: { id: Permission; label: string; url: string; detail: string 
     detail: 'Read personal and other contacts',
   },
   { id: 'drive', label: 'Drive', url: 'https://www.googleapis.com/auth/drive.readonly', detail: 'Read My Drive, Shared drives and sharing' },
+  { id: 'calendar', label: 'Calendar', url: 'https://www.googleapis.com/auth/calendar.readonly', detail: 'Read the calendars people own and their events' },
 ]
 
 /** Asks Google for a token per scope, as the admin. */
@@ -173,7 +175,7 @@ export async function verify(orgId: string, adminEmail: string): Promise<Connect
   const failing = params.get('sim') === 'fail'
   const connection: Connection = {
     adminEmail,
-    checks: { directory: true, gmail: !failing, contacts: true, drive: !failing },
+    checks: { directory: true, gmail: !failing, contacts: true, drive: !failing, calendar: true },
     verifiedAt: new Date().toISOString(),
   }
   update(orgId, (sim) => {
@@ -237,10 +239,11 @@ function defaultPlan(m: Migration): Plan {
   const d = m.discovery!
   const users: Record<string, UserPlan> = {}
   for (const u of d.users) {
-    if (u.suspended && u.mailBytes < 1024 ** 3) users[u.id] = { action: 'skip', mail: false, contacts: false, drive: false }
-    else if (u.suspended) users[u.id] = { action: 'shared', mail: true, contacts: false, drive: true }
-    else if (u.existingMailbox) users[u.id] = { action: 'existing', existing: u.existingMailbox, mail: true, contacts: true, drive: true }
-    else users[u.id] = { action: 'create', mail: true, contacts: true, drive: true }
+    if (u.suspended && u.mailBytes < 1024 ** 3) users[u.id] = { action: 'skip', mail: false, contacts: false, drive: false, calendar: false }
+    // Google won't let xstate read a suspended person's contacts or calendar.
+    else if (u.suspended) users[u.id] = { action: 'shared', mail: true, contacts: false, drive: true, calendar: false }
+    else if (u.existingMailbox) users[u.id] = { action: 'existing', existing: u.existingMailbox, mail: true, contacts: true, drive: true, calendar: true }
+    else users[u.id] = { action: 'create', mail: true, contacts: true, drive: true, calendar: true }
   }
   return {
     users,
@@ -308,7 +311,7 @@ function status(sim: Sim): CopyStatus {
   let doneUsers = 0
   let sum = 0
   let longest = 0
-  const totals = { messages: 0, contacts: 0, files: 0 }
+  const totals = { messages: 0, contacts: 0, files: 0, events: 0 }
 
   d.users.forEach((user, index) => {
     const p = plan.users[user.id]!
@@ -328,10 +331,12 @@ function status(sim: Sim): CopyStatus {
       mail: p.mail ? count(messages, mailShare) : null,
       contacts: p.contacts && p.action !== 'shared' ? count(user.contacts ?? 0, contactsShare) : null,
       drive: p.drive ? count(user.files ?? 0, share) : null,
+      // A made-up calendar per person: about 40 events plus a few per thousand messages.
+      calendar: p.calendar && p.action !== 'shared' ? count(40 + Math.round((user.messages ?? 0) / 2000), Math.min(1, share * 2)) : null,
       ...(user.driveBytes > 1024 ** 4 && p.drive && { driveBytes: count(user.driveBytes, share) }),
       state: 'waiting',
     }
-    const parts = [progress.mail, progress.contacts, progress.drive].filter((x): x is Count => !!x)
+    const parts = [progress.mail, progress.contacts, progress.drive, progress.calendar].filter((x): x is Count => !!x)
     const finished = parts.every((c) => c.done === c.total)
     if (finished) progress.state = 'done'
     else if (quotaStop && mailShare >= 0.635) {
@@ -344,6 +349,7 @@ function status(sim: Sim): CopyStatus {
     sum += progress.state === 'done' ? 1 : share
     totals.messages += progress.mail?.total ?? 0
     totals.contacts += progress.contacts?.total ?? 0
+    totals.events += progress.calendar?.total ?? 0
     totals.files += progress.drive?.total ?? 0
     users.push(progress)
   })
@@ -553,6 +559,7 @@ export async function finalStatus(orgId: string): Promise<FinalStatus> {
   return {
     mail: count(3_204, share),
     contacts: count(38, Math.min(1, share * 2)),
+    calendar: count(64, Math.min(1, share * 1.8)),
     drive: count(212, Math.min(1, share * 1.4)),
     finished: share >= 1,
     rerunAt: new Date(startedAt + 86_400_000).toISOString(),
@@ -580,6 +587,7 @@ export async function finishStatus(orgId: string): Promise<FinishStatus> {
     shared: u.action === 'shared',
     messages: u.mail?.total ?? 0,
     contacts: u.contacts?.total ?? null,
+    events: u.calendar?.total ?? null,
     files: u.drive?.total ?? 0,
   }))
   const period = 10_000
@@ -631,8 +639,10 @@ export function reportCsv(f: FinishStatus): string {
     const s = v === null ? '' : String(v)
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const rows = [['User', 'Kind', 'Messages', 'Contacts', 'Files']]
-  for (const r of f.report) rows.push([r.name, r.shared ? 'Shared mailbox' : 'Member', String(r.messages), r.contacts === null ? '' : String(r.contacts), String(r.files)])
+  const rows = [['User', 'Kind', 'Messages', 'Contacts', 'Calendar events', 'Files']]
+  for (const r of f.report) {
+    rows.push([r.name, r.shared ? 'Shared mailbox' : 'Member', String(r.messages), r.contacts === null ? '' : String(r.contacts), r.events == null ? '' : String(r.events), String(r.files)])
+  }
   rows.push([], ['Skipped', 'Count', 'Reason'])
   for (const s of f.skipped) rows.push([s.label, String(s.count), s.reason])
   return rows.map((r) => r.map(esc).join(',')).join('\n')

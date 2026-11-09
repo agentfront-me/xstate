@@ -63,6 +63,7 @@ export type MigrationUserRow = {
   copy_mail: number
   copy_contacts: number
   copy_drive: number
+  copy_calendar: number
   member_id: string | null
   mailbox_id: string | null
   applied_at: string | null
@@ -98,6 +99,14 @@ export type MigrationUserRow = {
   final_drive: 'running' | 'done' | null
   final_drive_changes: number
   final_contacts_base: number | null
+  calendar_state: 'copying' | 'done' | 'attention' | null
+  calendar_done: number
+  calendar_cursor: string | null
+  calendar_chain: number
+  calendar_note: string | null
+  final_calendar: 'running' | 'done' | null
+  final_calendar_changes: number
+  final_calendar_cursor: string | null
   watch: string | null
 }
 
@@ -127,6 +136,8 @@ export const copyPendingSql = {
   mail: "(u.copy_mail = 1 AND u.mailbox_id IS NOT NULL AND u.action != 'skip' AND (u.mail_state IS NULL OR u.mail_state = 'copying'))",
   contacts: "(u.copy_contacts = 1 AND u.action != 'skip' AND u.applied_at IS NOT NULL AND (u.contacts_state IS NULL OR u.contacts_state = 'copying'))",
   drive: "(u.copy_drive = 1 AND u.action != 'skip' AND u.applied_at IS NOT NULL AND (u.drive_state IS NULL OR u.drive_state = 'copying'))",
+  /** Events go into the person's mailbox calendar, so this waits for the mailbox. */
+  calendar: "(u.copy_calendar = 1 AND u.mailbox_id IS NOT NULL AND u.action != 'skip' AND u.applied_at IS NOT NULL AND (u.calendar_state IS NULL OR u.calendar_state = 'copying'))",
   /** A migration_drives row (alias `d`). */
   sharedDrive: "(d.state IS NULL OR d.state = 'copying')",
 }
@@ -136,6 +147,8 @@ export const copyPending = {
   mail: (u: MigrationUserRow) => !!u.copy_mail && !!u.mailbox_id && u.action !== 'skip' && (!u.mail_state || u.mail_state === 'copying'),
   contacts: (u: MigrationUserRow) => !!u.copy_contacts && u.action !== 'skip' && !!u.applied_at && (!u.contacts_state || u.contacts_state === 'copying'),
   drive: (u: MigrationUserRow) => !!u.copy_drive && u.action !== 'skip' && !!u.applied_at && (!u.drive_state || u.drive_state === 'copying'),
+  calendar: (u: MigrationUserRow) =>
+    !!u.copy_calendar && !!u.mailbox_id && u.action !== 'skip' && !!u.applied_at && (!u.calendar_state || u.calendar_state === 'copying'),
 }
 
 export async function listDrives(db: D1Database, migrationId: string): Promise<MigrationDriveRow[]> {
@@ -207,15 +220,15 @@ export function upsertUser(
     driveBytes: number | null
     countedAt: string | null
     countError: string | null
-    plan: { action: Action; existingAddress: string | null; mail: boolean; contacts: boolean; drive: boolean }
+    plan: { action: Action; existingAddress: string | null; mail: boolean; contacts: boolean; drive: boolean; calendar: boolean }
     recoveryEmail?: string | null
   },
 ): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO migration_users (migration_id, google_id, email, name, suspended, aliases, mail_bytes, drive_bytes,
-         counted_at, count_error, action, existing_address, copy_mail, copy_contacts, copy_drive, recovery_email)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         counted_at, count_error, action, existing_address, copy_mail, copy_contacts, copy_drive, recovery_email, copy_calendar)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (migration_id, google_id) DO UPDATE SET email = excluded.email, name = excluded.name,
          suspended = excluded.suspended, aliases = excluded.aliases, mail_bytes = excluded.mail_bytes,
          drive_bytes = excluded.drive_bytes, messages = NULL, contacts = NULL, files = NULL,
@@ -238,6 +251,7 @@ export function upsertUser(
       u.plan.contacts ? 1 : 0,
       u.plan.drive ? 1 : 0,
       u.recoveryEmail ?? null,
+      u.plan.calendar ? 1 : 0,
     )
 }
 
@@ -271,14 +285,14 @@ export function setPlan(
   db: D1Database,
   migrationId: string,
   googleId: string,
-  p: { action: Action; existingAddress: string | null; mail: boolean; contacts: boolean; drive: boolean },
+  p: { action: Action; existingAddress: string | null; mail: boolean; contacts: boolean; drive: boolean; calendar: boolean },
 ): D1PreparedStatement {
   return db
     .prepare(
-      `UPDATE migration_users SET action = ?, existing_address = ?, copy_mail = ?, copy_contacts = ?, copy_drive = ?
+      `UPDATE migration_users SET action = ?, existing_address = ?, copy_mail = ?, copy_contacts = ?, copy_drive = ?, copy_calendar = ?
        WHERE migration_id = ? AND google_id = ?`,
     )
-    .bind(p.action, p.existingAddress, p.mail ? 1 : 0, p.contacts ? 1 : 0, p.drive ? 1 : 0, migrationId, googleId)
+    .bind(p.action, p.existingAddress, p.mail ? 1 : 0, p.contacts ? 1 : 0, p.drive ? 1 : 0, p.calendar ? 1 : 0, migrationId, googleId)
 }
 
 /** Users Start hasn't handled yet, a few at a time. */

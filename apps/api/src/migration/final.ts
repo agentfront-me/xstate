@@ -6,6 +6,7 @@
 //             deleted ones move to Trash (never deleted outright). If Google's history no longer reaches back, the
 //             mailbox is listed again instead; nothing already copied is copied twice.
 //   contacts  their contacts are read again; only new ones are added.
+//   calendar  each calendar's changes since the copy, through Google's sync token (in calendar.ts).
 //   drive     the Drive change feed (in drive.ts): new files copied, edited files get a new version.
 
 import * as mailboxesDb from '../db/mailboxes'
@@ -55,6 +56,10 @@ export async function startFinalPass(env: Env, m: MigrationRow): Promise<void> {
         .run()
       jobs.push({ kind: 'contacts', migrationId: m.id, googleId: u.google_id, chain: u.contacts_chain + 1 })
     }
+    if (u.copy_calendar && u.mailbox_id && u.calendar_state === 'done' && u.calendar_cursor) {
+      await env.DB.prepare("UPDATE migration_users SET final_calendar = 'running', final_calendar_changes = 0, final_calendar_cursor = NULL WHERE migration_id = ? AND google_id = ?").bind(...where).run()
+      jobs.push({ kind: 'final_calendar', migrationId: m.id, owner: u.google_id, run })
+    }
     if (u.copy_drive && u.drive_state === 'done') {
       await env.DB.prepare("UPDATE migration_users SET final_drive = 'running', final_drive_changes = 0 WHERE migration_id = ? AND google_id = ?").bind(...where).run()
       jobs.push({ kind: 'final_drive', migrationId: m.id, owner: u.google_id, shared: false, run })
@@ -74,7 +79,7 @@ export async function finishIfDone(env: Env, migrationId: string): Promise<void>
   const busy = await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM migration_users WHERE migration_id = ?1
-          AND (final_mail = 'running' OR final_drive = 'running' OR (final_contacts_base IS NOT NULL AND contacts_state = 'copying'))) +
+          AND (final_mail = 'running' OR final_drive = 'running' OR final_calendar = 'running' OR (final_contacts_base IS NOT NULL AND contacts_state = 'copying'))) +
        (SELECT COUNT(*) FROM migration_drives WHERE migration_id = ?1 AND final_state = 'running') AS n`,
   )
     .bind(migrationId)

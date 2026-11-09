@@ -6,7 +6,7 @@
 import { accessToken, GoogleError, googleGet, serviceAccount, type GoogleKeyEnv } from './auth'
 import { fakeWorkspace } from './fake'
 
-export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive'
+export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive' | 'calendar'
 
 /**
  * The scopes the admin grants, by permission. The wizard shows these (one comma-separated line per permission) and
@@ -22,6 +22,7 @@ export const SCOPES: Record<Permission, readonly string[]> = {
   gmail: ['https://www.googleapis.com/auth/gmail.readonly'],
   contacts: ['https://www.googleapis.com/auth/contacts.readonly', 'https://www.googleapis.com/auth/contacts.other.readonly'],
   drive: ['https://www.googleapis.com/auth/drive.readonly'],
+  calendar: ['https://www.googleapis.com/auth/calendar.readonly'],
 }
 
 export const PERMISSIONS = Object.keys(SCOPES) as Permission[]
@@ -54,6 +55,43 @@ export type GContact = {
   labels: string[]
 }
 export type GContactPage = { contacts: GContact[]; nextPageToken: string | null; total: number }
+
+/** A calendar the person owns. Others' calendars they subscribe to, holidays and birthdays are left out. */
+export type GCalendar = { id: string; name: string; primary: boolean; timeZone: string | null }
+export type GEventTime = { date?: string; dateTime?: string; timeZone?: string }
+export type GAttendee = {
+  email?: string
+  displayName?: string
+  responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted'
+  organizer?: boolean
+  self?: boolean
+  optional?: boolean
+  resource?: boolean
+}
+/**
+ * A Google Calendar event as the API returns it (singleEvents=false): a single event, a repeating series (with
+ * RRULE/EXDATE lines in `recurrence`), or a changed or cancelled occurrence of one (`recurringEventId`).
+ */
+export type GEvent = {
+  id: string
+  status?: 'confirmed' | 'tentative' | 'cancelled'
+  summary?: string
+  description?: string
+  location?: string
+  start?: GEventTime
+  end?: GEventTime
+  recurrence?: string[]
+  recurringEventId?: string
+  originalStartTime?: GEventTime
+  attendees?: GAttendee[]
+  organizer?: { email?: string; displayName?: string; self?: boolean }
+  iCalUID?: string
+  sequence?: number
+  eventType?: string
+  transparency?: 'opaque' | 'transparent'
+}
+/** One page of events. `nextSyncToken` comes with the last page: pass it later to get only what changed. */
+export type GEventPage = { events: GEvent[]; nextPageToken: string | null; nextSyncToken: string | null }
 
 /** Who a Drive item is shared with. */
 export type GPermission = { type: 'user' | 'group' | 'domain' | 'anyone'; role: string; email: string | null; domain: string | null }
@@ -129,6 +167,13 @@ export interface Workspace {
   gmailHistory(email: string, startHistoryId: string, pageToken: string | null): Promise<GHistory | null>
   driveStartToken(email: string, driveId?: string): Promise<string>
   driveChanges(email: string, token: string, driveId?: string): Promise<GChangePage>
+  /** The calendars the person owns, primary first. */
+  calendarList(email: string): Promise<GCalendar[]>
+  /**
+   * A page of a calendar's events, deleted ones included. With `syncToken` (from an earlier last page), only what
+   * changed since; throws GoogleError 'gone' when that token has expired.
+   */
+  eventsPage(email: string, calendarId: string, options: { pageToken: string | null; syncToken: string | null }): Promise<GEventPage>
 }
 
 /** Google's own file types, exported on download; anything else of Google's (Forms, Sites, …) can't be copied. */
@@ -505,6 +550,32 @@ function liveWorkspace(env: WorkspaceEnv): Workspace {
       }
     },
 
+    async calendarList(email) {
+      const t = await token(email, 'calendar')
+      type Item = { id: string; summary?: string; summaryOverride?: string; primary?: boolean; timeZone?: string; accessRole?: string }
+      const items = await paged<Item, { items?: Item[]; nextPageToken?: string }>(
+        t,
+        `${CALENDAR}/users/me/calendarList?minAccessRole=owner&showHidden=true&maxResults=250`,
+        (p) => p.items,
+      )
+      return items
+        .filter((c) => c.accessRole === 'owner' && !/#(holiday|contacts)@group\.v\.calendar\.google\.com$/.test(c.id))
+        .map((c) => ({ id: c.id, name: c.summaryOverride || c.summary || 'Calendar', primary: !!c.primary, timeZone: c.timeZone ?? null }))
+        .sort((a, b) => Number(b.primary) - Number(a.primary))
+    },
+
+    async eventsPage(email, calendarId, options) {
+      const t = await token(email, 'calendar')
+      const url = new URL(`${CALENDAR}/calendars/${encodeURIComponent(calendarId)}/events`)
+      url.searchParams.set('maxResults', '250')
+      url.searchParams.set('showDeleted', 'true')
+      url.searchParams.set('singleEvents', 'false')
+      if (options.syncToken) url.searchParams.set('syncToken', options.syncToken)
+      if (options.pageToken) url.searchParams.set('pageToken', options.pageToken)
+      const r = await googleGet<{ items?: GEvent[]; nextPageToken?: string; nextSyncToken?: string }>(t, url)
+      return { events: r.items ?? [], nextPageToken: r.nextPageToken ?? null, nextSyncToken: r.nextSyncToken ?? null }
+    },
+
     async sharedDrivePermissions(adminEmail, driveId) {
       const t = await token(adminEmail, 'drive')
       const all = await paged<NonNullable<ApiFile['permissions']>[number], { permissions?: NonNullable<ApiFile['permissions']>; nextPageToken?: string }>(
@@ -565,6 +636,7 @@ async function googleStream(token: string, url: string): Promise<Response> {
   }
 }
 const PEOPLE = 'https://people.googleapis.com/v1'
+const CALENDAR = 'https://www.googleapis.com/calendar/v3'
 const PERSON_FIELDS = 'names,emailAddresses,phoneNumbers,organizations,addresses,birthdays,biographies,photos,memberships'
 
 type ApiPerson = {

@@ -26,6 +26,7 @@ const userPlan = z.object({
   mail: z.boolean(),
   contacts: z.boolean(),
   drive: z.boolean(),
+  calendar: z.boolean().optional(),
 })
 
 // The whole migration API is kept off MCP: it reads entire Workspace domains and creates members and mailboxes.

@@ -54,11 +54,10 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
   const seconds = Math.max(0, Math.ceil((Date.parse(status.nextCheckAt) - Date.now()) / 1000))
   const id = migrationApi.CLIENT_ID
   const shortId = `${id.slice(0, 6)}…${id.slice(-4)}`
-  const totals = status.report.reduce((s, r) => ({ messages: s.messages + r.messages, contacts: s.contacts + (r.contacts ?? 0), files: s.files + r.files }), {
-    messages: 0,
-    contacts: 0,
-    files: 0,
-  })
+  const totals = status.report.reduce(
+    (s, r) => ({ messages: s.messages + r.messages, contacts: s.contacts + (r.contacts ?? 0), events: s.events + (r.events ?? 0), files: s.files + r.files }),
+    { messages: 0, contacts: 0, events: 0, files: 0 },
+  )
   const skippedTotal = status.skipped.reduce((s, x) => s + x.count, 0)
   const first = status.newMembers[0]
   const noAddress = status.newMembers.filter((m) => m.sendTo === null).length
@@ -124,7 +123,7 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
                 </div>
                 <div className="hi strong">Your {ctx.org.name} email has moved to xstate</div>
                 <p className="small">
-                  Hi {first.name.split(' ')[0]}, your mailbox, contacts and files from Google are already in xstate. Set your password to get started,
+                  Hi {first.name.split(' ')[0]}, your mailbox, contacts, calendar and files from Google are already in xstate. Set your password to get started,
                   then follow the one-page guide to add your account to Apple Mail, Outlook or the xstate app.
                 </p>
                 <span className="fake-btn">Set your password</span>
@@ -183,6 +182,7 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
               <span>User</span>
               <span className="num">Messages</span>
               <span className="num">Contacts</span>
+              <span className="num">Events</span>
               <span className="num">Files</span>
             </div>
             {status.report.slice(0, REPORT_ROWS).map((r, i) => (
@@ -193,6 +193,7 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
                 </span>
                 <span className="num">{num(r.messages)}</span>
                 <span className="num">{r.contacts === null ? '—' : num(r.contacts)}</span>
+                <span className="num">{r.events == null ? '—' : num(r.events)}</span>
                 <span className="num">{num(r.files)}</span>
               </div>
             ))}
@@ -200,6 +201,7 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
               <span className="muted">All {status.report.length} users</span>
               <span className="num hi">{num(totals.messages)}</span>
               <span className="num hi">{num(totals.contacts)}</span>
+              <span className="num hi">{num(totals.events)}</span>
               <span className="num hi">{num(totals.files)}</span>
             </div>
           </div>
@@ -272,7 +274,7 @@ export function DoneStep({ ctx }: { ctx: Ctx }) {
       </span>
       <h1>{ctx.org.name} is on xstate</h1>
       <p>
-        {num(totals.users)} users, {num(totals.messages)} messages, {num(totals.contacts)} contacts and {num(totals.files)} files moved.
+        {num(totals.users)} users, {num(totals.messages)} messages, {num(totals.contacts)} contacts{totals.events ? `, ${num(totals.events)} calendar events` : ''} and {num(totals.files)} files moved.
         <br />
         {status?.accessRemoved ? `Google access was removed on ${status.accessRemovedAt ? day(status.accessRemovedAt) : finished}.` : 'Google access is still on; Settings will remind you to remove it.'}{' '}
         {status && `Invites went out to ${plural(status.newMembers.length, 'member')}.`}

@@ -28,7 +28,7 @@ const AFTER_DISCOVERY: Stage[] = ['plan', 'review']
 // ---------------------------------------------------------------------------------------------------------------
 // What the wizard gets (apps/app/src/migration/types.ts)
 
-export type UserPlan = { action: Action; existing?: string; mail: boolean; contacts: boolean; drive: boolean }
+export type UserPlan = { action: Action; existing?: string; mail: boolean; contacts: boolean; drive: boolean; calendar?: boolean }
 export type PlanInput = {
   users: Record<string, UserPlan>
   groups: Record<string, boolean>
@@ -146,6 +146,7 @@ function toUserPlan(u: MigrationUserRow): UserPlan {
     mail: !!u.copy_mail,
     contacts: !!u.copy_contacts,
     drive: !!u.copy_drive,
+    calendar: !!u.copy_calendar,
   }
 }
 
@@ -303,6 +304,8 @@ export async function savePlan(env: MigrationEnv, actor: Actor, organizationId: 
         // A shared mailbox has no owner whose contacts these would be.
         contacts: !skip && p.action !== 'shared' && p.contacts,
         drive: !skip && p.drive,
+        // Suspended people's calendars can't be read (Google won't act as them), and a shared mailbox has no owner.
+        calendar: !skip && p.action !== 'shared' && !!p.calendar,
       }),
     )
   }
@@ -382,6 +385,7 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
   let total = 0
   let copied = 0
   let contactsCopied = 0
+  let events = 0
   let files = 0
   const rows = users.map((u) => {
     const mailTotal = Math.max(u.mail_total ?? u.messages ?? 0, u.mail_done + u.mail_skipped)
@@ -403,6 +407,15 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
       total += contacts.total
       contactsCopied += u.contacts_state === 'done' ? (u.contacts_total ?? u.contacts_done) : u.contacts_done
     }
+    // Google doesn't say how many events there are: the total is what's been handled, plus one while copying.
+    const calendar: Count | null = u.copy_calendar && (u.mailbox_id !== null || !u.applied_at)
+      ? { done: u.calendar_done, total: u.calendar_state === 'done' ? u.calendar_done : u.calendar_done + 1 }
+      : null
+    if (calendar) {
+      processed += calendar.done
+      total += calendar.total
+      events += u.calendar_done
+    }
     const drive: Count | null = u.copy_drive
       ? { done: u.drive_done, total: u.drive_state === 'done' ? u.drive_done : Math.max(u.files ?? 0, u.drive_done) }
       : null
@@ -414,7 +427,8 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
     const mailState = !mail ? 'done' : u.mail_state === 'done' ? 'done' : u.mail_state === 'attention' ? 'attention' : u.mail_state === 'copying' ? (u.mail_note === 'slowed' ? 'slowed' : 'copying') : 'waiting'
     const contactsState = !contacts ? 'done' : u.contacts_state === 'done' ? 'done' : u.contacts_state === 'attention' ? 'attention' : u.contacts_state === 'copying' ? 'copying' : 'waiting'
     const driveState = !drive ? 'done' : u.drive_state === 'done' ? 'done' : u.drive_state === 'attention' ? 'attention' : u.drive_state === 'copying' ? 'copying' : 'waiting'
-    const parts = [mailState, contactsState, driveState]
+    const calendarState = !calendar ? 'done' : u.calendar_state === 'done' ? 'done' : u.calendar_state === 'attention' ? 'attention' : u.calendar_state === 'copying' ? 'copying' : 'waiting'
+    const parts = [mailState, contactsState, driveState, calendarState]
     let state: UserState =
       !u.applied_at ? 'waiting'
       : parts.includes('attention') ? 'attention'
@@ -430,10 +444,15 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
       mail,
       contacts,
       drive,
+      calendar,
       state,
       ...(u.mail_state === 'attention' && { issue: u.mail_issue ?? 'error', issueText: u.mail_note ?? 'Something went wrong copying this mailbox.' }),
       ...(u.mail_state !== 'attention' && u.contacts_state === 'attention' && { issue: 'error', issueText: u.contacts_note ?? 'Something went wrong copying the contacts.' }),
       ...(u.mail_state !== 'attention' && u.contacts_state !== 'attention' && u.drive_state === 'attention' && { issue: 'error', issueText: u.drive_note ?? 'Something went wrong copying Drive.' }),
+      ...(u.mail_state !== 'attention' && u.contacts_state !== 'attention' && u.drive_state !== 'attention' && u.calendar_state === 'attention' && {
+        issue: 'error',
+        issueText: u.calendar_note ?? 'Something went wrong copying the calendar.',
+      }),
       ...(u.apply_error && { issue: 'error', issueText: u.apply_error, state: 'attention' as const }),
     }
   })
@@ -452,6 +471,7 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
       mail: null,
       contacts: null,
       drive: count,
+      calendar: null,
       state,
       ...(d.state === 'attention' && { issue: 'error', issueText: d.note ?? 'Something went wrong copying this shared drive.' }),
     } as (typeof rows)[number])
@@ -471,7 +491,7 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
     accessLost: !!m.access_lost_at,
     ...(stopped && { pausedAt: m.access_lost_at ?? m.paused_at }),
     finished,
-    totals: { messages: copied, contacts: contactsCopied, files },
+    totals: { messages: copied, contacts: contactsCopied, files, events },
     apply: { state: m.apply_state, error: m.apply_error },
   }
 }
@@ -479,7 +499,7 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
 /** Starts a new chain of jobs for these users (or everyone copying), so jobs from before a pause stop. */
 export async function restart(env: MigrationEnv, migrationId: string, googleId?: string) {
   await env.DB.prepare(
-    `UPDATE migration_users SET mail_chain = mail_chain + 1, contacts_chain = contacts_chain + 1, drive_chain = drive_chain + 1
+    `UPDATE migration_users SET mail_chain = mail_chain + 1, contacts_chain = contacts_chain + 1, drive_chain = drive_chain + 1, calendar_chain = calendar_chain + 1
      WHERE migration_id = ? AND (? IS NULL OR google_id = ?)`,
   )
     .bind(migrationId, googleId ?? null, googleId ?? null)
@@ -552,7 +572,9 @@ export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: s
          contacts_state = CASE WHEN contacts_state = 'attention' THEN 'done' ELSE contacts_state END,
          contacts_note = CASE WHEN contacts_state = 'attention' THEN 'Skipped by an admin' ELSE contacts_note END,
          drive_state = CASE WHEN drive_state = 'attention' THEN 'done' ELSE drive_state END,
-         drive_note = CASE WHEN drive_state = 'attention' THEN 'Skipped by an admin' ELSE drive_note END
+         drive_note = CASE WHEN drive_state = 'attention' THEN 'Skipped by an admin' ELSE drive_note END,
+         calendar_state = CASE WHEN calendar_state = 'attention' THEN 'done' ELSE calendar_state END,
+         calendar_note = CASE WHEN calendar_state = 'attention' THEN 'Skipped by an admin' ELSE calendar_note END
        WHERE migration_id = ? AND google_id = ?`,
     )
       .bind(m.id, googleId)
@@ -570,7 +592,9 @@ export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: s
        contacts_state = CASE WHEN contacts_state = 'attention' THEN (CASE WHEN contacts_cursor IS NULL THEN NULL ELSE 'copying' END) ELSE contacts_state END,
        contacts_note = CASE WHEN contacts_state = 'attention' THEN NULL ELSE contacts_note END,
        drive_state = CASE WHEN drive_state = 'attention' THEN (CASE WHEN drive_cursor IS NULL THEN NULL ELSE 'copying' END) ELSE drive_state END,
-       drive_note = CASE WHEN drive_state = 'attention' THEN NULL ELSE drive_note END
+       drive_note = CASE WHEN drive_state = 'attention' THEN NULL ELSE drive_note END,
+       calendar_state = CASE WHEN calendar_state = 'attention' THEN (CASE WHEN calendar_cursor IS NULL THEN NULL ELSE 'copying' END) ELSE calendar_state END,
+       calendar_note = CASE WHEN calendar_state = 'attention' THEN NULL ELSE calendar_note END
      WHERE migration_id = ? AND google_id = ?`,
   )
     .bind(m.id, googleId)

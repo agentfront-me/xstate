@@ -10,13 +10,15 @@ export function readyEmail(v: {
   people: number
   messages: number
   contacts: number
+  /** Calendar events copied; left out of the sentence when there are none. */
+  events?: number
   files: number
   attention: number
 }) {
   const n = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`
   const greeting = v.adminName ? `Hi ${v.adminName.split(' ')[0]},` : 'Hi,'
   const subject = `Your Google Workspace copy is ready${v.domain ? ` (${v.domain})` : ''}`
-  const copied = `xstate has copied ${n(v.messages, 'message')}, ${n(v.contacts, 'contact')} and ${n(v.files, 'file')} for ${n(v.people, 'person', 'people')} in ${v.organization}.`
+  const copied = `xstate has copied ${n(v.messages, 'message')}, ${n(v.contacts, 'contact')}${v.events ? `, ${n(v.events, 'calendar event')}` : ''} and ${n(v.files, 'file')} for ${n(v.people, 'person', 'people')} in ${v.organization}.`
   const attention =
     v.attention > 0
       ? `${n(v.attention, 'person or shared drive', 'people or shared drives')} need${v.attention === 1 ? 's' : ''} your attention first. The import page says what's wrong and how to fix it.`

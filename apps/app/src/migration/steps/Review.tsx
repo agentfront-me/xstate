@@ -29,6 +29,7 @@ export function ReviewStep({ ctx }: { ctx: Ctx }) {
   const mailBytes = moving.filter((e) => e.p.mail).reduce((s, e) => s + e.u.mailBytes * range, 0)
   const messages = moving.filter((e) => e.p.mail).reduce((s, e) => s + (e.u.messages ?? 0) * range, 0)
   const contactsUsers = moving.filter((e) => e.p.contacts).length
+  const calendarUsers = moving.filter((e) => e.p.calendar).length
   const driveBytes = moving.filter((e) => e.p.drive).reduce((s, e) => s + e.u.driveBytes, 0) + drives.reduce((s, x) => s + (x.bytes ?? 0), 0)
   const files = moving.filter((e) => e.p.drive).reduce((s, e) => s + (e.u.files ?? 0), 0) + drives.reduce((s, x) => s + (x.files ?? 0), 0)
   // Shared drives (and anyone Google wouldn't count) are sized while copying, so the totals leave them out.
@@ -65,6 +66,7 @@ export function ReviewStep({ ctx }: { ctx: Ctx }) {
           <ul className="rows">
             <Row icon="mail" label={`Mail · ${rangeLabel}`} value={`${bytes(mailBytes)} · ${approx(messages)} messages`} />
             <Row icon="users" label="Contacts" value={`${contactsUsers} users`} />
+            <Row icon="calendar" label="Calendar" value={`${calendarUsers} users`} />
             <Row icon="hard-drive" label={`Drive · My Drive + ${drives.length} shared drive${drives.length === 1 ? '' : 's'}`} value={`${bytes(driveBytes)} · ${approx(files)} files${uncounted ? ' + shared drives' : ''}`} />
             <Row
               icon="user-minus"

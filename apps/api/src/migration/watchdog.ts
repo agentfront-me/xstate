@@ -83,12 +83,13 @@ async function watchOne(env: Env, m: MigrationRow): Promise<void> {
     const run = m.final_runs + 1
     for (const u of await migrationsDb.listUsers(env.DB, m.id)) {
       const copying = userCopying(u)
-      const final = u.final_mail === 'running' || u.final_drive === 'running'
+      const final = u.final_mail === 'running' || u.final_drive === 'running' || u.final_calendar === 'running'
       const fp = copying || final ? userFingerprint(u) : null
       if (fp && fp === u.watch) {
         if (copying) restarts.push(u.google_id)
         if (u.final_mail === 'running') jobs.push({ kind: 'final_mail', migrationId: m.id, owner: u.google_id, run })
         if (u.final_drive === 'running') jobs.push({ kind: 'final_drive', migrationId: m.id, owner: u.google_id, shared: false, run })
+        if (u.final_calendar === 'running') jobs.push({ kind: 'final_calendar', migrationId: m.id, owner: u.google_id, run })
       }
       if (fp !== u.watch) writes.push(env.DB.prepare('UPDATE migration_users SET watch = ? WHERE migration_id = ? AND google_id = ?').bind(fp, m.id, u.google_id))
     }
@@ -113,7 +114,7 @@ async function watchOne(env: Env, m: MigrationRow): Promise<void> {
 }
 
 /** Whether any of a person's parts still has pages to copy: the same test as startMailCopies. */
-const userCopying = (u: MigrationUserRow) => copyPending.mail(u) || copyPending.contacts(u) || copyPending.drive(u)
+const userCopying = (u: MigrationUserRow) => copyPending.mail(u) || copyPending.contacts(u) || copyPending.drive(u) || copyPending.calendar(u)
 
 /** Everything a page of work changes. Equal an hour apart means no page ran. */
 const userFingerprint = (u: MigrationUserRow) =>
@@ -121,7 +122,9 @@ const userFingerprint = (u: MigrationUserRow) =>
     u.mail_state, u.mail_done, u.mail_skipped, u.mail_cursor, u.mail_updated_at,
     u.contacts_state, u.contacts_done, u.contacts_cursor,
     u.drive_state, u.drive_done, u.drive_copied_bytes, u.drive_cursor,
+    u.calendar_state, u.calendar_done, u.calendar_cursor,
     u.final_mail, u.final_mail_cursor, u.final_mail_changes, u.final_drive, u.final_drive_changes, u.drive_changes_token,
+    u.final_calendar, u.final_calendar_cursor, u.final_calendar_changes,
   ])
 
 const driveFingerprint = (d: MigrationDriveRow) => JSON.stringify([d.state, d.done, d.bytes, d.cursor, d.folder_id, d.final_state, d.final_changes, d.changes_token])
@@ -132,7 +135,7 @@ const driveFingerprint = (d: MigrationDriveRow) => JSON.stringify([d.state, d.do
 /** People or shared drives with pages still to copy (or not yet set up). */
 const PENDING = `
   EXISTS (SELECT 1 FROM migration_users u WHERE u.migration_id = migrations.id AND (
-    (u.action != 'skip' AND u.applied_at IS NULL) OR ${PENDING_SQL.mail} OR ${PENDING_SQL.contacts} OR ${PENDING_SQL.drive}))
+    (u.action != 'skip' AND u.applied_at IS NULL) OR ${PENDING_SQL.mail} OR ${PENDING_SQL.contacts} OR ${PENDING_SQL.drive} OR ${PENDING_SQL.calendar}))
   OR EXISTS (SELECT 1 FROM migration_drives d WHERE d.migration_id = migrations.id AND ${PENDING_SQL.sharedDrive})`
 
 /**
@@ -172,12 +175,13 @@ async function sendReadyEmail(env: Env, migrationId: string): Promise<void> {
   if (!m || !admin) return
   const totals = await env.DB.prepare(
     `SELECT COALESCE(SUM(mail_done), 0) AS messages, COALESCE(SUM(contacts_done), 0) AS contacts, COALESCE(SUM(drive_done), 0) AS files,
+       COALESCE(SUM(calendar_done), 0) AS events,
        COUNT(CASE WHEN action != 'skip' THEN 1 END) AS people,
-       COUNT(CASE WHEN action != 'skip' AND (apply_error IS NOT NULL OR mail_state = 'attention' OR contacts_state = 'attention' OR drive_state = 'attention') THEN 1 END) AS attention
+       COUNT(CASE WHEN action != 'skip' AND (apply_error IS NOT NULL OR mail_state = 'attention' OR contacts_state = 'attention' OR drive_state = 'attention' OR calendar_state = 'attention') THEN 1 END) AS attention
      FROM migration_users WHERE migration_id = ?`,
   )
     .bind(m.id)
-    .first<{ messages: number; contacts: number; files: number; people: number; attention: number }>()
+    .first<{ messages: number; contacts: number; files: number; events: number; people: number; attention: number }>()
   const drives = await env.DB.prepare("SELECT COALESCE(SUM(done), 0) AS files, COUNT(CASE WHEN state = 'attention' THEN 1 END) AS attention FROM migration_drives WHERE migration_id = ?")
     .bind(m.id)
     .first<{ files: number; attention: number }>()
@@ -191,6 +195,7 @@ async function sendReadyEmail(env: Env, migrationId: string): Promise<void> {
     people: totals?.people ?? 0,
     messages: totals?.messages ?? 0,
     contacts: totals?.contacts ?? 0,
+    events: totals?.events ?? 0,
     files: (totals?.files ?? 0) + (drives?.files ?? 0),
     attention: (totals?.attention ?? 0) + (drives?.attention ?? 0),
   })

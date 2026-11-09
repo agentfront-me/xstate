@@ -5,8 +5,9 @@
 //             starts copying
 //   mail      copies one page of one person's Gmail (./mail.ts) and queues the next
 //   contacts  copies one page of one person's contacts into the audience (./contacts.ts) and queues the next
+//   calendar  copies one page of one person's Google Calendar events into their mailbox calendar (./calendar.ts)
 //   drive     copies a person's My Drive or a shared drive into Storage, folders then a page of files (./drive.ts)
-//   final_*   the final pass after the switch: Gmail history and Drive changes since the copy (./final.ts)
+//   final_*   the final pass after the switch: Gmail history, Drive and Calendar changes since the copy (./final.ts)
 // Each job is safe to run twice: rows are upserted, apply skips users and groups it already handled, and the
 // MigrationStore's claims keep a message, contact or file from being copied twice.
 
@@ -22,6 +23,7 @@ import { addAlias, createMailbox, grantMailboxAccess } from '../mailserver'
 import { inviteMember } from '../members/service'
 import { GoogleError } from './google/auth'
 import { workspace } from './google/workspace'
+import { calendarFinalPage, copyCalendarPage, type CalendarFinalJob, type CalendarJob } from './calendar'
 import { copyContactsPage, type ContactsJob } from './contacts'
 import { copyDrivePage, driveFinalPage, type DriveFinalJob, type DriveJob } from './drive'
 import { finishIfDone, mailFinalPage, type MailFinalJob } from './final'
@@ -35,6 +37,8 @@ export type MigrationJob =
   | { kind: 'apply'; migrationId: string }
   | MailJob
   | ContactsJob
+  | CalendarJob
+  | CalendarFinalJob
   | DriveJob
   | DriveFinalJob
   | MailFinalJob
@@ -62,6 +66,8 @@ export async function consumeMigration(batch: MessageBatch<MigrationJob>, env: E
       else if (job.kind === 'count') await count(env, job.migrationId, job.googleId)
       else if (job.kind === 'mail') await copyMailPage(env, job)
       else if (job.kind === 'contacts') await copyContactsPage(env, job)
+      else if (job.kind === 'calendar') await copyCalendarPage(env, job)
+      else if (job.kind === 'final_calendar') await calendarFinalPage(env, job)
       else if (job.kind === 'drive') await copyDrivePage(env, job)
       else if (job.kind === 'final_drive') await driveFinalPage(env, job)
       else if (job.kind === 'final_mail') await mailFinalPage(env, job)
@@ -80,7 +86,7 @@ export async function consumeMigration(batch: MessageBatch<MigrationJob>, env: E
       }
     }
     // The last page of the last part: tell the admin the copy is ready to switch.
-    if (job.kind === 'mail' || job.kind === 'contacts' || job.kind === 'drive') {
+    if (job.kind === 'mail' || job.kind === 'contacts' || job.kind === 'drive' || job.kind === 'calendar') {
       await notifyIfCopied(env, job.migrationId).catch((err) => console.error(`migration ${job.migrationId}: ready email failed`, err))
     }
   }
@@ -101,6 +107,15 @@ async function fail(env: Env, job: MigrationJob, error: string) {
   else if (job.kind === 'count') {
     await migrationsDb.setCounts(env.DB, job.migrationId, job.googleId, { messages: null, contacts: null, files: null, error }).run()
     await finishDiscoveryIfCounted(env, job.migrationId)
+  } else if (job.kind === 'final_calendar') {
+    await env.DB.prepare("UPDATE migration_users SET final_calendar = 'done', calendar_note = ? WHERE migration_id = ? AND google_id = ?")
+      .bind(`Final pass failed: ${error}`.slice(0, 500), job.migrationId, job.owner)
+      .run()
+    await finishIfDone(env, job.migrationId)
+  } else if (job.kind === 'calendar') {
+    await env.DB.prepare("UPDATE migration_users SET calendar_state = 'attention', calendar_note = ? WHERE migration_id = ? AND google_id = ?")
+      .bind(error.slice(0, 500), job.migrationId, job.googleId)
+      .run()
   } else if (job.kind === 'final_mail' || job.kind === 'final_drive') {
     // A final pass that keeps failing is given up for that part, so the pass can finish; the report says so.
     const sql =
@@ -130,7 +145,7 @@ async function fail(env: Env, job: MigrationJob, error: string) {
 }
 
 /**
- * Queues the next page for everyone whose mail, contacts or Drive are still to copy (after Start, and on resume), or
+ * Queues the next page for everyone whose mail, contacts, calendar or Drive are still to copy (after Start, and on resume), or
  * only for one person or shared drive (`only`: a Google user id, or "drive:<id>"). Only call it after bumping the
  * chains of whoever it queues for: a second job on a live chain would run alongside it for good.
  */
@@ -144,14 +159,16 @@ export async function startMailCopies(env: Pick<Env, 'DB' | 'MIGRATION'>, migrat
   const { results: mail } = await bind(`SELECT google_id, mail_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.mail} ${users}`).all<{ google_id: string; mail_chain: number }>()
   const { results: contacts } = await bind(`SELECT google_id, contacts_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.contacts} ${users}`).all<{ google_id: string; contacts_chain: number }>()
   const { results: drive } = await bind(`SELECT google_id, drive_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.drive} ${users}`).all<{ google_id: string; drive_chain: number }>()
+  const { results: calendar } = await bind(`SELECT google_id, calendar_chain FROM migration_users u WHERE migration_id = ?1 AND ${PENDING_SQL.calendar} ${users}`).all<{ google_id: string; calendar_chain: number }>()
   const { results: drives } = await bind(`SELECT drive_id, chain FROM migration_drives d WHERE migration_id = ?1 AND ${PENDING_SQL.sharedDrive} ${sharedDrives}`).all<{ drive_id: string; chain: number }>()
   await enqueueMigrationJobs(env, [
     ...mail.map((r) => ({ kind: 'mail' as const, migrationId, googleId: r.google_id, chain: r.mail_chain })),
     ...contacts.map((r) => ({ kind: 'contacts' as const, migrationId, googleId: r.google_id, chain: r.contacts_chain })),
+    ...calendar.map((r) => ({ kind: 'calendar' as const, migrationId, googleId: r.google_id, chain: r.calendar_chain })),
     ...drive.map((r) => ({ kind: 'drive' as const, migrationId, owner: r.google_id, shared: false, chain: r.drive_chain })),
     ...drives.map((r) => ({ kind: 'drive' as const, migrationId, owner: r.drive_id, shared: true, chain: r.chain })),
   ])
-  return mail.length + contacts.length + drive.length + drives.length
+  return mail.length + contacts.length + calendar.length + drive.length + drives.length
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -182,12 +199,13 @@ async function discover(env: Env, migrationId: string): Promise<void> {
     const mailBytes = size?.mailBytes ?? null
     // Suspended and archived people can't be acted as, so they're never counted: their sizes are what we know.
     const plan = existing.has(u.email)
-      ? { action: 'existing' as const, existingAddress: u.email, mail: true, contacts: true, drive: true }
+      ? { action: 'existing' as const, existingAddress: u.email, mail: true, contacts: true, drive: true, calendar: true }
       : u.suspended && (mailBytes ?? 0) < 1024 ** 3
-        ? { action: 'skip' as const, existingAddress: null, mail: false, contacts: false, drive: false }
+        ? { action: 'skip' as const, existingAddress: null, mail: false, contacts: false, drive: false, calendar: false }
         : u.suspended
-          ? { action: 'shared' as const, existingAddress: null, mail: true, contacts: false, drive: true }
-          : { action: 'create' as const, existingAddress: null, mail: true, contacts: true, drive: true }
+          // Suspended people can't be read as themselves: no contacts or calendar.
+          ? { action: 'shared' as const, existingAddress: null, mail: true, contacts: false, drive: true, calendar: false }
+          : { action: 'create' as const, existingAddress: null, mail: true, contacts: true, drive: true, calendar: true }
     return migrationsDb.upsertUser(env.DB, {
       migrationId,
       googleId: u.id,

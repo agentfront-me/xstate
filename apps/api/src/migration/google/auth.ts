@@ -11,7 +11,7 @@ export type GoogleKeyEnv = { GOOGLE_MIGRATION_KEY?: string }
 export type ServiceAccount = { clientEmail: string; clientId: string; privateKey: CryptoKey }
 
 /** Why Google refused a token or a call. `status` is Google's HTTP status. */
-export type GoogleErrorCode = 'not_configured' | 'not_authorized' | 'no_such_user' | 'rate_limited' | 'forbidden' | 'not_found' | 'google_error' | 'too_large'
+export type GoogleErrorCode = 'not_configured' | 'not_authorized' | 'no_such_user' | 'rate_limited' | 'forbidden' | 'not_found' | 'gone' | 'google_error' | 'too_large'
 
 export class GoogleError extends Error {
   readonly code: GoogleErrorCode
@@ -120,6 +120,8 @@ export async function googleGet<T>(token: string, url: string | URL, options: { 
     if (rateLimited) throw new GoogleError('rate_limited', 'Google is limiting how fast xstate can read. Try again in a minute.', res.status)
     if (res.status === 403) throw new GoogleError('forbidden', `Google refused: ${text.slice(0, 200)}`, res.status)
     if (res.status === 404) throw new GoogleError('not_found', `Google returned 404 for ${String(url).split('?')[0]}`, res.status)
+    // Calendar: a sync token that's too old to continue from. The caller lists everything again.
+    if (res.status === 410) throw new GoogleError('gone', 'Google’s change list expired', res.status)
     throw new GoogleError('google_error', `Google returned HTTP ${res.status}: ${text.slice(0, 200)}`, res.status)
   }
 }

@@ -60,7 +60,7 @@ export function SwitchStep({ ctx }: { ctx: Ctx }) {
       />
       <ol className="checklist-m">
         <Item done title="Everything copied">
-          {num(totals.users)} users, {num(totals.messages)} messages, {num(totals.contacts)} contacts, {num(totals.files)} files.
+          {num(totals.users)} users, {num(totals.messages)} messages, {num(totals.contacts)} contacts{totals.events ? `, ${num(totals.events)} calendar events` : ''}, {num(totals.files)} files.
         </Item>
         <Item
           done={status.ttlDone}

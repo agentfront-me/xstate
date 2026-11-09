@@ -29,10 +29,10 @@ import type { Actor, EmailEnv } from './types'
 export type Calendar = { id: string; name: string; isDefault: boolean; color: string | null }
 export type { CalendarEvent, EventInput, Guest, GuestStatus, Repeat } from './calendar-events'
 
-/** Most guests one event can have: inviting them all uses an hour's invitation emails (CALENDAR_LIMITS). */
-export const MAX_GUESTS = 30
-/** Widest range one list call may cover. */
-const MAX_RANGE_DAYS = 400
+/** Most guests one event can have: Stalwart stores at most 20 participants per event, the organizer included. */
+export const MAX_GUESTS = 19
+/** Widest range one list call may cover: Stalwart expands repeats over at most 52 weeks and a day. */
+const MAX_RANGE_DAYS = 365
 /** The name Stalwart gives the calendar it creates with every account. */
 const STALWART_DEFAULT = /^Stalwart Calendar\b/
 
@@ -45,17 +45,24 @@ const STALWART_DEFAULT = /^Stalwart Calendar\b/
  */
 export async function listCalendars(env: EmailEnv, actor: Actor, mailboxId: string): Promise<Calendar[]> {
   const { mailbox, write } = await context(env, actor, mailboxId, 'read')
-  let calendars = await jmap.getCalendars(env, mailbox.stalwart_id)
-  if (write && calendars.length === 1 && STALWART_DEFAULT.test(calendars[0]!.name)) {
-    await jmap.setCalendars(env, mailbox.stalwart_id, {
-      update: { [calendars[0]!.id]: { name: 'Work' } },
-      create: { personal: { name: 'Personal', sortOrder: 1 } },
-    })
-    calendars = await jmap.getCalendars(env, mailbox.stalwart_id)
-  }
+  const calendars = write ? await setUpCalendars(env, mailbox.stalwart_id) : await jmap.getCalendars(env, mailbox.stalwart_id)
   return calendars
     .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
     .map(({ id, name, isDefault, color }) => ({ id, name, isDefault, color }))
+}
+
+/**
+ * A mailbox's calendars, set up the first time: Stalwart's automatic calendar is renamed "Work" and a "Personal" one
+ * added. Also used by the Google import before it copies into the default calendar.
+ */
+export async function setUpCalendars(env: EmailEnv, accountId: string): Promise<jmap.JmapCalendar[]> {
+  const calendars = await jmap.getCalendars(env, accountId)
+  if (calendars.length !== 1 || !STALWART_DEFAULT.test(calendars[0]!.name)) return calendars
+  await jmap.setCalendars(env, accountId, {
+    update: { [calendars[0]!.id]: { name: 'Work' } },
+    create: { personal: { name: 'Personal', sortOrder: 1 } },
+  })
+  return jmap.getCalendars(env, accountId)
 }
 
 // ---------------------------------------------------------------------------------------------------------------

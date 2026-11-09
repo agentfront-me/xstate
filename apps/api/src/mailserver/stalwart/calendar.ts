@@ -191,6 +191,32 @@ export async function createEvent(env: StalwartEnv, accountId: string, event: Ar
   return created.id
 }
 
+/**
+ * Creates several events at once without any scheduling messages (imports). Returns the new ids by key, and the
+ * reason for each one Stalwart refused.
+ */
+export async function importEvents(
+  env: StalwartEnv,
+  accountId: string,
+  events: Record<string, Args>,
+): Promise<{ created: Record<string, string>; failed: Record<string, string> }> {
+  if (!Object.keys(events).length) return { created: {}, failed: {} }
+  const [result] = await calendar(env, [['CalendarEvent/set', { accountId, sendSchedulingMessages: false, create: events }]])
+  const created = Object.fromEntries(Object.entries((result?.created as Record<string, { id: string }> | undefined) ?? {}).map(([k, v]) => [k, v.id]))
+  const failed = Object.fromEntries(
+    Object.entries((result?.notCreated as Record<string, SetError> | undefined) ?? {}).map(([k, e]) => [k, `${e.description ?? e.type ?? 'refused'}${e.properties?.length ? ` (${e.properties.join(', ')})` : ''}`]),
+  )
+  return { created, failed }
+}
+
+/** Makes a calendar and returns its id. */
+export async function createCalendar(env: StalwartEnv, accountId: string, name: string): Promise<string> {
+  const [result] = await calendar(env, [['Calendar/set', { accountId, create: { c: { name } } }]])
+  const id = (result?.created as Record<string, { id: string }> | undefined)?.c?.id
+  if (!id) throw setError((result?.notCreated as Record<string, SetError> | undefined)?.c)
+  return id
+}
+
 export async function updateEvent(env: StalwartEnv, accountId: string, id: string, patch: Args, notify: boolean) {
   const [result] = await calendar(env, [
     ['CalendarEvent/set', { accountId, sendSchedulingMessages: notify, update: { [id]: patch } }],

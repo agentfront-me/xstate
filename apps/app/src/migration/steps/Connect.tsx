@@ -38,7 +38,7 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
     <>
       <Title
         title="Connect your Google Workspace"
-        sub="You give xstate read-only access to your Workspace through domain-wide delegation. We copy mail, contacts and Drive files to xstate. Nothing in Google is changed or deleted, and you can remove the access at any time."
+        sub="You give xstate read-only access to your Workspace through domain-wide delegation. We copy mail, contacts, calendars and Drive files to xstate. Nothing in Google is changed or deleted, and you can remove the access at any time."
       />
       <div className="two-col">
         <Panel

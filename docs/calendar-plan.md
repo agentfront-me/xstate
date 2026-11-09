@@ -1,8 +1,8 @@
 # Plan: Calendar section
 
-Status: Phases 0–2 shipped 2026-11-09. Phase 3 (invites in email) built 2026-11-09, uncommitted. Each claim about
-Stalwart and FullCalendar below was tested on the local stack; see [Verified claims](#verified-claims).
-## Why
+Status: Phases 0–3 shipped 2026-11-09. Google Calendar in the Workspace migration built 2026-11-09, uncommitted;
+migration 0021 must be applied before the API is deployed. Each claim about Stalwart and FullCalendar below was
+tested on the local stack; see [Verified claims](#verified-claims).
 
 The design ("xstate App.dc.html", Calendar page) adds a Calendar section: an Upcoming list grouped Today / Tomorrow /
 date on the left, a Day / Week / Month grid with a current-time line, an all-day row and sticky day headers, and an
@@ -83,6 +83,28 @@ Personal. The design's "Agent schedules" calendar is left out for now.
   Not shown in demo mode.
 - Parsed invites have only a local time and zone, so `zonedToUtc` (Intl) gives their UTC start and end.
 
+### 4. Google Calendar in the Workspace migration (built)
+
+- Scope: `calendar.readonly`, shown on Connect and checked by Verify. Migrations verified before it are not blocked:
+  their calendar copy stops with a note asking the admin to add the scope, and Retry carries on.
+- Plan: a Calendar toggle per person, on for `create` and `existing`, off (and locked) for suspended people imported
+  as shared mailboxes (Google won't act as them). Migrations planned before this keep `copy_calendar = 0`.
+- Copy (`migration/calendar.ts`, job `calendar`): only calendars the person owns. The primary one goes into their
+  default calendar (Work, set up like the app does), each other one into a new calendar of the same name. Per
+  calendar, one listing for events and series, then one for changed or cancelled occurrences (written into
+  their series' `recurrenceOverrides`), since Google may list an occurrence before its series. Claims in the
+  MigrationStore (kinds `calendar`, `event`), no scheduling messages, iCalendar UIDs kept.
+- Conversion (`migration/calendar-rules.ts`, tested): times stay in the event's zone; RRULE → JSCalendar
+  (`byDay` with ordinals, `byMonthDay`, `byMonth`, `bySetPosition`, `count`/`until`, `firstDayOfWeek`); EXDATE →
+  excluded overrides; the person's Google address(es) → their xstate address; rooms dropped; meetings over 20
+  people keep the organizer and the person, then the first others, with a note in the description; working-location,
+  birthday and cancelled entries skipped.
+- Final pass (job `final_calendar`): each calendar's Google sync token from the copy; added events created, changed
+  ones replaced (keeping per-occurrence changes), deleted ones removed. An expired token (HTTP 410) falls back to a
+  full listing that never applies an older version than ours and leaves alone events deleted in xstate since.
+- Progress, watchdog, skip/retry, ready email, Finish report and CSV include calendar events; Google gives no event
+  count up front, so the Copying column says "N events so far".
+
 ### Later
 
 - Settings: replace "Calendar is coming soon" with CalDAV setup (`/.well-known/caldav` → `/dav/cal`). Needs a way for
@@ -116,6 +138,10 @@ Personal. The design's "Agent schedules" calendar is left out for now.
   the whole participants map, with or without roles: all tested on 1.0.2). Creating the event with the answer does
   send a proper METHOD:REPLY. So for organizers outside xstate, `respondToEvent` quietly replaces the guest copy
   with one carrying the new answer (the event id changes); for internal organizers the in-place change works.
+- **Stalwart limits (from the session's `jmap:calendars` capability):** at most 20 participants per event
+  (`maxParticipantsPerEvent`; the 21st is refused) and 52 weeks and a day per expanded query
+  (`maxExpandedQueryDuration`). The API now allows 19 guests (it said 30) and 365-day ranges (it said 400).
+  Raising the participant limit in Stalwart's settings would allow bigger meetings.
 - **`ParticipantIdentity` can't be set per member.** Under impersonation it returns the admin's identity and
   `ParticipantIdentity/set` is refused ("only in your own account"). Not a blocker: setting the organizer
   participant explicitly makes `organizerCalendarAddress` the member's address. The API must always do that.
@@ -185,3 +211,13 @@ invitation; a cancellation is read and removes the copy; a guest's reply is read
 apply (400); answering an invite that doesn't list you → 409; a bad blob → 400. In the app: the card on a real
 invitation, Yes (→ "You're going", reply queued), Open in Calendar (right day, event open, no edit for a guest),
 the cancellation card with Remove from calendar, the reply card, and demo mode without the card.
+
+Google Calendar migration (local API, fake Google Workspace, a fresh organization on a `.test` domain, calendar-only
+plan for two people): Connect lists and checks the calendar scope; each person gets Work, Personal and "Team offsite";
+a weekday standup series arrives with its EXDATE excluded, a cancelled occurrence excluded and a moved occurrence
+(listed before its series) applied; the person's own meeting keeps its guests minus the room; an outside organizer's
+invite keeps them as organizer with the person's pending answer; a 25-person all-hands is trimmed to 20 with a note;
+all-day "free" and Lisbon-time events keep their zone; working-location and cancelled entries are skipped. The final
+pass applied 3 changes each (one added, one renamed, one deleted). With expired sync tokens the second pass listed
+everything again and changed nothing it shouldn't (two bugs found and fixed there: a deleted copy made the pass fail,
+and an older Google version overwrote a newer one). Report and CSV show the events column and labelled skips.

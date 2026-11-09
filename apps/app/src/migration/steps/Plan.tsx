@@ -38,11 +38,12 @@ const actionLabel = (p: UserPlan) =>
 const actionValue = (p: UserPlan) => (p.action === 'existing' ? `existing:${p.existing}` : p.action)
 
 function applyAction(p: UserPlan, value: string): UserPlan {
-  if (value.startsWith('existing:')) return { ...p, action: 'existing', existing: value.slice(9), mail: true, contacts: true, drive: true }
+  if (value.startsWith('existing:')) return { ...p, action: 'existing', existing: value.slice(9), mail: true, contacts: true, drive: true, calendar: true }
   const action = value as Action
-  if (action === 'skip') return { action, mail: false, contacts: false, drive: false }
-  if (action === 'shared') return { action, mail: true, contacts: false, drive: p.drive || p.action === 'skip' }
-  return { action, mail: true, contacts: true, drive: true }
+  if (action === 'skip') return { action, mail: false, contacts: false, drive: false, calendar: false }
+  // A shared mailbox has no owner, and Google won't let xstate read a suspended person's contacts or calendar.
+  if (action === 'shared') return { action, mail: true, contacts: false, drive: p.drive || p.action === 'skip', calendar: false }
+  return { action, mail: true, contacts: true, drive: true, calendar: true }
 }
 
 export function PlanStep({ ctx }: { ctx: Ctx }) {
@@ -135,7 +136,7 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
       const next = { ...p.users }
       for (const id of selected) {
         const u = next[id]!
-        if (u.action === 'skip' || (part === 'contacts' && u.action === 'shared')) continue
+        if (u.action === 'skip' || ((part === 'contacts' || part === 'calendar') && u.action === 'shared')) continue
         next[id] = { ...u, [part]: on === 'on' }
       }
       return { ...p, users: next }
@@ -186,6 +187,8 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
                   { value: 'mail:off', label: 'Leave out Mail' },
                   { value: 'contacts:on', label: 'Include Contacts' },
                   { value: 'contacts:off', label: 'Leave out Contacts' },
+                  { value: 'calendar:on', label: 'Include Calendar' },
+                  { value: 'calendar:off', label: 'Leave out Calendar' },
                   { value: 'drive:on', label: 'Include Drive' },
                   { value: 'drive:off', label: 'Leave out Drive' },
                 ]}
@@ -235,6 +238,7 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
                 <span className="include">
                   <Toggle on={p.mail} label="Mail" disabled={skip} onChange={(on) => setUser(u.id, (x) => ({ ...x, mail: on }))} />
                   <Toggle on={p.contacts} label="Contacts" disabled={skip || p.action === 'shared'} onChange={(on) => setUser(u.id, (x) => ({ ...x, contacts: on }))} />
+                  <Toggle on={p.calendar} label="Calendar" disabled={skip || p.action === 'shared'} onChange={(on) => setUser(u.id, (x) => ({ ...x, calendar: on }))} />
                   <Toggle on={p.drive} label="Drive" disabled={skip} onChange={(on) => setUser(u.id, (x) => ({ ...x, drive: on }))} />
                 </span>
                 <Menu
@@ -309,7 +313,7 @@ export function PlanStep({ ctx }: { ctx: Ctx }) {
                 </button>
               ))}
             </div>
-            <p className="muted small">Older mail stays in Google. Contacts and Drive are always copied in full.</p>
+            <p className="muted small">Older mail stays in Google. Contacts, calendars and Drive are always copied in full.</p>
           </Panel>
         </div>
       </div>

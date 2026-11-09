@@ -101,6 +101,7 @@ export async function finalStatus(env: Env2, actor: Actor, organizationId: strin
   const mailUsers = users.filter((u) => u.final_mail !== null)
   const contactUsers = users.filter((u) => u.final_contacts_base !== null)
   const driveUsers = users.filter((u) => u.final_drive !== null)
+  const calendarUsers = users.filter((u) => u.final_calendar !== null)
   const finalDrives = drives.filter((d) => d.final_state !== null)
   return {
     mail: part(mailUsers.map(() => true), mailUsers.map((u) => u.final_mail === 'running'), mailUsers.reduce((n, u) => n + u.final_mail_changes, 0)),
@@ -108,6 +109,11 @@ export async function finalStatus(env: Env2, actor: Actor, organizationId: strin
       contactUsers.map(() => true),
       contactUsers.map((u) => u.contacts_state === 'copying'),
       contactUsers.reduce((n, u) => n + Math.max(0, u.contacts_done - (u.final_contacts_base ?? u.contacts_done)), 0),
+    ),
+    calendar: part(
+      calendarUsers.map(() => true),
+      calendarUsers.map((u) => u.final_calendar === 'running'),
+      calendarUsers.reduce((n, u) => n + u.final_calendar_changes, 0),
     ),
     drive: part(
       [...driveUsers, ...finalDrives].map(() => true),
@@ -140,6 +146,13 @@ const REASONS: Record<string, { label: string; reason: string }> = {
   export_failed: { label: 'Google files Google wouldn’t export', reason: 'usually over Google’s export size limit' },
   gone: { label: 'Files deleted in Google during the copy', reason: 'nothing left to copy' },
   sharing_not_recreated: { label: 'Sharing not recreated', reason: 'links for anyone and people outside the organization; files are private to their owner in xstate' },
+  cancelled: { label: 'Cancelled calendar events', reason: 'cancelled in Google, nothing to copy' },
+  working_location: { label: 'Working-location entries', reason: 'Google’s “working from” markers aren’t calendar events' },
+  birthday: { label: 'Birthday entries', reason: 'Google makes these from contacts' },
+  no_time: { label: 'Calendar events without a time', reason: 'Google gave no start or end' },
+  no_series: { label: 'Changes to repeating events that weren’t copied', reason: 'their series was cancelled or refused' },
+  event_refused: { label: 'Calendar events the mail server refused', reason: 'see the CSV for each one' },
+  guests_trimmed: { label: 'Big meetings with guests left off', reason: 'an xstate event holds at most 20 people; the rest are listed as a count in its description' },
 }
 const reasonOf = (reason: string) => REASONS[reason] ?? (reason.startsWith('google_') ? { label: `Google ${reason.slice(7)} files`, reason: 'no file format to export' } : { label: reason, reason: '' })
 
@@ -158,9 +171,10 @@ export async function finishStatus(env: Env2, actor: Actor, organizationId: stri
       shared: u.action === 'shared',
       messages: u.mail_done,
       contacts: u.copy_contacts && u.action !== 'shared' ? u.contacts_done : null,
+      events: u.copy_calendar ? u.calendar_done : null,
       files: u.drive_done,
     })),
-    ...(await migrationsDb.listDrives(env.DB, m.id)).map((d) => ({ name: `${d.name} (shared drive)`, shared: true, messages: 0, contacts: null, files: d.done })),
+    ...(await migrationsDb.listDrives(env.DB, m.id)).map((d) => ({ name: `${d.name} (shared drive)`, shared: true, messages: 0, contacts: null, events: null, files: d.done })),
   ]
   const skipped = (await migrationStore(env, organizationId).problemCounts()).map((p) => ({ count: p.count, ...reasonOf(p.reason) }))
   return {
@@ -232,11 +246,20 @@ export async function reportCsv(env: Env2, actor: Actor, organizationId: string)
     const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
   }
-  const rows: unknown[][] = [['Person or drive', 'Email', 'Plan', 'Messages', 'Contacts', 'Files', 'Note']]
+  const rows: unknown[][] = [['Person or drive', 'Email', 'Plan', 'Messages', 'Contacts', 'Calendar events', 'Files', 'Note']]
   for (const u of users) {
-    rows.push([u.name, u.email, u.action, u.mail_done, u.action === 'shared' ? '' : u.contacts_done, u.drive_done, u.apply_error ?? u.mail_note ?? u.contacts_note ?? u.drive_note ?? ''])
+    rows.push([
+      u.name,
+      u.email,
+      u.action,
+      u.mail_done,
+      u.action === 'shared' ? '' : u.contacts_done,
+      u.copy_calendar ? u.calendar_done : '',
+      u.drive_done,
+      u.apply_error ?? u.mail_note ?? u.contacts_note ?? u.calendar_note ?? u.drive_note ?? '',
+    ])
   }
-  for (const d of drives) rows.push([d.name, '', 'shared drive', '', '', d.done, d.note ?? ''])
+  for (const d of drives) rows.push([d.name, '', 'shared drive', '', '', '', d.done, d.note ?? ''])
   rows.push([], ['Skipped item', 'Kind', 'From', 'Google id', 'Reason', 'Detail', 'When'])
   if (m.store_cleared_at) rows.push([`The list of skipped items was deleted on ${m.store_cleared_at.slice(0, 10)}, ${KEEP_AFTER_FINISH_DAYS} days after the import finished.`])
   for (const p of m.store_cleared_at ? [] : await migrationStore(env, organizationId).problems()) {

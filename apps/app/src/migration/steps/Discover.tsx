@@ -17,6 +17,7 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
   const [error, setError] = useState('')
   const started = useRef(false)
   const leaving = useRef(new AbortController())
+  const pendingAbort = useRef<number | undefined>(undefined)
 
   const run = async () => {
     setError('')
@@ -31,12 +32,21 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
   }
 
   useEffect(() => {
-    if (discovery || started.current) return
-    started.current = true
-    void run()
+    // StrictMode (dev) unmounts and mounts again at once: a remount cancels the abort that unmount scheduled, so
+    // that run carries on instead of finishing unseen.
+    if (pendingAbort.current !== undefined) {
+      clearTimeout(pendingAbort.current)
+      pendingAbort.current = undefined
+    }
+    if (!discovery && !started.current) {
+      started.current = true
+      void run()
+    }
     // Leaving the step stops the polling; the server keeps counting.
     const controller = leaving.current
-    return () => controller.abort()
+    return () => {
+      pendingAbort.current = window.setTimeout(() => controller.abort(), 0)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -131,10 +141,10 @@ export function DiscoverStep({ ctx }: { ctx: Ctx }) {
               <span className="hi">Drive</span>
               <span className="end small muted">{bytes(drive)} · My Drive, Shared drives, sharing</span>
             </li>
-            <li className="is-soon">
-              <Icon name="clock" size={14} />
-              <span>Calendar</span>
-              <span className="end small tag">Coming soon</span>
+            <li>
+              <Icon name="calendar" size={14} />
+              <span className="hi">Calendar</span>
+              <span className="end small muted">Calendars people own · events, repeats, guests</span>
             </li>
           </ul>
         </Panel>

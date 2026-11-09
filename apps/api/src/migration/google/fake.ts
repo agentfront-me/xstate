@@ -5,7 +5,8 @@
 
 import { GoogleError } from './auth'
 import { FOLDER_MIME, GOOGLE_EXPORTS, exportName } from './workspace'
-import type { GChangePage, GContact, GDomain, GDrive, GDriveFile, GGroup, GHistory, GLabel, GPermission, GRawMessage, GUser, Permission, UserCounts, Usage, Workspace } from './workspace'
+import { zonedToUtc } from '../../mailserver/calendar-events'
+import type { GChangePage, GContact, GDomain, GDrive, GDriveFile, GEvent, GGroup, GHistory, GLabel, GPermission, GRawMessage, GUser, Permission, UserCounts, Usage, Workspace } from './workspace'
 
 const GB = 1024 ** 3
 
@@ -37,7 +38,7 @@ export const fakeWorkspace: Workspace = {
     const local = adminEmail.split('@')[0]!
     const noUser = local.startsWith('nobody')
     const partial = local.startsWith('nodrive')
-    const checks: Record<Permission, boolean> = { directory: !noUser, gmail: !noUser && !partial, contacts: !noUser, drive: !noUser && !partial }
+    const checks: Record<Permission, boolean> = { directory: !noUser, gmail: !noUser && !partial, contacts: !noUser, drive: !noUser && !partial, calendar: !noUser }
     return { checks, noUser }
   },
 
@@ -213,6 +214,125 @@ export const fakeWorkspace: Workspace = {
     if (!m) throw new Error(`No fake message ${id}`)
     return m
   },
+
+  async calendarList(email) {
+    const local = email.split('@')[0]!
+    return [
+      { id: email, name: email, primary: true, timeZone: FAKE_TZ },
+      { id: `offsite-${local}@group.calendar.google.com`, name: 'Team offsite', primary: false, timeZone: 'Europe/Lisbon' },
+    ]
+  },
+
+  async eventsPage(email, calendarId, { pageToken, syncToken }) {
+    if (syncToken?.startsWith('expired')) throw new GoogleError('gone', 'Google’s change list expired', 410)
+    const all = fakeEvents(email, calendarId)
+    const token = (n: number) => `sync-${n}:${calendarId}`
+    if (syncToken) {
+      // The first sync after the copy brings an added, an edited and a deleted event; later ones nothing new.
+      const changes = syncToken === token(1) ? fakeChanges(email, calendarId) : []
+      return { events: changes, nextPageToken: null, nextSyncToken: token(2) }
+    }
+    const start = pageToken ? Number(pageToken) : 0
+    const page = all.slice(start, start + FAKE_EVENT_PAGE)
+    const more = start + FAKE_EVENT_PAGE < all.length
+    return { events: page, nextPageToken: more ? String(start + FAKE_EVENT_PAGE) : null, nextSyncToken: more ? null : token(1) }
+  },
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Calendar: a week or two around today in New York time, covering every case the copy handles. Small pages, and the
+// changed occurrences come before their series, as Google may list them.
+
+const FAKE_TZ = 'America/New_York'
+const FAKE_EVENT_PAGE = 4
+
+/** Monday of this week, as YYYY-MM-DD. */
+function fakeMonday(): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7))
+  return d.toISOString().slice(0, 10)
+}
+const day = (n: number) => {
+  const d = new Date(`${fakeMonday()}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+/** A New York wall time on day n as Google sends it: a UTC instant plus the zone. */
+const at = (n: number, time: string, tz = FAKE_TZ) => ({ dateTime: zonedToUtc(`${day(n)}T${time}`, tz), timeZone: tz })
+const compact = (n: number, time: string) => `${day(n).replaceAll('-', '')}T${time.replace(':', '')}00`
+
+function fakeEvents(email: string, calendarId: string): GEvent[] {
+  const domain = domainOf(email)
+  const self = { email, self: true }
+  if (calendarId !== email) {
+    return [
+      { id: 'off1', summary: 'Offsite: travel', start: { date: day(10) }, end: { date: day(12) }, iCalUID: `off1-${calendarId}` },
+      { id: 'off2', summary: 'Offsite dinner', location: 'Lisbon', start: at(10, '19:30', 'Europe/Lisbon'), end: at(10, '22:00', 'Europe/Lisbon'), iCalUID: `off2-${calendarId}` },
+    ]
+  }
+  const colleague = (local: string, status: 'accepted' | 'needsAction' | 'declined' | 'tentative' = 'accepted') => ({ email: `${local}@${domain}`, responseStatus: status })
+  return [
+    // A changed and a cancelled occurrence of the standup, listed before the series itself.
+    { id: 'standup_ex1', recurringEventId: 'standup', originalStartTime: at(1, '09:00'), summary: 'Standup (moved)', start: at(1, '10:00'), end: at(1, '10:15'), iCalUID: `standup-${email}` },
+    { id: 'standup_ex2', recurringEventId: 'standup', originalStartTime: at(3, '09:00'), status: 'cancelled' },
+    {
+      id: 'standup',
+      summary: 'Standup',
+      start: at(0, '09:00'),
+      end: at(0, '09:15'),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;COUNT=40', `EXDATE;TZID=${FAKE_TZ}:${compact(2, '09:00')}`],
+      organizer: self,
+      iCalUID: `standup-${email}`,
+    },
+    {
+      id: 'review',
+      summary: 'Design review',
+      description: 'Walk through the Q1 tiers.',
+      location: 'Room 2',
+      start: at(1, '14:00'),
+      end: at(1, '15:00'),
+      organizer: self,
+      attendees: [{ ...self, responseStatus: 'accepted', organizer: true }, colleague('priya'), colleague('marcus', 'tentative'), { email: 'ext@example.org', displayName: 'Ext Partner', responseStatus: 'needsAction' }, { email: `room-2@resource.calendar.google.com`, resource: true, responseStatus: 'accepted' }],
+      iCalUID: `review-${email}`,
+      sequence: 0,
+    },
+    {
+      id: 'client',
+      summary: 'Call: Maria Lopez',
+      start: at(2, '15:00'),
+      end: at(2, '15:30'),
+      organizer: { email: 'maria@example.org', displayName: 'Maria Lopez' },
+      attendees: [{ email: 'maria@example.org', displayName: 'Maria Lopez', organizer: true, responseStatus: 'accepted' }, { ...self, responseStatus: 'needsAction' }],
+      iCalUID: 'client-call@example.org',
+    },
+    {
+      id: 'allhands',
+      summary: 'All hands',
+      start: at(4, '16:00'),
+      end: at(4, '17:00'),
+      organizer: { email: `ceo@${domain}`, displayName: 'The CEO' },
+      attendees: [
+        { email: `ceo@${domain}`, organizer: true, responseStatus: 'accepted' },
+        ...Array.from({ length: 23 }, (_, i) => colleague(`person${i + 1}`)),
+        { ...self, responseStatus: 'accepted' },
+      ],
+      iCalUID: `allhands@${domain}`,
+    },
+    { id: 'dayoff', summary: 'Day off', start: { date: day(11) }, end: { date: day(12) }, transparency: 'transparent', iCalUID: `dayoff-${email}` },
+    { id: 'monthly', summary: 'Month-end close', start: at(4, '17:00'), end: at(4, '17:30'), recurrence: ['RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;WKST=MO'], iCalUID: `monthly-${email}` },
+    { id: 'wl', eventType: 'workingLocation', summary: 'Home', start: { date: day(0) }, end: { date: day(1) } },
+    { id: 'old', status: 'cancelled' },
+  ]
+}
+
+function fakeChanges(email: string, calendarId: string): GEvent[] {
+  if (calendarId !== email) return []
+  const review = fakeEvents(email, calendarId).find((e) => e.id === 'review')!
+  return [
+    { id: 'kickoff', summary: 'Kickoff (added after the copy)', start: at(5, '11:00'), end: at(5, '11:30'), iCalUID: `kickoff-${email}` },
+    { ...review, summary: 'Design review (v2)', sequence: 1 },
+    { id: 'dayoff', status: 'cancelled' },
+  ]
 }
 
 /** Small pages, so paging gets exercised. */

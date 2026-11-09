@@ -73,7 +73,7 @@ export const calendarListCalendars = defineOperation({
 export const calendarListEvents = defineOperation({
   name: 'calendar_list_events',
   description:
-    'List the events in a mailbox calendar between from and to (ISO date-times; at most 400 days apart), sorted by ' +
+    'List the events in a mailbox calendar between from and to (ISO date-times; at most 365 days apart), sorted by ' +
     'start. Repeating events come back once per occurrence. Optionally only one calendarId. ' +
     EVENT_SHAPE,
   input: z.object({

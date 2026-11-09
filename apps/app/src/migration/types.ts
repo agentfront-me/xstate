@@ -1,7 +1,7 @@
 // What the Google Workspace migration wizard works with: the shapes the migration API returns
 // (apps/api/src/migration/service.ts). ./api.ts calls the API when signed in and simulates everything in demo mode.
 
-export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive'
+export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive' | 'calendar'
 
 export type Stage = 'connect' | 'discover' | 'plan' | 'review' | 'copying' | 'switch' | 'final' | 'finish' | 'done'
 
@@ -57,9 +57,9 @@ export type Discovery = {
 }
 
 export type Action = 'create' | 'existing' | 'shared' | 'skip'
-export type Part = 'mail' | 'contacts' | 'drive'
+export type Part = 'mail' | 'contacts' | 'drive' | 'calendar'
 
-export type UserPlan = { action: Action; existing?: string; mail: boolean; contacts: boolean; drive: boolean }
+export type UserPlan = { action: Action; existing?: string; mail: boolean; contacts: boolean; drive: boolean; calendar: boolean }
 export type MailRange = 'all' | '5y' | '3y' | '1y'
 
 export type Plan = {
@@ -79,6 +79,8 @@ export type UserProgress = {
   mail: Count | null
   contacts: Count | null
   drive: Count | null
+  /** Calendar events: Google gives no total up front, so `total` is what's been handled (plus one while copying). */
+  calendar?: Count | null
   /** Drive is counted in bytes for very large drives, so the column reads "1.2 TB of 2.0 TB". */
   driveBytes?: Count
   state: UserState
@@ -100,7 +102,7 @@ export type CopyStatus = {
   accessLost: boolean
   pausedAt?: string
   finished: boolean
-  totals: { messages: number; contacts: number; files: number }
+  totals: { messages: number; contacts: number; files: number; events?: number }
 }
 
 export type DnsRecordRow = { type: 'MX' | 'TXT' | 'CNAME' | string; name: string; value: string; found: boolean; required?: boolean }
@@ -122,12 +124,13 @@ export type FinalPart = Count & { running?: boolean; people?: Count }
 export type FinalStatus = {
   mail: FinalPart
   contacts: FinalPart
+  calendar?: FinalPart
   drive: FinalPart
   finished: boolean
   rerunAt: string
 }
 
-export type ReportRow = { name: string; shared: boolean; messages: number; contacts: number | null; files: number }
+export type ReportRow = { name: string; shared: boolean; messages: number; contacts: number | null; events?: number | null; files: number }
 export type Skipped = { count: number; label: string; reason: string }
 
 export type FinishStatus = {

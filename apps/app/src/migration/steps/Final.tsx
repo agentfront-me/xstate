@@ -37,12 +37,13 @@ export function FinalStep({ ctx }: { ctx: Ctx }) {
         sub={
           status.finished
             ? `Everything that changed in Google since the first copy is in xstate. Mail sent to ${domain} now arrives in xstate.`
-            : `Picking up mail, contacts and files that changed in Google since the first copy. About ${left} minutes left. Mail sent to ${domain} now arrives in xstate.`
+            : `Picking up mail, contacts, calendar events and files that changed in Google since the first copy. About ${left} minutes left. Mail sent to ${domain} now arrives in xstate.`
         }
       />
       <div className="sync-list">
         <SyncRow icon="mail" label="Mail" count={status.mail} unit="new or changed messages" />
         <SyncRow icon="users" label="Contacts" count={status.contacts} unit="changed" />
+        {status.calendar && <SyncRow icon="calendar" label="Calendar" count={status.calendar} unit="changed events" />}
         <SyncRow icon="hard-drive" label="Drive" count={status.drive} unit="changed files" />
       </div>
       <div className="notice is-info">

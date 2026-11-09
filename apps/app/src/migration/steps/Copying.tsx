@@ -165,6 +165,7 @@ export function CopyingStep({ ctx }: { ctx: Ctx }) {
           <span>User</span>
           <span>Mail</span>
           <span>Contacts</span>
+          <span>Calendar</span>
           <span>Drive</span>
           <span>State</span>
         </div>
@@ -255,6 +256,10 @@ function UserRow({ p, admin, busy, onFix }: { p: UserProgress; admin: boolean; b
         </span>
         <span data-label="Contacts">
           <PartCell count={p.contacts} unit="contacts" off={p.later?.includes('contacts') ? 'Coming soon' : undefined} />
+        </span>
+        <span data-label="Calendar">
+          {/* Google gives no event count up front: while copying, say how many so far. */}
+          <PartCell count={p.calendar ?? null} unit="events" text={p.calendar && p.calendar.done < p.calendar.total ? `${p.calendar.done.toLocaleString()} events so far` : undefined} />
         </span>
         <span data-label="Drive">
           <PartCell count={p.drive} unit="files" text={driveText} off={p.later?.includes('drive') ? 'Coming soon' : undefined} />

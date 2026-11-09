@@ -58,6 +58,7 @@ export {
   listCalendars,
   listEvents,
   respondToEvent,
+  setUpCalendars,
   updateEvent,
   MAX_GUESTS,
   type Calendar,
