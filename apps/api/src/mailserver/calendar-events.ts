@@ -97,8 +97,9 @@ export function toEvent(e: JmapEvent, addresses: string[]): CalendarEvent {
     start = e.start.slice(0, 10)
     end = localEndFull.slice(0, 10)
   } else {
-    start = e.utcStart ?? `${e.start}Z`
-    end = e.utcEnd ?? (e.utcStart ? addMinutes(e.utcStart.replace(/Z$/, ''), minutes) + 'Z' : `${localEndFull}Z`)
+    // Stalwart gives UTC times for stored events; a parsed invite has only the local time and its zone.
+    start = e.utcStart ?? (e.timeZone ? zonedToUtc(e.start, e.timeZone) : `${withSeconds(e.start)}Z`)
+    end = e.utcEnd ?? `${addMinutes(start.replace(/Z$/, ''), minutes)}Z`
   }
 
   return {
@@ -281,6 +282,34 @@ export function mailto(address: string | null | undefined): string | null {
   if (!address) return null
   const email = address.replace(/^mailto:/i, '').trim().toLowerCase()
   return email.includes('@') ? email : null
+}
+
+/** A wall-clock time in an IANA zone as a UTC instant (…Z). Unknown zones are taken as UTC. */
+export function zonedToUtc(local: string, timeZone: string): string {
+  const wallMs = wall(local)
+  let format: Intl.DateTimeFormat
+  try {
+    format = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  } catch {
+    return `${withSeconds(local)}Z`
+  }
+  // The zone's offset at an instant: what its clock shows then, minus the instant. Two passes settle DST edges.
+  const offset = (t: number) => {
+    const p = Object.fromEntries(format.formatToParts(new Date(t)).map((x) => [x.type, x.value]))
+    return Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour!, +p.minute!, +p.second!) - t
+  }
+  let t = wallMs - offset(wallMs)
+  t = wallMs - offset(t)
+  return `${new Date(t).toISOString().slice(0, 19)}Z`
 }
 
 export function durationMinutes(duration: string): number {

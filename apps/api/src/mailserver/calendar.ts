@@ -11,6 +11,7 @@ import * as usersDb from '../db/users'
 import { loadMember, mailAccess } from './access'
 import {
   eventFields,
+  mailto,
   ownParticipantKey,
   participants,
   rekeyOverrides,
@@ -21,7 +22,7 @@ import {
   type GuestStatus,
 } from './calendar-events'
 import { EmailError, forbidden, notFound as missing } from './errors'
-import { reserveCalendarSends, reserveSend } from './sending'
+import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
 import * as jmap from './stalwart/calendar'
 import type { Actor, EmailEnv } from './types'
 
@@ -227,10 +228,161 @@ export async function respondToEvent(
   const key = ownParticipantKey(current.participants, ownAddresses(mailbox))
   if (!key || event.isOrganizer) throw new EmailError('not_invited', "You're not a guest of this event", 409)
 
-  await withSendingCaps(env, mailbox, event.organizer ? [event.organizer] : [], () =>
-    jmap.updateEvent(env, accountId, eventId, { [`participants/${key}/participationStatus`]: status }, true),
-  )
-  return getEvent(env, actor, mailboxId, eventId)
+  // Invites from other xstate mailboxes were filed by Stalwart, and changing the answer sends the reply. For one
+  // from outside, added from its email, Stalwart sends nothing on a change (tested on 1.0.2), but it does send the
+  // reply when the event is created with the answer, so that copy is quietly replaced. Its id changes.
+  const outside = !!event.organizer && (await outsideAddresses(env.DB, [event.organizer])).length > 0
+  const id = await withSendingCaps(env, mailbox, event.organizer ? [event.organizer] : [], async () => {
+    if (!outside) {
+      await jmap.updateEvent(env, accountId, eventId, { [`participants/${key}/participationStatus`]: status }, true)
+      return eventId
+    }
+    const base = current.baseEventId ? await jmap.getEvent(env, accountId, current.baseEventId) : current
+    if (!base) throw notFound()
+    const people = { ...(base.participants ?? {}) }
+    const baseKey = ownParticipantKey(people, ownAddresses(mailbox)) ?? key
+    people[baseKey] = { ...people[baseKey], participationStatus: status }
+    const copy = { ...inviteFields(base, event.organizer!), participants: people, calendarIds: base.calendarIds }
+    await jmap.destroyEvent(env, accountId, base.id, false)
+    return jmap.createEvent(env, accountId, copy, true).catch(async (err) => {
+      // Put the copy back as it was rather than lose it.
+      await jmap.createEvent(env, accountId, { ...inviteFields(base, event.organizer!), participants: base.participants, calendarIds: base.calendarIds }, false)
+      throw err
+    })
+  })
+  return getEvent(env, actor, mailboxId, id)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Invites in email. An invitation email carries a text/calendar part with an iTIP method: request (an invite or
+// an update), reply (a guest's answer) or cancel. Stalwart files invites from other xstate mailboxes straight into
+// the calendar; ones from outside arrive as mail only, so these let the email view add, update, answer or remove.
+
+export type InviteMethod = 'request' | 'reply' | 'cancel' | 'other'
+export type Invite = {
+  method: InviteMethod
+  /** The event as the email describes it (id is empty: it isn't stored). */
+  event: CalendarEvent
+  /** Your calendar's copy, matched by the event's UID, or null when it isn't in your calendar. */
+  existing: CalendarEvent | null
+  /** The email is a newer version than your calendar's copy (the organizer changed it since). */
+  outdated: boolean
+  /** For a reply: the guest who answered and their answer. */
+  answer: { email: string; name: string | null; status: GuestStatus } | null
+}
+
+export async function getInvite(env: EmailEnv, actor: Actor, mailboxId: string, blobId: string): Promise<Invite> {
+  const { mailbox } = await context(env, actor, mailboxId, 'read')
+  const { parsed, existing } = await loadInvite(env, mailbox, blobId)
+  const addresses = ownAddresses(mailbox)
+  const event = toEvent({ ...parsed, id: '', calendarIds: {} }, addresses)
+  const method = inviteMethod(parsed.method)
+  let answer: Invite['answer'] = null
+  if (method === 'reply') {
+    const guest = event.guests.find((g) => !g.organizer && g.status !== 'needs-action') ?? event.guests.find((g) => !g.organizer)
+    if (guest) answer = { email: guest.email, name: guest.name, status: guest.status }
+  }
+  return {
+    method,
+    event,
+    existing: existing ? toEvent(existing, addresses) : null,
+    outdated: !!existing && (parsed.sequence ?? 0) > (existing.sequence ?? 0),
+    answer,
+  }
+}
+
+/**
+ * Acts on an invitation email. For an invite: adds it to your default calendar if it isn't there yet, brings your
+ * copy up to date if the email is newer, and with `status` answers the organizer (one email, counted against the
+ * invitation caps). For a cancellation: removes your copy. Returns your calendar's copy, or null once removed.
+ */
+export async function applyInvite(
+  env: EmailEnv,
+  actor: Actor,
+  mailboxId: string,
+  blobId: string,
+  status?: Exclude<GuestStatus, 'needs-action'>,
+): Promise<CalendarEvent | null> {
+  const { mailbox } = await context(env, actor, mailboxId, 'write')
+  const accountId = mailbox.stalwart_id
+  const addresses = ownAddresses(mailbox)
+  const { parsed, existing } = await loadInvite(env, mailbox, blobId)
+  const method = inviteMethod(parsed.method)
+
+  if (method === 'cancel') {
+    // A guest deleting their copy tells nobody; the organizer already knows.
+    if (existing) await jmap.destroyEvent(env, accountId, existing.id, false)
+    return null
+  }
+  if (method !== 'request') throw new EmailError('invalid', 'This email has nothing to add to your calendar', 400)
+
+  const organizer = mailto(parsed.organizerCalendarAddress) ?? toEvent({ ...parsed, id: '', calendarIds: {} }, addresses).organizer
+  if (!organizer) throw new EmailError('invalid', "This invitation doesn't say who organizes it", 400)
+  if (addresses.includes(organizer)) throw new EmailError('invalid', 'You organize this event; it is already in your calendar', 409)
+  const fields = inviteFields(parsed, organizer)
+
+  let id = existing?.id ?? null
+  if (!id) {
+    const calendarId = await defaultCalendarId(env, accountId)
+    const key = ownParticipantKey(parsed.participants, addresses)
+    if (status && !key) throw new EmailError('not_invited', "You're not on this invitation's guest list", 409)
+    const people = { ...(parsed.participants ?? {}) }
+    if (status && key) people[key] = { ...people[key], participationStatus: status }
+    const create = { ...fields, participants: people, calendarIds: { [calendarId]: true } }
+    // Adding it with an answer sends that answer (a reply) to the organizer; adding it without one sends nothing.
+    id = await withSendingCaps(env, mailbox, status ? [organizer] : [], () => jmap.createEvent(env, accountId, create, !!status))
+    return getEvent(env, actor, mailboxId, id)
+  }
+
+  if ((parsed.sequence ?? 0) > (existing!.sequence ?? 0)) {
+    // Newer from the organizer: take their version, keeping your own answer.
+    const key = ownParticipantKey(existing!.participants, addresses)
+    const mine = key ? existing!.participants?.[key]?.participationStatus : undefined
+    const people = { ...(parsed.participants ?? {}) }
+    const newKey = ownParticipantKey(people, addresses)
+    if (newKey && mine) people[newKey] = { ...people[newKey], participationStatus: mine }
+    await jmap.updateEvent(env, accountId, id, { ...fields, participants: people }, false)
+  }
+  if (status) return respondToEvent(env, actor, mailboxId, id, status)
+  return getEvent(env, actor, mailboxId, id)
+}
+
+async function loadInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string) {
+  const all = await jmap.parseInvite(env, mailbox.stalwart_id, blobId)
+  // A repeating event's changed occurrences can come as extra entries; the first is the event itself.
+  const parsed = all.find((e) => !e.recurrenceId) ?? all[0]
+  if (!parsed) throw new EmailError('not_an_invite', "This attachment isn't a calendar invitation", 400)
+  const existingId = parsed.uid ? await jmap.findByUid(env, mailbox.stalwart_id, parsed.uid) : null
+  const existing = existingId ? await jmap.getEvent(env, mailbox.stalwart_id, existingId) : null
+  return { parsed, existing }
+}
+
+function inviteMethod(method: string | null | undefined): InviteMethod {
+  return method === 'request' || method === 'reply' || method === 'cancel' ? method : 'other'
+}
+
+/**
+ * The event fields to store from a parsed invite. organizerCalendarAddress must be set: without it Stalwart takes
+ * the mailbox for the organizer and would email the real organizer a new invitation instead of an answer.
+ */
+function inviteFields(parsed: jmap.JmapEvent, organizer: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    '@type': 'Event',
+    uid: parsed.uid,
+    sequence: parsed.sequence ?? 0,
+    title: parsed.title ?? '',
+    description: parsed.description ?? '',
+    start: parsed.start,
+    duration: parsed.duration ?? 'PT0S',
+    timeZone: parsed.timeZone ?? null,
+    showWithoutTime: !!parsed.showWithoutTime,
+    locations: parsed.locations ?? null,
+    organizerCalendarAddress: `mailto:${organizer}`,
+  }
+  if (parsed.recurrenceRule) fields.recurrenceRule = parsed.recurrenceRule
+  if (parsed.recurrenceOverrides) fields.recurrenceOverrides = parsed.recurrenceOverrides
+  if (parsed.status) fields.status = parsed.status
+  return fields
 }
 
 // ---------------------------------------------------------------------------------------------------------------

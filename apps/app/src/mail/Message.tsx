@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { useAccount } from '../lib/account'
 import { toast } from '../components/Toast'
 import { errorMessage, initials } from '../lib/core'
 import { useIsDark } from '../lib/theme'
 import type { Attachment, Message } from '../lib/types'
 import { avatarStyle, formatSize, formatTime } from './format'
+import { InviteCard, invitePart, isCalendarBodyPart } from './InviteCard'
 import { isPlainHtml, markQuote, splitQuote } from './quotes'
 import type { MailSource } from './source'
 
@@ -23,7 +25,9 @@ type Props = {
 
 export function MessageView({ message: m, source, open, last, showImages, onToggle, onShowImages }: Props) {
   const from = m.from[0] ?? { name: null, email: '' }
-  const files = m.attachments.filter((a) => !a.inline)
+  const live = useAccount().mode === 'live'
+  const invite = live ? invitePart(m.attachments) : null
+  const files = m.attachments.filter((a) => !a.inline && !isCalendarBodyPart(a))
   const to = [...m.to, ...m.cc].map((a) => a.name || a.email).join(', ')
   const head = (
     <>
@@ -66,6 +70,7 @@ export function MessageView({ message: m, source, open, last, showImages, onTogg
           {head}
         </button>
       )}
+      {invite && <InviteCard mailboxId={m.mailboxId} part={invite} />}
       {m.html ? (
         <>
           {remote && !showImages && (

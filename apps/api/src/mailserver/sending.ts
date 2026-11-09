@@ -111,13 +111,18 @@ export async function reserveCalendarSends(
 
 /** How many of these addresses are outside xstate: their domain isn't one of ours, so the mail goes through SES. */
 async function countOutside(db: D1Database, recipients: string[]): Promise<number> {
-  const domains = recipients.map((r) => r.slice(r.lastIndexOf('@') + 1).toLowerCase())
+  return (await outsideAddresses(db, recipients)).length
+}
+
+/** The addresses whose domain isn't on xstate: mail to them leaves through SES. */
+export async function outsideAddresses(db: D1Database, addresses: string[]): Promise<string[]> {
+  const domainOf = (r: string) => r.slice(r.lastIndexOf('@') + 1).toLowerCase()
   const { results } = await db
     .prepare('SELECT name FROM domains WHERE name IN (SELECT value FROM json_each(?))')
-    .bind(JSON.stringify([...new Set(domains)]))
+    .bind(JSON.stringify([...new Set(addresses.map(domainOf))]))
     .all<{ name: string }>()
   const ours = new Set(results.map((r) => r.name))
-  return domains.filter((d) => !ours.has(d)).length
+  return addresses.filter((a) => !ours.has(domainOf(a)))
 }
 
 /** This organization's caps, what it used in the last hour and day, and its active suspensions. Owners and admins. */

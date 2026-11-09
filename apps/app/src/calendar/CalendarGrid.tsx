@@ -17,6 +17,8 @@ export const FC_VIEW: Record<View, string> = { day: 'timeGridDay', week: 'timeGr
 type Props = {
   gridRef: Ref<CalendarRef>
   view: View
+  /** YYYY-MM-DD to open on; today when left out. */
+  initialDate?: string
   events: CalendarEvent[]
   /** Calendars drawn as the default (solid) calendar; the rest are drawn muted. */
   defaultCalendarId: string | null
@@ -31,7 +33,7 @@ type Props = {
 /** An occurrence's identity across ids: its series (or itself) plus its start. */
 export const selectionKey = (e: CalendarEvent) => `${e.seriesId ?? e.id}@${e.start}`
 
-export function CalendarGrid({ gridRef, view, events, defaultCalendarId, selectedKey, onRange, onOpen, onPick }: Props) {
+export function CalendarGrid({ gridRef, view, initialDate, events, defaultCalendarId, selectedKey, onRange, onOpen, onPick }: Props) {
   const input = useMemo(
     () =>
       events.map((e) => ({
@@ -50,6 +52,7 @@ export function CalendarGrid({ gridRef, view, events, defaultCalendarId, selecte
       ref={gridRef}
       plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
       initialView={FC_VIEW[view]}
+      initialDate={initialDate}
       headerToolbar={false}
       height="100%"
       timeZone="local"

@@ -99,6 +99,24 @@ export function liveSource(mailboxId: string): CalendarSource {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Invites in email (calendar_get_invite / calendar_apply_invite): the text/calendar part of a message.
+
+export type Invite = {
+  method: 'request' | 'reply' | 'cancel' | 'other'
+  event: CalendarEvent
+  existing: CalendarEvent | null
+  outdated: boolean
+  answer: { email: string; name: string | null; status: GuestStatus } | null
+}
+
+export const inviteApi = {
+  get: async (mailboxId: string, blobId: string) =>
+    (await api<{ invite: Invite }>('GET', `/calendar/mailboxes/${mailboxId}/invites/${encodeURIComponent(blobId)}`)).invite,
+  apply: async (mailboxId: string, blobId: string, status?: Exclude<GuestStatus, 'needs-action'>) =>
+    (await api<{ event: CalendarEvent | null }>('POST', `/calendar/mailboxes/${mailboxId}/invites/${encodeURIComponent(blobId)}`, status ? { status } : {})).event,
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Demo: a week like the design's, around today. Kept in memory; repeating events aren't expanded.
 
 const DEMO_CALENDARS: Calendar[] = [

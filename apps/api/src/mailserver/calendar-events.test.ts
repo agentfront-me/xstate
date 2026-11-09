@@ -10,6 +10,7 @@ import {
   timeFields,
   toDuration,
   toEvent,
+  zonedToUtc,
 } from './calendar-events.ts'
 import type { JmapEvent } from './stalwart/calendar.ts'
 
@@ -24,6 +25,24 @@ describe('durations', () => {
     assert.equal(durationMinutes('P1DT2H5M'), 1565)
     assert.equal(durationMinutes('P1W'), 10080)
     assert.equal(durationMinutes('nonsense'), 0)
+  })
+})
+
+describe('zonedToUtc', () => {
+  it('converts local times in a zone to UTC, summer and winter', () => {
+    assert.equal(zonedToUtc('2026-11-10T10:00', 'Asia/Karachi'), '2026-11-10T05:00:00Z')
+    assert.equal(zonedToUtc('2026-11-10T10:00:00', 'Europe/London'), '2026-11-10T10:00:00Z')
+    assert.equal(zonedToUtc('2026-07-01T10:00', 'Europe/London'), '2026-07-01T09:00:00Z')
+    assert.equal(zonedToUtc('2026-07-01T09:00', 'America/New_York'), '2026-07-01T13:00:00Z')
+    assert.equal(zonedToUtc('2026-11-11T15:00:00', 'Etc/UTC'), '2026-11-11T15:00:00Z')
+  })
+  it('takes an unknown zone as UTC', () => {
+    assert.equal(zonedToUtc('2026-11-10T10:00', 'Mars/Olympus'), '2026-11-10T10:00:00Z')
+  })
+  it('gives parsed invites (no utcStart) correct UTC times', () => {
+    const e = toEvent({ id: '', calendarIds: {}, start: '2026-11-10T10:00:00', duration: 'PT1H', timeZone: 'Asia/Karachi' }, [])
+    assert.equal(e.start, '2026-11-10T05:00:00Z')
+    assert.equal(e.end, '2026-11-10T06:00:00Z')
   })
 })
 

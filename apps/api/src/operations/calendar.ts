@@ -158,6 +158,34 @@ export const calendarRespondToEvent = defineOperation({
   }),
 })
 
+const blobId = z.string().min(1).max(256)
+
+export const calendarGetInvite = defineOperation({
+  name: 'calendar_get_invite',
+  description:
+    "Read the calendar invitation in an email's text/calendar attachment (blobId from email_get_thread): method " +
+    '(request = an invite or update, reply = a guest answered, cancel), the event as the email describes it, ' +
+    "your calendar's copy if it's there (existing), whether the email is newer than that copy (outdated), and for " +
+    'a reply who answered and how.',
+  input: z.object({ mailboxId: id, blobId }),
+  http: { method: 'GET', path: '/calendar/mailboxes/:mailboxId/invites/:blobId' },
+  mcp: { readOnly: true },
+  run: async ({ env, actor }, input) => ({ invite: await mailserver.getInvite(env, actor, input.mailboxId, input.blobId) }),
+})
+
+export const calendarApplyInvite = defineOperation({
+  name: 'calendar_apply_invite',
+  description:
+    'Act on the calendar invitation in an email. For an invite: adds it to your calendar if missing, updates your ' +
+    'copy if the email is newer, and with status (accepted, tentative, declined) emails your answer to the ' +
+    'organizer. For a cancellation: removes it from your calendar. Returns your copy (event), or null once removed.',
+  input: z.object({ mailboxId: id, blobId, status: z.enum(['accepted', 'tentative', 'declined']).optional() }),
+  http: { method: 'POST', path: '/calendar/mailboxes/:mailboxId/invites/:blobId' },
+  run: async ({ env, actor }, input) => ({
+    event: await mailserver.applyInvite(env, actor, input.mailboxId, input.blobId, input.status),
+  }),
+})
+
 export const calendarOperations = [
   calendarListCalendars,
   calendarListEvents,
@@ -166,4 +194,6 @@ export const calendarOperations = [
   calendarUpdateEvent,
   calendarDeleteEvent,
   calendarRespondToEvent,
+  calendarGetInvite,
+  calendarApplyInvite,
 ]

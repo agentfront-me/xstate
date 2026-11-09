@@ -50,9 +50,11 @@ export {
   type MessageSummary,
 } from './messages'
 export {
+  applyInvite,
   createEvent,
   deleteEvent,
   getEvent,
+  getInvite,
   listCalendars,
   listEvents,
   respondToEvent,
@@ -63,6 +65,7 @@ export {
   type EventInput,
   type Guest,
   type GuestStatus,
+  type Invite,
   type Repeat,
 } from './calendar'
 export { evaluateSender, sendingHourly, sendingStatus } from './sending'

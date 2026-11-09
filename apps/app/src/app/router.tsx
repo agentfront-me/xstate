@@ -53,14 +53,24 @@ const users = createRoute({
 // FullCalendar is large (about 70 KB gzipped), so the Calendar page loads the first time it's opened.
 const CalendarPage = lazy(() => import('../calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })))
 
+export type CalendarSearch = { date?: string; event?: string }
+
 const calendar = createRoute({
   getParentRoute: () => root,
   path: '/calendar',
-  component: () => (
-    <Suspense fallback={<div className="loading" style={{ flex: 1 }}><span className="spinner" /></div>}>
-      <CalendarPage />
-    </Suspense>
-  ),
+  // ?date=YYYY-MM-DD&event=<id>: open the grid on that day with that event (links from invitation emails).
+  validateSearch: (raw: Record<string, unknown>): CalendarSearch => ({
+    date: typeof raw.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : undefined,
+    event: typeof raw.event === 'string' && raw.event.length <= 128 ? raw.event : undefined,
+  }),
+  component: function Calendar() {
+    const search = calendar.useSearch()
+    return (
+      <Suspense fallback={<div className="loading" style={{ flex: 1 }}><span className="spinner" /></div>}>
+        <CalendarPage search={search} />
+      </Suspense>
+    )
+  },
 })
 
 const settingsIndex = createRoute({

@@ -12,6 +12,7 @@ import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { useAccount } from '../lib/account'
 import { readJson, writeJson } from '../lib/core'
+import type { CalendarSearch } from '../app/router'
 import { useFolders } from '../mail/data'
 import {
   addDays,
@@ -38,7 +39,7 @@ const POLL_MS = 60_000
 
 type Editing = { event: CalendarEvent | null; draft: Draft }
 
-export function CalendarPage() {
+export function CalendarPage({ search = {} }: { search?: CalendarSearch }) {
   const account = useAccount()
   const folders = useFolders()
   const demo = account.mode === 'demo'
@@ -62,10 +63,20 @@ export function CalendarPage() {
       </section>
     )
   }
-  return <CalendarScreen key={key} source={source} sourceKey={key} orgId={demo ? null : account.org.id} />
+  return <CalendarScreen key={key} source={source} sourceKey={key} orgId={demo ? null : account.org.id} search={search} />
 }
 
-function CalendarScreen({ source, sourceKey, orgId }: { source: CalendarSource; sourceKey: string; orgId: string | null }) {
+function CalendarScreen({
+  source,
+  sourceKey,
+  orgId,
+  search,
+}: {
+  source: CalendarSource
+  sourceKey: string
+  orgId: string | null
+  search: CalendarSearch
+}) {
   const client = useQueryClient()
   const gridRef = useRef<CalendarRef>(null)
   const [view, setView] = useState<View>(() => {
@@ -125,6 +136,20 @@ function CalendarScreen({ source, sourceKey, orgId }: { source: CalendarSource; 
   }, [events.data, upcoming.data])
 
   const grid = () => gridRef.current?.getApi()
+
+  // A link from an invitation email: go to its day and open it.
+  useEffect(() => {
+    if (search.date) grid()?.gotoDate(search.date)
+    if (!search.event) return
+    let cancelled = false
+    source
+      .get(search.event)
+      .then((e) => !cancelled && open(e, true))
+      .catch(() => toast('That event is no longer in your calendar'))
+    return () => {
+      cancelled = true
+    }
+  }, [search.date, search.event])
   const refresh = () => client.invalidateQueries({ queryKey: base })
 
   const changeView = (next: View) => {
@@ -285,6 +310,7 @@ function CalendarScreen({ source, sourceKey, orgId }: { source: CalendarSource; 
             <CalendarGrid
               gridRef={gridRef}
               view={view}
+              initialDate={search.date}
               events={gridEvents}
               defaultCalendarId={defaultCalendar?.id ?? null}
               selectedKey={selected ? selectionKey(selected) : null}

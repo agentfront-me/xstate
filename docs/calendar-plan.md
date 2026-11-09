@@ -1,9 +1,7 @@
 # Plan: Calendar section
 
-Status: Phases 0 (checks), 1 (API) and 2 (UI) done 2026-11-09, uncommitted; migration 0020 must be applied
-(`pnpm db:migrate:remote`) before the API is deployed. Phase 3 (invites in email) waits for approval. Each claim
-about Stalwart and FullCalendar below was tested on the local stack; see [Verified claims](#verified-claims).
-
+Status: Phases 0–2 shipped 2026-11-09. Phase 3 (invites in email) built 2026-11-09, uncommitted. Each claim about
+Stalwart and FullCalendar below was tested on the local stack; see [Verified claims](#verified-claims).
 ## Why
 
 The design ("xstate App.dc.html", Calendar page) adds a Calendar section: an Upcoming list grouped Today / Tomorrow /
@@ -71,12 +69,19 @@ Personal. The design's "Agent schedules" calendar is left out for now.
 - Demo mode (`?demo`) has a sample week in memory.
 - Not built: dragging events to move or resize them; calendars of shared mailboxes.
 
-### 3. Invites
+### 3. Invites in email (built)
 
-- Accept / Maybe / Decline in the event panel (`calendar_event_rsvp`).
-- In the email view, a card for messages with a `text/calendar` part: parse with `CalendarEvent/parse`, show the
-  event, and offer Add + RSVP (outside invites are not added on their own, see below).
-- Guest suggestions from `/contacts/suggest`.
+- API: `calendar_get_invite` (`GET …/invites/:blobId`) reads the message's text/calendar part with
+  `CalendarEvent/parse` and finds your copy by UID; `calendar_apply_invite` (`POST …/invites/:blobId`, optional
+  `status`) adds an invite to your default calendar, brings your copy up to date when the email is newer
+  (higher `sequence`), answers the organizer, or removes your copy for a cancellation. A guest's reply is shown,
+  not applied.
+- App: `mail/InviteCard.tsx` above the message body: title, time, place, organizer and a line saying where things
+  stand ("Not in your calendar yet", "You're going", "The organizer changed this event…", "Guest accepted",
+  "Cancelled"), Yes / Maybe / No, "Add without answering", "Update my calendar", "Remove from calendar" and
+  "Open in Calendar" (`/calendar?date=…&event=…`). The unnamed text/calendar copy is hidden from the file chips.
+  Not shown in demo mode.
+- Parsed invites have only a local time and zone, so `zonedToUtc` (Intl) gives their UTC start and end.
 
 ### Later
 
@@ -105,6 +110,12 @@ Personal. The design's "Agent schedules" calendar is left out for now.
   "Save without emailing guests" (`notify: false`). `MAX_GUESTS` is now 30, one hour's worth.
   Still open: the per-sending-domain throttle (150 an hour) isn't mirrored, and mail-app SMTP sending shares the
   same 40 an hour, so the 30 is not a guarantee. Raising the Stalwart throttles for calendar mail is the other lever.
+- **Adding an outside invite must set `organizerCalendarAddress`.** Without it Stalwart makes the mailbox the
+  organizer and emails the real organizer a new *invitation* (METHOD:REQUEST) instead of an answer. Tested.
+- **Answering an outside invite after adding it sends nothing** when the answer is changed in place (one field,
+  the whole participants map, with or without roles: all tested on 1.0.2). Creating the event with the answer does
+  send a proper METHOD:REPLY. So for organizers outside xstate, `respondToEvent` quietly replaces the guest copy
+  with one carrying the new answer (the event id changes); for internal organizers the in-place change works.
 - **`ParticipantIdentity` can't be set per member.** Under impersonation it returns the admin's identity and
   `ParticipantIdentity/set` is refused ("only in your own account"). Not a blocker: setting the organizer
   participant explicitly makes `organizerCalendarAddress` the member's address. The API must always do that.
@@ -165,3 +176,12 @@ Invitation caps (local API, counts seeded in `calendar_sends`): 29 sent + an inv
 hourly cap, and the refused attempt leaves no rows; the same with `notify: false` → saved, nothing counted; 20 sent
 to one person + another invite to them → 429 naming that address; an allowed invite is counted. In the app, the
 editor shows the message and "Save without emailing guests", which saves the event.
+
+Phase 3 (local API, outside invitations emailed over SMTP to a test user): 16 checks, all passing: read an invite
+(method, UTC time, organizer, your pending answer); add without answering sends nothing; the invite then matches
+the calendar copy; a newer email (SEQUENCE 1, moved an hour) shows as outdated, and "update + accept" moves the
+event and sends Maria one METHOD:REPLY with PARTSTAT=ACCEPTED (checked in Stalwart's outbound queue) and no new
+invitation; a cancellation is read and removes the copy; a guest's reply is read (who and what) and has nothing to
+apply (400); answering an invite that doesn't list you → 409; a bad blob → 400. In the app: the card on a real
+invitation, Yes (→ "You're going", reply queued), Open in Calendar (right day, event open, no edit for a guest),
+the cancellation card with Remove from calendar, the reply card, and demo mode without the card.

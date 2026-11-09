@@ -41,6 +41,9 @@ export type JmapEvent = {
   calendarIds: Record<string, true>
   /** confirmed, tentative or cancelled. A cancelled invitation stays in the guest's calendar with this status. */
   status?: string
+  /** Bumped by the organizer on every change; a newer invite email has a higher one. */
+  sequence?: number
+  uid?: string
   title?: string
   description?: string | null
   start: string
@@ -67,6 +70,8 @@ export type JmapEvent = {
 const BASE_PROPERTIES = [
   'calendarIds',
   'status',
+  'sequence',
+  'uid',
   'title',
   'description',
   'start',
@@ -143,6 +148,22 @@ export async function getRecurrenceRules(
   const [result] = await calendar(env, [['CalendarEvent/get', { accountId, ids, properties: ['recurrenceRule'] }]])
   const list = (result?.list as Pick<JmapEvent, 'id' | 'recurrenceRule'>[] | undefined) ?? []
   return new Map(list.map((e) => [e.id, e.recurrenceRule ?? null]))
+}
+
+/** A parsed invite email part: the event(s) it carries and the iTIP method (request, reply, cancel, …). */
+export type ParsedInvite = JmapEvent & { method?: string | null; iCalendar?: unknown; isOrigin?: unknown; isDraft?: unknown }
+
+/** Reads the events in an email's text/calendar part (a blob in this account). Empty when it isn't one. */
+export async function parseInvite(env: StalwartEnv, accountId: string, blobId: string): Promise<ParsedInvite[]> {
+  const [result] = await calendar(env, [['CalendarEvent/parse', { accountId, blobIds: [blobId] }]])
+  const parsed = (result?.parsed as Record<string, ParsedInvite[] | null> | undefined)?.[blobId]
+  return parsed ?? []
+}
+
+/** The id of the event with this iCalendar UID in the account, or null. */
+export async function findByUid(env: StalwartEnv, accountId: string, uid: string): Promise<string | null> {
+  const [result] = await calendar(env, [['CalendarEvent/query', { accountId, filter: { uid } }]])
+  return ((result?.ids as string[] | undefined) ?? [])[0] ?? null
 }
 
 /** One event with everything we use: its UTC times and its per-occurrence changes. */
