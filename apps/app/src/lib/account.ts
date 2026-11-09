@@ -5,7 +5,7 @@
 import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, session } from './core'
 import * as sample from './sample'
-import type { DnsRecord, Domain, Mailbox, Org, User } from './types'
+import type { DnsRecord, Domain, Mailbox, MailboxKind, Org, User } from './types'
 
 export type Account = {
   mode: 'live' | 'demo'
@@ -138,6 +138,27 @@ export async function removeDomain(client: QueryClient, domainId: string): Promi
       records,
     }
   })
+}
+
+export type NewMailbox = { kind: MailboxKind; localPart: string; displayName?: string; ownerMemberId?: string }
+
+/**
+ * Creates a mailbox on a domain. Personal and agent mailboxes come back with a generated password, shown once.
+ * A shared mailbox has no owner, so the person creating it is given access to it.
+ */
+export async function createMailbox(client: QueryClient, domainId: string, input: NewMailbox): Promise<{ mailbox: Mailbox; password?: string }> {
+  const a = current(client)
+  const domain = a.domains.find((d) => d.id === domainId)
+  if (!domain) throw new Error('That domain is no longer in your organization')
+  if (a.mode === 'demo') {
+    const mailbox: Mailbox = { id: `mbx_${Date.now()}`, kind: input.kind, address: `${input.localPart}@${domain.name}`, domainId, displayName: input.displayName ?? null }
+    update(client, (x) => ({ ...x, mailboxes: [...x.mailboxes, mailbox] }))
+    return { mailbox, ...(input.kind !== 'shared' && { password: 'demo-password' }) }
+  }
+  const result = await api<{ mailbox: Mailbox; password?: string }>('POST', `/email/domains/${domainId}/mailboxes`, input)
+  update(client, (x) => ({ ...x, mailboxes: [...x.mailboxes, result.mailbox] }))
+  if (input.kind === 'shared' && a.org.memberId) await api('PUT', `/email/mailboxes/${result.mailbox.id}/access/${a.org.memberId}`).catch(() => null)
+  return result
 }
 
 export { useQueryClient }

@@ -85,6 +85,8 @@ ol, ul { margin: 0; padding: 0; list-style: none; }
 .howto li { counter-increment: how; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; line-height: 1.45; color: var(--text-hi); }
 .howto li::before { content: counter(how); width: 18px; height: 18px; border-radius: 50%; background: var(--bg-muted); color: var(--text-muted); font-size: 11px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
 .howto b { font-weight: 600; }
+.howto a { display: inline-flex; align-items: center; gap: 4px; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.howto .howto-alt { display: block; margin-top: 2px; }
 .code-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 4px 0 10px; border-radius: 7px; background: var(--bg-muted); }
 .code-row code { flex: 1; color: var(--text-hi); font-size: 13px; }
 .scope-table { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }

@@ -13,6 +13,9 @@ import { CopyButton, CopyLink, Panel, Title } from '../ui'
 /** From the API's domain_not_owned error (migration/service.ts requireOwnDomains). */
 type OwnershipRecord = { domain: string; type: string; name: string; value: string }
 
+/** Google Admin's Domain-wide delegation page (Security → API controls), for the signed-in super admin. */
+const DELEGATION_URL = 'https://admin.google.com/ac/owl/domainwidedelegation'
+
 export function ConnectStep({ ctx }: { ctx: Ctx }) {
   // Read at render: the API's scope list replaces the demo one once the migration loads.
   const ALL_SCOPES = migrationApi.SCOPES.map((s) => s.url).join(',')
@@ -61,11 +64,16 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
           <ol className="howto">
             <li>
               <span>
-                Open <b>admin.google.com</b> and go to Security → Access and data control → API controls.
+                Open{' '}
+                <a href={DELEGATION_URL} target="_blank" rel="noreferrer">
+                  <b>Domain-wide delegation</b>
+                  <Icon name="external-link" size={12} />
+                </a>{' '}
+                in the Google Admin console, then click Add new.
+                <span className="howto-alt muted small">
+                  Or in admin.google.com: Show more → Security → Access and data control → API controls → Manage Domain Wide Delegation.
+                </span>
               </span>
-            </li>
-            <li>
-              <span>Under Domain-wide delegation, click Manage Domain Wide Delegation, then Add new.</span>
             </li>
             <li>
               <span>Paste xstate's Client ID, then paste the scopes below (comma-separated) and click Authorize.</span>
