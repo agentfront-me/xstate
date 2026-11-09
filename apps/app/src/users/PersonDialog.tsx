@@ -1,4 +1,5 @@
-// Add user and Edit user: name, email, phone, custom attributes, and (when adding) the website domain.
+// Add user and Edit user: name, email, phone, custom attributes. When adding: a lead on a website domain, or a
+// contact (your own, or shared with everyone when you can manage the audience).
 
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
@@ -20,6 +21,7 @@ export function PersonDialog({
   title,
   person,
   domains,
+  canManage = false,
   onSubmit,
   onClose,
 }: {
@@ -27,13 +29,18 @@ export function PersonDialog({
   person?: Person
   /** When adding: the domains to offer. */
   domains?: string[]
-  onSubmit: (fields: PersonFields & { domain?: string }) => Promise<void>
+  /** When adding: may add leads and shared contacts. Others can only add their own contacts. */
+  canManage?: boolean
+  onSubmit: (fields: PersonFields & { domain?: string; kind?: 'lead' | 'contact'; shared?: boolean }) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(person?.name ?? '')
   const [email, setEmail] = useState(person?.email ?? '')
   const [phone, setPhone] = useState(person?.phone ?? '')
   const [domain, setDomain] = useState(domains?.[0] ?? '')
+  const [kind, setKind] = useState<'lead' | 'contact'>(canManage && domains?.length ? 'lead' : 'contact')
+  const [shared, setShared] = useState(false)
+  const contact = kind === 'contact'
   const [attrs, setAttrs] = useState<AttrRow[]>(Object.entries(person?.attributes ?? {}).map(([key, v]) => ({ key, value: String(v) })))
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -43,7 +50,8 @@ export function PersonDialog({
   const submit = async () => {
     const e = email.trim().toLowerCase()
     if (e && !isEmail(e)) return setError('Enter a valid email')
-    if (!person && !domain.trim()) return setError('Enter the website domain this person belongs to')
+    if (!person && !contact && !domain.trim()) return setError('Enter the website domain this person belongs to')
+    if (!person && contact && !name.trim() && !e && !phone.trim()) return setError('Enter a name, email or phone')
     const attributes: Record<string, string | number | boolean | null> = {}
     for (const row of attrs) {
       const k = row.key.trim()
@@ -60,7 +68,7 @@ export function PersonDialog({
         email: e || null,
         phone: phone.trim() || null,
         attributes,
-        ...(!person && { domain: domain.trim().toLowerCase() }),
+        ...(!person && (contact ? { kind, shared } : { kind, domain: domain.trim().toLowerCase() })),
       })
       onClose()
     } catch (err) {
@@ -73,11 +81,17 @@ export function PersonDialog({
     <Modal title={title} onClose={onClose} wide>
       <form onSubmit={(ev) => { ev.preventDefault(); void submit() }}>
         <div className="modal-body seg-body">
+          {!person && canManage && (
+            <div className="seg-kind" role="radiogroup" aria-label="Type">
+              <label><input type="radio" name="kind" checked={!contact} onChange={() => setKind('lead')} /> Lead on a website</label>
+              <label><input type="radio" name="kind" checked={contact} onChange={() => setKind('contact')} /> Contact</label>
+            </div>
+          )}
           <div className="fields">
             <label className="field">Name<input ref={first} className="text-input" value={name} maxLength={200} onChange={(ev) => setName(ev.target.value)} /></label>
             <label className="field">Email<input className="text-input" type="email" value={email} maxLength={254} onChange={(ev) => { setEmail(ev.target.value); setError(null) }} /></label>
             <label className="field">Phone<input className="text-input" value={phone} maxLength={40} placeholder="+1 555 010 0100" onChange={(ev) => setPhone(ev.target.value)} /></label>
-            {!person && (
+            {!person && !contact && (
               <label className="field">
                 Domain
                 <input className="text-input" list="person-domains" value={domain} placeholder="example.com" onChange={(ev) => { setDomain(ev.target.value); setError(null) }} />
@@ -85,6 +99,13 @@ export function PersonDialog({
               </label>
             )}
           </div>
+          {!person && contact && canManage && (
+            <label className="check-row">
+              <input type="checkbox" checked={shared} onChange={(ev) => setShared(ev.target.checked)} />
+              Share with everyone in the organization
+              <span className="dim small">Otherwise only you see this contact.</span>
+            </label>
+          )}
           <div className="u-label u-label-row">
             Attributes
             <button type="button" className="btn btn-sm" onClick={() => setAttrs((a) => [...a, { key: '', value: '' }])}><Icon name="plus" size={13} />Add</button>
@@ -103,7 +124,7 @@ export function PersonDialog({
           <span />
           <span className="row-gap">
             <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={busy}>{busy && <span className="spinner" />}{person ? 'Save' : 'Add user'}</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>{busy && <span className="spinner" />}{person ? 'Save' : contact ? 'Add contact' : 'Add user'}</button>
           </span>
         </div>
       </form>

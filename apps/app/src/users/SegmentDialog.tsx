@@ -201,6 +201,7 @@ function ConditionInputs({ c, schema, naming, onChange }: { c: Condition; schema
           <select className="select sm grow" aria-label="Type" value={c.value} onChange={(e) => onChange({ ...c, value: e.target.value as typeof c.value })}>
             <option value="user">User</option>
             <option value="lead">Lead</option>
+            <option value="contact">Contact</option>
           </select>
         </>
       )

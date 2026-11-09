@@ -21,7 +21,13 @@ export async function register(
   input: { name: string; email: string; password: string; organizationName?: string },
 ): Promise<Session & { organization: { id: string; name: string } }> {
   const email = input.email.trim().toLowerCase()
-  if (await usersDb.findByEmail(env.DB, email)) throw emailTaken()
+  const existing = await usersDb.findByEmail(env.DB, email)
+  // Invited and never accepted: the account is theirs to claim through the invite link, which proves the email is
+  // theirs. Signing up here doesn't, so it can't take over the invite.
+  if (existing && !existing.password_hash) {
+    throw new ApiError('invited', "You've been invited to xstate. Use the link in your invite email to set your password.", 409)
+  }
+  if (existing) throw emailTaken()
 
   const userId = crypto.randomUUID()
   const organization = { id: crypto.randomUUID(), name: input.organizationName ?? `${input.name}'s organization` }

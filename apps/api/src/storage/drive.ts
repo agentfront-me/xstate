@@ -16,14 +16,17 @@ import { isAdmin, mailContext, readableMailboxes } from '../mailserver/access'
 import type { Actor, EmailEnv } from '../mailserver/types'
 import { organizationBucket, type BucketEnv } from './buckets'
 import { cleanFileName } from './files'
-import { copyObject, deleteObject, getObject, presign, putObject } from './r2'
+import { copyObject, deleteObject, getObject, presign, putLargeObject, putObject } from './r2'
 import { atLeast, canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, type Reader, type Role } from './roles'
 import { extractText, textKind } from '../search/extract'
 import { enqueueIndex } from '../search/jobs'
 
 export type StorageEnv = BucketEnv & EmailEnv & Pick<Env, 'SEARCH_INDEX' | 'AI'>
 
-/** Workers accept request bodies up to 100 MB; bigger uploads would need multipart uploads to R2. */
+/**
+ * Largest upload through the API: Workers accept request bodies up to 100 MB. Server-side writes (imports) pass
+ * `maxBytes: Infinity` to uploadFile and go to R2 as multipart uploads instead, with no limit.
+ */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 /** Largest file agents can read or write as text. */
 const MAX_TEXT_BYTES = 1024 * 1024
@@ -324,17 +327,22 @@ export async function createFolder(
   return (await getItem(env, actor, id)).item
 }
 
-export type Upload = { name: string; contentType: string; size: number; body: ReadableStream | Uint8Array | string }
+/** `size` is null when it isn't known up front, which only server-side writes (`maxBytes: Infinity`) allow. */
+export type Upload = { name: string; contentType: string; size: number | null; body: ReadableStream | Uint8Array | string }
 
-/** Stores a new file. A name already used in the folder gets a number: "report (2).csv". */
+/**
+ * Stores a new file. A name already used in the folder gets a number: "report (2).csv". Uploads from people are
+ * capped at MAX_UPLOAD_BYTES; server-side imports pass `maxBytes: Infinity`.
+ */
 export async function uploadFile(
   env: StorageEnv,
   actor: Actor,
   organizationId: string,
   where: { parentId?: string | null; space?: Space },
   upload: Upload,
+  options: { maxBytes?: number } = {},
 ): Promise<StorageItem> {
-  checkSize(upload.size)
+  checkSize(upload.size, options.maxBytes)
   const target = await targetContext(env, actor, organizationId, where)
   const name = await freeName(env, target, cleanName(upload.name))
   const contentType = contentTypeFor(name, upload.contentType)
@@ -379,15 +387,22 @@ type Stored = { fileId: string; key: string; size: number; sha256: string }
 async function storeVersion(
   env: StorageEnv,
   bucket: string,
-  v: { itemId: string; name: string; contentType: string; size: number; body: Upload['body'] },
+  v: { itemId: string; name: string; contentType: string; size: number | null; body: Upload['body'] },
 ): Promise<Stored> {
   const fileId = crypto.randomUUID()
   const key = `drive/${v.itemId}/${fileId}/${v.name}`
   const digest = new crypto.DigestStream('SHA-256')
+  let size: number
   if (v.body instanceof ReadableStream) {
     const [toR2, toHash] = v.body.tee()
     const hashing = toHash.pipeTo(digest)
-    await putObject(env, bucket, key, toR2, { contentType: v.contentType, size: v.size, metadata: { 'item-id': v.itemId } })
+    const metadata = { 'item-id': v.itemId }
+    if (v.size === null || v.size > MAX_UPLOAD_BYTES) {
+      size = (await putLargeObject(env, bucket, key, toR2, { contentType: v.contentType, metadata })).size
+    } else {
+      await putObject(env, bucket, key, toR2, { contentType: v.contentType, size: v.size, metadata })
+      size = v.size
+    }
     await hashing
   } else {
     const bytes = typeof v.body === 'string' ? new TextEncoder().encode(v.body) : v.body
@@ -395,10 +410,10 @@ async function storeVersion(
     await writer.write(bytes)
     await writer.close()
     await putObject(env, bucket, key, bytes, { contentType: v.contentType, metadata: { 'item-id': v.itemId } })
-    v.size = bytes.byteLength
+    size = bytes.byteLength
   }
   const sha256 = [...new Uint8Array(await digest.digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-  return { fileId, key, size: v.size, sha256 }
+  return { fileId, key, size, sha256 }
 }
 
 function versionRow(
@@ -434,9 +449,10 @@ function versionRow(
   }
 }
 
-function checkSize(size: number): void {
-  if (!Number.isFinite(size) || size < 0) throw new ApiError('length_required', 'Send the file size as Content-Length')
-  if (size > MAX_UPLOAD_BYTES) throw new ApiError('file_too_large', 'Files can be up to 100 MB')
+function checkSize(size: number | null, maxBytes = MAX_UPLOAD_BYTES): void {
+  if (size === null && maxBytes === Infinity) return
+  if (size === null || !Number.isFinite(size) || size < 0) throw new ApiError('length_required', 'Send the file size as Content-Length')
+  if (size > maxBytes) throw new ApiError('file_too_large', `Files can be up to ${Math.round(maxBytes / 1024 / 1024)} MB`)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1053,3 +1069,157 @@ export function contentTypeFor(name: string, given: string): string {
 }
 
 export type { Role }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Imports (Google Drive). Server-side only, with no access checks: the migration decides who owns what, for members
+// who may not have accepted their invite yet. Never reachable from an HTTP route or MCP.
+
+export type ImportTarget = { organizationId: string; space: Space; parentId: string | null; ownerMemberId: string; userId: string }
+
+const importTarget = (t: ImportTarget): Target => ({
+  organizationId: t.organizationId,
+  space: t.space,
+  parentId: t.parentId,
+  member: { id: t.ownerMemberId, role: 'member', permissions: { org: [], domains: {} } },
+  reader: { memberId: t.ownerMemberId, admin: false },
+})
+
+/** Creates a folder; a name already used there gets a number. Returns its id. */
+export async function importFolder(env: StorageEnv, t: ImportTarget, name: string, orgAccess: OrgAccess | null = null): Promise<string> {
+  const target = importTarget(t)
+  const free = await freeName(env, target, cleanName(name))
+  const now = new Date().toISOString()
+  const id = crypto.randomUUID()
+  await storageDb
+    .insert(env.DB, {
+      id,
+      organization_id: t.organizationId,
+      space: t.space,
+      parent_id: t.parentId,
+      kind: 'folder',
+      name: free,
+      owner_member_id: t.ownerMemberId,
+      org_access: orgAccess,
+      file_id: null,
+      version: 0,
+      size_bytes: 0,
+      content_type: null,
+      created_by: t.userId,
+      created_at: now,
+      updated_by: t.userId,
+      updated_at: now,
+    })
+    .run()
+  return id
+}
+
+/**
+ * Stores a file of any size (multipart past 100 MB). With `md5`, the bytes are checked against it on the way and a
+ * mismatch is thrown as 'checksum_mismatch' with nothing kept. Returns the new item's id and size.
+ */
+export async function importFile(
+  env: StorageEnv,
+  t: ImportTarget,
+  file: { name: string; contentType: string; size: number | null; body: ReadableStream; md5?: string | null },
+): Promise<{ itemId: string; size: number }> {
+  const target = importTarget(t)
+  const name = await freeName(env, target, cleanName(file.name))
+  const contentType = contentTypeFor(name, file.contentType)
+  const itemId = crypto.randomUUID()
+  const bucket = await organizationBucket(env, t.organizationId)
+
+  let body = file.body
+  let md5: Promise<ArrayBuffer> | null = null
+  if (file.md5) {
+    const [toStore, toHash] = file.body.tee()
+    const digest = new crypto.DigestStream('MD5')
+    void toHash.pipeTo(digest)
+    md5 = digest.digest
+    body = toStore
+  }
+  const stored = await storeVersion(env, bucket, { itemId, name, contentType, size: file.size, body })
+  if (md5) {
+    const got = [...new Uint8Array(await md5)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    if (got !== file.md5!.toLowerCase()) {
+      await deleteObject(env, bucket, stored.key).catch(() => null)
+      throw new ApiError('checksum_mismatch', `${file.name} arrived damaged (MD5 ${got}, Google says ${file.md5})`, 502)
+    }
+  }
+  const now = new Date().toISOString()
+  try {
+    await env.DB.batch([
+      filesDb.insert(env.DB, versionRow(t.organizationId, itemId, 1, stored, name, contentType, t.userId, now)),
+      storageDb.insert(env.DB, {
+        id: itemId,
+        organization_id: t.organizationId,
+        space: t.space,
+        parent_id: t.parentId,
+        kind: 'file',
+        name,
+        owner_member_id: t.ownerMemberId,
+        org_access: null,
+        file_id: stored.fileId,
+        version: 1,
+        size_bytes: stored.size,
+        content_type: contentType,
+        created_by: t.userId,
+        created_at: now,
+        updated_by: t.userId,
+        updated_at: now,
+      }),
+    ])
+  } catch (err) {
+    await deleteObject(env, bucket, stored.key).catch(() => null)
+    throw err
+  }
+  await enqueueIndex(env, [stored.fileId])
+  return { itemId, size: stored.size }
+}
+
+/** Gives a member a role on an item (or raises it), and/or sets what the whole organization gets. */
+export async function importAccess(
+  env: StorageEnv,
+  itemId: string,
+  userId: string,
+  access: { grants?: { memberId: string; role: StorageRole }[]; orgAccess?: OrgAccess | null },
+): Promise<void> {
+  const now = new Date().toISOString()
+  const statements = (access.grants ?? []).map((g) => storageDb.setGrant(env.DB, { itemId, memberId: g.memberId, role: g.role, userId, now }))
+  if (access.orgAccess !== undefined) statements.push(storageDb.setOrgAccess(env.DB, itemId, access.orgAccess))
+  if (statements.length) await env.DB.batch(statements)
+}
+
+/**
+ * A new version of an imported file (edited in Google after the copy). Earlier versions are kept as for any save.
+ * Returns the new size, or null when the item is gone (deleted in xstate meanwhile).
+ */
+export async function importVersion(
+  env: StorageEnv,
+  itemId: string,
+  userId: string,
+  file: { contentType: string; size: number | null; body: ReadableStream; md5?: string | null },
+): Promise<number | null> {
+  const item = await env.DB.prepare('SELECT * FROM storage_items WHERE id = ? AND trashed_at IS NULL').bind(itemId).first<ItemView>()
+  if (!item || item.kind !== 'file') return null
+  const bucket = await organizationBucket(env, item.organization_id)
+  let body = file.body
+  let md5: Promise<ArrayBuffer> | null = null
+  if (file.md5) {
+    const [toStore, toHash] = file.body.tee()
+    const digest = new crypto.DigestStream('MD5')
+    void toHash.pipeTo(digest)
+    md5 = digest.digest
+    body = toStore
+  }
+  const stored = await storeVersion(env, bucket, { itemId, name: item.name, contentType: file.contentType, size: file.size, body })
+  if (md5) {
+    const got = [...new Uint8Array(await md5)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    if (got !== file.md5!.toLowerCase()) {
+      await deleteObject(env, bucket, stored.key).catch(() => null)
+      throw new ApiError('checksum_mismatch', `${item.name} arrived damaged`, 502)
+    }
+  }
+  // commitVersion only reads the item and the actor's user id from its context.
+  await commitVersion(env, { item } as ItemContext, bucket, stored, contentTypeFor(item.name, file.contentType), { userId })
+  return stored.size
+}

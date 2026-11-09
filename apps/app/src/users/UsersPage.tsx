@@ -14,7 +14,7 @@ import { useAccount } from '../lib/account'
 import { apiUrl, copyText, errorMessage } from '../lib/core'
 import { ConfirmDialog, Menu, type MenuItem } from '../storage/dialogs'
 import { saveBlob } from '../storage/api'
-import { type Person, type Segment, audienceApi, audienceKeys, displayName, isAnonymous, keysApi, relative, shortVisitor } from './api'
+import { type Person, type Segment, audienceApi, audienceKeys, displayName, isAnonymous, keysApi, kindLabel, relative, shortVisitor } from './api'
 import { Avatar, PersonPanel } from './PersonPanel'
 import { PersonDialog } from './PersonDialog'
 import { SegmentDialog } from './SegmentDialog'
@@ -36,12 +36,12 @@ export function UsersPage({ search }: { search: UsersSearch }) {
     )
   }
   const canManage = account.org.role === 'owner' || account.org.role === 'admin'
-  return <Users orgId={account.org.id} canManage={canManage} search={search} />
+  return <Users orgId={account.org.id} memberId={account.org.memberId} canManage={canManage} search={search} />
 }
 
 type Dialog = { kind: 'new-segment' } | { kind: 'edit-segment'; segment: Segment } | { kind: 'delete-segment'; segment: Segment } | { kind: 'add-user' }
 
-function Users({ orgId, canManage, search }: { orgId: string; canManage: boolean; search: UsersSearch }) {
+function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId?: string; canManage: boolean; search: UsersSearch }) {
   const navigate = useNavigate()
   const client = useQueryClient()
   const go = (next: UsersSearch, replace = false) => void navigate({ to: '/users', search: next, replace })
@@ -124,6 +124,7 @@ function Users({ orgId, canManage, search }: { orgId: string; canManage: boolean
           key={search.person}
           orgId={orgId}
           personId={search.person}
+          memberId={memberId}
           canManage={canManage}
           onClose={() => go({ ...search, person: undefined })}
           onSegment={(id) => go({ segment: id, person: search.person })}
@@ -157,11 +158,12 @@ function Users({ orgId, canManage, search }: { orgId: string; canManage: boolean
       )}
       {dialog?.kind === 'add-user' && (
         <PersonDialog
-          title="Add user"
+          title={canManage ? 'Add user' : 'Add contact'}
           domains={(overview.data?.domains ?? []).map((d) => d.domain)}
+          canManage={canManage}
           onClose={() => setDialog(null)}
-          onSubmit={async ({ domain, ...fields }) => {
-            const { person } = await audienceApi.addPerson(orgId, { ...fields, domain: domain ?? '' })
+          onSubmit={async ({ domain, kind, shared, ...fields }) => {
+            const { person } = await audienceApi.addPerson(orgId, { ...fields, kind: kind ?? 'lead', shared, ...(kind !== 'contact' && { domain: domain ?? '' }) })
             void refresh()
             go({ ...search, person: person.id })
             toast(`Added ${displayName(person)}`)
@@ -252,7 +254,8 @@ function PeopleList({
         <button className="btn btn-sm" onClick={() => void exportCsv()} disabled={exporting || !total}>
           {exporting ? <span className="spinner" /> : <Icon name="download" size={14} />}Export
         </button>
-        {canManage && <button className="btn btn-sm btn-primary" onClick={onAdd}><Icon name="user-plus" size={14} />Add user</button>}
+        {/* Anyone can add their own contacts; adding website leads needs the manage permission. */}
+        <button className="btn btn-sm btn-primary" onClick={onAdd}><Icon name="user-plus" size={14} />Add user</button>
       </div>
 
       <div className="s-scroll">
@@ -312,8 +315,8 @@ function PersonRow({ person: p, selected, onOpen }: { person: Person; selected: 
           <span className={`small ellipsis ${anon ? 'mono dim' : 'muted'}`}>{anon ? shortVisitor(p) : p.email ?? (p.name ? p.externalId : null) ?? ''}</span>
         </span>
       </span>
-      <span role="cell"><span className="u-type">{p.kind === 'user' ? 'User' : 'Lead'}</span></span>
-      <span role="cell" className="ellipsis muted">{p.domain}</span>
+      <span role="cell"><span className="u-type">{kindLabel(p)}</span></span>
+      <span role="cell" className="ellipsis muted">{p.domain || '—'}</span>
       <span role="cell" className="ellipsis muted">{p.source}</span>
       <span role="cell" className="num muted" title={new Date(p.lastSeenAt).toLocaleString()}>{relative(p.lastSeenAt)}</span>
     </div>

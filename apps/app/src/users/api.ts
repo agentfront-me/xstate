@@ -3,7 +3,8 @@
 import { api, apiBlob } from '../lib/core'
 import type { MessageSummary } from '../lib/types'
 
-export type PersonKind = 'user' | 'lead'
+/** 'contact': an address-book entry (imported from Google or added by hand), not a website visitor. */
+export type PersonKind = 'user' | 'lead' | 'contact'
 export type Attributes = Record<string, string | number | boolean>
 
 export type Person = {
@@ -21,6 +22,8 @@ export type Person = {
   lastSeenAt: string
   createdAt: string
   updatedAt: string
+  /** Contacts: the member whose contact it is, or null when it's shared with the whole organization. */
+  owner?: string | null
 }
 
 export type AudienceEvent = { id: number; name: string; properties: Record<string, unknown>; url: string | null; occurredAt: string }
@@ -39,7 +42,7 @@ export type Filter = { match: 'all' | 'any'; conditions: Condition[] }
 export type SegmentIcon = 'layers' | 'user' | 'users' | 'target' | 'mail' | 'circle-check' | 'hourglass' | 'user-minus' | 'clock' | 'star'
 export type Segment = { id: string; name: string; icon: SegmentIcon; filter: Filter; count: number }
 
-export type Overview = { total: number; domains: { domain: string; count: number }[]; segments: Segment[] }
+export type Overview = { total: number; domains: { domain: string; count: number }[]; contacts?: number; segments: Segment[] }
 export type Schema = { attributes: { key: string; type: string }[]; events: { name: string; total: number }[] }
 export type PersonDetail = {
   person: Person
@@ -73,7 +76,11 @@ export const audienceApi = {
     api<{ people: Person[]; total: number; nextCursor: string | null }>('GET', `/audience/orgs/${org}/people${qs({ ...p, limit: 50 })}`),
   exportCsv: (org: string, p: ListParams) => apiBlob(`/audience/orgs/${org}/people.csv${qs(p)}`),
   person: (org: string, id: string) => api<PersonDetail>('GET', `/audience/orgs/${org}/people/${id}`),
-  addPerson: (org: string, input: PersonFields & { domain: string }) => api<{ person: Person }>('POST', `/audience/orgs/${org}/people`, input),
+  addPerson: (org: string, input: PersonFields & { kind: 'lead' | 'contact'; domain?: string; shared?: boolean }) =>
+    api<{ person: Person }>('POST', `/audience/orgs/${org}/people`, input),
+  /** A contact's photo, as an object URL (the API needs the session, so an <img src> can't load it directly). */
+  photo: async (org: string, id: string) => URL.createObjectURL(await apiBlob(`/audience/orgs/${org}/people/${id}/photo`)),
+  suggest: (org: string, q: string) => api<{ contacts: { name: string | null; email: string }[] }>('GET', `/audience/orgs/${org}/contacts/suggest${qs({ q })}`),
   updatePerson: (org: string, id: string, fields: PersonFields) => api<{ person: Person }>('PATCH', `/audience/orgs/${org}/people/${id}`, fields),
   deletePeople: (org: string, ids: string[]) => api<{ deleted: number }>('POST', `/audience/orgs/${org}/people/delete`, { ids }),
   count: (org: string, filter: Filter) => api<{ count: number }>('POST', `/audience/orgs/${org}/count`, { filter }),
@@ -92,6 +99,12 @@ export const keysApi = {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Display helpers
+
+export const kindLabel = (p: Person) => (p.kind === 'user' ? 'User' : p.kind === 'lead' ? 'Lead' : 'Contact')
+
+/** Website people and shared contacts need the manage permission; your own contacts are yours to change. */
+export const canEditPerson = (p: Person, memberId: string | undefined, canManage: boolean) =>
+  p.kind === 'contact' && p.owner ? p.owner === memberId : canManage
 
 export const displayName = (p: Person) => p.name || p.email || (p.externalId ? `User ${p.externalId}` : 'Anonymous visitor')
 export const isAnonymous = (p: Person) => !p.name && !p.email && !p.externalId

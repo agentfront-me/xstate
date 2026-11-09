@@ -216,6 +216,10 @@ button.sender { width: 100%; text-align: left; }
 .modal-row > label { width: 52px; flex-shrink: 0; color: var(--text-muted); }
 .modal-row input, .modal-row select { flex: 1; min-width: 0; height: 30px; border: 0; outline: 0; background: none; color: var(--text-hi); }
 .modal-row select { border: 1px solid var(--border); border-radius: 7px; padding: 0 8px; background: var(--bg); }
+.rcpt { flex: 1; min-width: 0; position: relative; display: flex; }
+.rcpt-list { position: absolute; z-index: 20; top: calc(100% + 6px); left: -8px; right: 0; max-width: 380px; margin: 0; padding: 4px; list-style: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); }
+.rcpt-list li { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 6px; cursor: pointer; min-width: 0; }
+.rcpt-list li[aria-selected='true'] { background: var(--bg-hover); }
 .modal textarea { border: 0; outline: 0; background: none; resize: none; min-height: 170px; padding: 14px 16px; color: var(--text-hi); line-height: 1.5; }
 .modal-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-top: 1px solid var(--border); }
 .modal-foot .err { flex: 1; padding: 0 12px; font-size: 12px; color: var(--text-hi); }
@@ -255,6 +259,19 @@ button.sender { width: 100%; text-align: left; }
 .select { height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-hi); }
 .select.sm { height: 28px; font-size: 13px; padding: 0 6px; }
 .form-error { font-size: 12px; color: var(--text-hi); }
+.invite-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.invite-note > .icon { flex-shrink: 0; margin-top: 2px; }
+.invite-note > span { min-width: 0; }
+.invite-link { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.invite-link code { flex: 1; min-width: 0; font-size: 11px; color: var(--text-hi); }
+/* Phone width: the email gets its own line, and member controls drop under the name instead of squeezing it. */
+@media (max-width: 640px) {
+  .invite-form { flex-wrap: wrap; }
+  .invite-form .text-input { flex-basis: 100%; }
+  .member-row { flex-wrap: wrap; }
+  .member-row .text { flex: 1 1 calc(100% - 52px); }
+  .member-row .right { flex-basis: 100%; justify-content: flex-end; }
+}
 
 .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .choice { height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text-hi); }
@@ -267,6 +284,14 @@ button.sender { width: 100%; text-align: left; }
 .card-row .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .card-row .name { color: var(--text-hi); }
 .card-row .sub { font-size: 12px; color: var(--text-muted); }
+.card-row.is-warn { background: rgba(180, 83, 9, 0.06); }
+.card-row.is-warn .lead { color: #b45309; }
+:root.dark .card-row.is-warn { background: rgba(251, 191, 36, 0.06); }
+:root.dark .card-row.is-warn .lead { color: #fbbf24; }
+@media (max-width: 560px) {
+  .card-row.is-warn { flex-wrap: wrap; }
+  .card-row.is-warn .right { flex-basis: 100%; padding-left: 27px; }
+}
 .card-row .lead { color: var(--text-muted); }
 .card-row .right { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
 .card-row .status { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-hi); }

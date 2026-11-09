@@ -85,8 +85,14 @@ export const audienceGetPerson = defineOperation({
 
 export const audienceAddPerson = defineOperation({
   name: 'audience_add_person',
-  description: 'Add a person by hand, as a lead on the given website domain. Email must be unique per domain.',
-  input: personFields.extend({ organizationId: id, domain }),
+  description:
+    'Add a person by hand: a lead on a website domain (email unique per domain), or a contact (kind "contact", no domain): your own, or shared with the whole organization when shared is true.',
+  input: personFields.extend({
+    organizationId: id,
+    kind: z.enum(['lead', 'contact']).default('lead'),
+    domain: domain.optional(),
+    shared: z.boolean().default(false),
+  }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/people', status: 201 },
   run: async ({ env, actor }, { organizationId, ...input }) => ({ person: await audience.addPerson(env, actor, organizationId, input) }),
 })
@@ -99,6 +105,24 @@ export const audienceUpdatePerson = defineOperation({
   run: async ({ env, actor }, { organizationId, personId, ...fields }) => ({
     person: await audience.updatePerson(env, actor, organizationId, personId, fields),
   }),
+})
+
+export const audiencePersonPhoto = defineOperation({
+  name: 'audience_person_photo',
+  description: "A contact's photo (imported from Google), as an image.",
+  input: z.object({ organizationId: id, personId: id }),
+  http: { method: 'GET', path: '/audience/orgs/:organizationId/people/:personId/photo' },
+  mcp: false,
+  run: ({ env, actor }, input) => audience.personPhoto(env, actor, input.organizationId, input.personId),
+})
+
+export const audienceSuggestContacts = defineOperation({
+  name: 'audience_suggest_contacts',
+  description: 'Contacts whose name or email contains q, for addressing mail: your own and shared contacts first, then auto-saved "Other contacts".',
+  input: z.object({ organizationId: id, q: z.string().trim().min(1).max(100) }),
+  http: { method: 'GET', path: '/audience/orgs/:organizationId/contacts/suggest' },
+  mcp: { readOnly: true },
+  run: ({ env, actor }, input) => audience.suggestContacts(env, actor, input.organizationId, input.q),
 })
 
 export const audienceDeletePeople = defineOperation({
@@ -183,6 +207,8 @@ export const apiKeysRoll = defineOperation({
 export const audienceOperations = [
   audienceOverview,
   audienceSchema,
+  audienceSuggestContacts,
+  audiencePersonPhoto,
   audienceListPeople,
   audienceExportPeople,
   audienceGetPerson,

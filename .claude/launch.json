@@ -32,6 +32,21 @@
       "port": 8785
     },
     {
+      "name": "web-alt",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/web",
+        "exec",
+        "vite",
+        "dev",
+        "--port",
+        "8786",
+        "--strictPort"
+      ],
+      "port": 8786
+    },
+    {
       "name": "web-preview",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [
@@ -74,6 +89,42 @@
         "--strictPort"
       ],
       "port": 8791
+    },
+    {
+      "name": "api-migration",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8793",
+        "--inspector-port",
+        "9232",
+        "--var",
+        "APP_ORIGINS:http://localhost:8792",
+        "--var",
+        "APP_URL:http://localhost:8792"
+      ],
+      "port": 8793
+    },
+    {
+      "name": "app-migration",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8793/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8792",
+        "--strictPort"
+      ],
+      "port": 8792
     }
   ]
 }

@@ -33,7 +33,15 @@
     // records table. Apply links are signed with DOMAIN_CONNECT_PRIVATE_KEY, whose public key is published as TXT
     // at <DOMAIN_CONNECT_KEY_HOST>.xstate.io (the template's syncPubKeyDomain).
     "DOMAIN_CONNECT_ENABLED": "false",
-    "DOMAIN_CONNECT_KEY_HOST": "_dck1"
+    "DOMAIN_CONNECT_KEY_HOST": "_dck1",
+    // Where links in xstate's own emails point (invites: <APP_URL>/invite/#token). Local dev sets it in .dev.vars.
+    "APP_URL": "https://go.xstate.com",
+    // xstate's own mail (invites) is sent from this mailbox, which has to exist in xstate's organization. Empty:
+    // nothing is sent, and outside production the API hands back the invite link instead (mailserver/system-mail.ts).
+    "SYSTEM_MAIL_FROM": "no-reply@xstate.io",
+    // Google Workspace imports (migration/): "live" uses GOOGLE_MIGRATION_KEY (the service account's JSON key, a
+    // secret; not in "required" so deploys work before it exists), "fake" a made-up Workspace for local dev.
+    "GOOGLE_MODE": "live"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -51,11 +59,15 @@
   "queues": {
     "producers": [
       { "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" },
-      { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" }
+      { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" },
+      { "binding": "MIGRATION", "queue": "xstate-migration" }
     ],
     "consumers": [
       { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
-      { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10 }
+      { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10 },
+      // Imports from Google Workspace (migration/jobs.ts). Few at a time, so a big import can't crowd out mail
+      // sync or swamp Stalwart. Create once: wrangler queues create xstate-migration
+      { "queue": "xstate-migration", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 5, "max_concurrency": 5 }
     ]
   },
   // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.
@@ -78,8 +90,17 @@
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
-  "durable_objects": { "bindings": [{ "name": "AUDIENCE", "class_name": "AudienceStore" }] },
-  "migrations": [{ "tag": "v1-audience", "new_sqlite_classes": ["AudienceStore"] }],
+  // Google Workspace imports: one MigrationStore per migration, the map of what was copied (migration/store.ts).
+  "durable_objects": {
+    "bindings": [
+      { "name": "AUDIENCE", "class_name": "AudienceStore" },
+      { "name": "MIGRATION_STORE", "class_name": "MigrationStore" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-audience", "new_sqlite_classes": ["AudienceStore"] },
+    { "tag": "v2-migration-store", "new_sqlite_classes": ["MigrationStore"] }
+  ],
   // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.

@@ -1,6 +1,12 @@
 // One Durable Object per organization (AUDIENCE.idFromName(organizationId)) holding that organization's audience in
 // its own SQLite: people, their events, saved segments, and the attribute and event names seen so far.
 //
+// People are users and leads from the organization's websites, and contacts: address-book entries (imported from
+// Google, or added by hand). A contact has no website (domain '') and belongs to one member (owner_member_id), or to
+// the whole organization when that's NULL. Each read takes a viewer, and contacts of other members are left out.
+// Google's "Other contacts" (auto-saved addresses) are contacts with attributes.other = true, kept out of the list
+// and used for compose suggestions.
+//
 // Why a Durable Object and not D1: tracking writes on every page view of every customer's website. Kept apart per
 // organization, one busy site can't slow sign-in or mail for everyone else, and no single database has to hold all
 // of it. Access checks happen in the Worker (audience/service.ts); this class trusts its callers.
@@ -25,7 +31,7 @@ import {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS people (
   id             TEXT PRIMARY KEY,
-  kind           TEXT NOT NULL,                 -- 'user' (identified with a user id) or 'lead'
+  kind           TEXT NOT NULL,                 -- 'user' (identified with a user id), 'lead' or 'contact'
   domain         TEXT NOT NULL,                 -- the website's hostname, without www.
   external_id    TEXT,                          -- the customer's own user id
   anonymous_id   TEXT,                          -- first visitor id seen
@@ -37,10 +43,10 @@ CREATE TABLE IF NOT EXISTS people (
   first_seen_at  TEXT NOT NULL,
   last_seen_at   TEXT NOT NULL,
   created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  owner_member_id TEXT                          -- contacts: the member whose contact it is; NULL = shared
 );
 CREATE UNIQUE INDEX IF NOT EXISTS people_external ON people (domain, external_id) WHERE external_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS people_email ON people (domain, email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS people_seen ON people (last_seen_at DESC, id);
 CREATE INDEX IF NOT EXISTS people_domain ON people (domain, last_seen_at DESC);
 
@@ -79,6 +85,27 @@ CREATE TABLE IF NOT EXISTS segments (
 );
 `
 
+/**
+ * Changes to stores made before them, applied once each (the version is kept in storage). New stores get the same
+ * result: SCHEMA, then every step.
+ */
+const UPGRADES: ((sql: SqlStorage) => void)[] = [
+  // 1: contacts. Website people stay unique per (domain, email); contacts are unique per (owner, email) instead.
+  (sql) => {
+    const cols = sql.exec<{ name: string }>('PRAGMA table_info(people)').toArray().map((c) => c.name)
+    if (!cols.includes('owner_member_id')) sql.exec('ALTER TABLE people ADD COLUMN owner_member_id TEXT')
+    sql.exec('DROP INDEX IF EXISTS people_email')
+    sql.exec("CREATE UNIQUE INDEX people_email ON people (domain, email) WHERE email IS NOT NULL AND kind <> 'contact'")
+    sql.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS people_contact_email ON people (coalesce(owner_member_id, ''), email) WHERE kind = 'contact' AND email IS NOT NULL",
+    )
+    sql.exec("CREATE INDEX IF NOT EXISTS people_contact_owner ON people (owner_member_id) WHERE kind = 'contact'")
+  },
+]
+
+/** Who is looking: their member id, and whether they may change website people, segments and shared contacts. */
+export type Viewer = { memberId: string; manage: boolean }
+
 /** Segments every organization starts with. They're ordinary segments: rename or delete them freely. */
 const STARTER_SEGMENTS: { name: string; icon: SegmentIcon; filter: Filter }[] = [
   { name: 'Leads', icon: 'target', filter: { match: 'all', conditions: [{ kind: 'type', op: 'is', value: 'lead' }] } },
@@ -91,7 +118,7 @@ const DAY = 86_400_000
 
 type PersonRow = {
   id: string
-  kind: 'user' | 'lead'
+  kind: 'user' | 'lead' | 'contact'
   domain: string
   external_id: string | null
   anonymous_id: string | null
@@ -104,11 +131,12 @@ type PersonRow = {
   last_seen_at: string
   created_at: string
   updated_at: string
+  owner_member_id: string | null
 }
 type SegmentRow = { id: string; name: string; icon: SegmentIcon; filter: string; created_at: string; updated_at: string }
 type Binding = string | number | null
 
-export type ListQuery = { segmentId?: string; filter?: Filter; domain?: string; q?: string; cursor?: string; limit: number }
+export type ListQuery = { segmentId?: string; filter?: Filter; domain?: string; q?: string; cursor?: string; limit: number; viewer: Viewer }
 
 const toPerson = (r: PersonRow): Person => ({
   id: r.id,
@@ -125,6 +153,7 @@ const toPerson = (r: PersonRow): Person => ({
   lastSeenAt: r.last_seen_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  ...(r.kind === 'contact' && { owner: r.owner_member_id }),
 })
 
 const toSegment = (r: SegmentRow): Segment => ({
@@ -147,6 +176,11 @@ export class AudienceStore extends DurableObject<Env> {
     this.sql = ctx.storage.sql
     ctx.blockConcurrencyWhile(async () => {
       this.sql.exec(SCHEMA)
+      const version = (await ctx.storage.get<number>('schema_version')) ?? 0
+      for (let v = version; v < UPGRADES.length; v++) {
+        ctx.storage.transactionSync(() => UPGRADES[v]!(this.sql))
+        await ctx.storage.put('schema_version', v + 1)
+      }
       if (this.one<{ n: number }>('SELECT count(*) AS n FROM segments')!.n === 0 && !(await ctx.storage.get('seeded'))) {
         const now = new Date().toISOString()
         STARTER_SEGMENTS.forEach((s, i) =>
@@ -250,12 +284,21 @@ export class AudienceStore extends DurableObject<Env> {
     )
   }
 
-  private create(fields: { kind: 'user' | 'lead'; domain: string; externalId?: string | null; anonymousId?: string | null; email?: string | null; source: string; at: string }): PersonRow {
+  private create(fields: {
+    kind: 'user' | 'lead' | 'contact'
+    domain: string
+    externalId?: string | null
+    anonymousId?: string | null
+    email?: string | null
+    source: string
+    at: string
+    ownerMemberId?: string | null
+  }): PersonRow {
     const id = newId('per')
     const now = new Date().toISOString()
     this.sql.exec(
-      `INSERT INTO people (id, kind, domain, external_id, anonymous_id, email, source, first_seen_at, last_seen_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO people (id, kind, domain, external_id, anonymous_id, email, source, first_seen_at, last_seen_at, created_at, updated_at, owner_member_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       fields.kind,
       fields.domain,
@@ -267,6 +310,7 @@ export class AudienceStore extends DurableObject<Env> {
       fields.at,
       now,
       now,
+      fields.ownerMemberId ?? null,
     )
     this.alias(fields.domain, fields.anonymousId ?? null, id)
     return this.one<PersonRow>('SELECT * FROM people WHERE id = ?', id)!
@@ -393,11 +437,18 @@ export class AudienceStore extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------------------------
   // Dashboard
 
-  async overview() {
-    const total = this.one<{ n: number }>('SELECT count(*) AS n FROM people')!.n
-    const domains = this.all<{ domain: string; count: number }>('SELECT domain, count(*) AS count FROM people GROUP BY domain ORDER BY count DESC')
-    const segments = this.listSegments().map((s) => ({ ...s, count: this.count(s.filter) }))
-    return { total, domains, segments }
+  async overview(viewer: Viewer) {
+    const all = this.where({ match: 'all', conditions: [] }, viewer)
+    const total = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${all.sql}`, ...all.args)!.n
+    const domains = this.all<{ domain: string; count: number }>(
+      "SELECT domain, count(*) AS count FROM people WHERE kind <> 'contact' GROUP BY domain ORDER BY count DESC",
+    )
+    const contacts = this.one<{ n: number }>(
+      `SELECT count(*) AS n FROM people p WHERE p.kind = 'contact' AND ${all.sql}`,
+      ...all.args,
+    )!.n
+    const segments = this.listSegments().map((s) => ({ ...s, count: this.count(s.filter, viewer) }))
+    return { total, domains, contacts, segments }
   }
 
   private listSegments(): Segment[] {
@@ -414,8 +465,8 @@ export class AudienceStore extends DurableObject<Env> {
   }
 
   /** How many people a filter matches (the builder's live count). */
-  count(filter: Filter, domain?: string): number {
-    const where = this.where(filter, domain)
+  count(filter: Filter, viewer: Viewer, domain?: string): number {
+    const where = this.where(filter, viewer, domain)
     return this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${where.sql}`, ...where.args)!.n
   }
 
@@ -423,7 +474,7 @@ export class AudienceStore extends DurableObject<Env> {
     const segment = query.segmentId ? this.one<SegmentRow>('SELECT * FROM segments WHERE id = ?', query.segmentId) : null
     if (query.segmentId && !segment) return null
     const filter = segment ? toSegment(segment).filter : (query.filter ?? { match: 'all', conditions: [] })
-    const base = this.where(filter, query.domain, query.q)
+    const base = this.where(filter, query.viewer, query.domain, query.q)
     const total = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${base.sql}`, ...base.args)!.n
     let sql = base.sql
     const args = [...base.args]
@@ -439,8 +490,22 @@ export class AudienceStore extends DurableObject<Env> {
     return { people, total, nextCursor: more && last ? `${last.lastSeenAt}|${last.id}` : null }
   }
 
-  async getPerson(id: string) {
+  /** A person the viewer may see, or null. */
+  private visible(id: string, viewer: Viewer): PersonRow | null {
     const row = this.one<PersonRow>('SELECT * FROM people WHERE id = ?', id)
+    if (!row) return null
+    if (row.kind === 'contact' && row.owner_member_id && row.owner_member_id !== viewer.memberId) return null
+    return row
+  }
+
+  /** Website people and shared contacts need the manage permission; a member's own contacts are theirs to change. */
+  private canChange(row: PersonRow, viewer: Viewer): boolean {
+    if (row.kind === 'contact' && row.owner_member_id) return row.owner_member_id === viewer.memberId
+    return viewer.manage
+  }
+
+  async getPerson(id: string, viewer: Viewer) {
+    const row = this.visible(id, viewer)
     if (!row) return null
     const events = this.all<{ id: number; name: string; properties: string; url: string | null; occurred_at: string }>(
       'SELECT * FROM events WHERE person_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 100',
@@ -448,39 +513,56 @@ export class AudienceStore extends DurableObject<Env> {
     ).map((e): AudienceEvent => ({ id: e.id, name: e.name, properties: JSON.parse(e.properties) as Record<string, unknown>, url: e.url, occurredAt: e.occurred_at }))
     const segments = this.listSegments()
       .filter((s) => {
-        const where = this.where(s.filter)
+        const where = this.where(s.filter, viewer)
         return !!this.one(`SELECT 1 FROM people p WHERE p.id = ? AND (${where.sql})`, id, ...where.args)
       })
       .map((s) => ({ id: s.id, name: s.name }))
     return { person: toPerson(row), events, segments }
   }
 
-  async addPerson(input: { domain: string; source: string } & PersonFields): Promise<{ person?: Person; conflict?: string }> {
-    if (input.email && this.byEmail(input.domain, input.email)) return { conflict: 'Someone with that email already exists on this domain' }
+  async addPerson(
+    input: { kind: 'lead' | 'contact'; domain: string; source: string; ownerMemberId?: string | null } & PersonFields,
+  ): Promise<{ person?: Person; conflict?: string }> {
+    const contact = input.kind === 'contact'
+    if (input.email && !contact && this.byEmail(input.domain, input.email)) return { conflict: 'Someone with that email already exists on this domain' }
+    if (input.email && contact && this.contactByEmail(input.ownerMemberId ?? null, input.email)) {
+      return { conflict: input.ownerMemberId ? 'You already have a contact with that email' : 'There’s already a shared contact with that email' }
+    }
     let person!: PersonRow
     this.ctx.storage.transactionSync(() => {
-      const row = this.create({ kind: 'lead', domain: input.domain, email: input.email ?? null, source: input.source, at: new Date().toISOString() })
+      const row = this.create({
+        kind: input.kind,
+        domain: contact ? '' : input.domain,
+        email: input.email ?? null,
+        source: input.source,
+        at: new Date().toISOString(),
+        ownerMemberId: contact ? (input.ownerMemberId ?? null) : null,
+      })
       this.update(row, { name: input.name, phone: input.phone, attributes: input.attributes })
       person = this.one<PersonRow>('SELECT * FROM people WHERE id = ?', row.id)!
     })
     return { person: toPerson(person) }
   }
 
-  async updatePerson(id: string, fields: PersonFields): Promise<{ person?: Person; conflict?: string } | null> {
-    const row = this.one<PersonRow>('SELECT * FROM people WHERE id = ?', id)
+  async updatePerson(id: string, fields: PersonFields, viewer: Viewer): Promise<{ person?: Person; conflict?: string; forbidden?: true } | null> {
+    const row = this.visible(id, viewer)
     if (!row) return null
-    if (fields.email && fields.email !== row.email && this.byEmail(row.domain, fields.email)) {
-      return { conflict: 'Someone with that email already exists on this domain' }
+    if (!this.canChange(row, viewer)) return { forbidden: true }
+    if (fields.email && fields.email !== row.email) {
+      const taken = row.kind === 'contact' ? this.contactByEmail(row.owner_member_id, fields.email) : this.byEmail(row.domain, fields.email)
+      if (taken) return { conflict: row.kind === 'contact' ? 'There’s already a contact with that email' : 'Someone with that email already exists on this domain' }
     }
     this.ctx.storage.transactionSync(() => this.update(row, fields))
     return { person: toPerson(this.one<PersonRow>('SELECT * FROM people WHERE id = ?', id)!) }
   }
 
-  async deletePeople(ids: string[]): Promise<number> {
+  /** Deletes the people the viewer may change; returns how many. */
+  async deletePeople(ids: string[], viewer: Viewer): Promise<number> {
     let n = 0
     this.ctx.storage.transactionSync(() => {
       for (const id of ids) {
-        if (!this.one('SELECT 1 FROM people WHERE id = ?', id)) continue
+        const row = this.visible(id, viewer)
+        if (!row || !this.canChange(row, viewer)) continue
         this.removePerson(id)
         n++
       }
@@ -516,6 +598,63 @@ export class AudienceStore extends DurableObject<Env> {
   }
 
   /** Everyone a list view shows, for CSV export (capped). */
+  // -------------------------------------------------------------------------------------------------------------
+  // Contacts
+
+  private contactByEmail(ownerMemberId: string | null, email: string) {
+    return this.one<PersonRow>(
+      "SELECT * FROM people WHERE kind = 'contact' AND coalesce(owner_member_id, '') = ? AND email = ?",
+      ownerMemberId ?? '',
+      email,
+    )
+  }
+
+  /**
+   * Adds contacts for one member (an import). A contact whose email the member already has is merged into it:
+   * empty fields are filled and attributes added, nothing the member typed is overwritten. Returns one id per input.
+   */
+  async importContacts(
+    ownerMemberId: string,
+    contacts: { name: string | null; email: string | null; phone: string | null; attributes: Attributes }[],
+    source: string,
+  ): Promise<string[]> {
+    const ids: string[] = []
+    const at = new Date().toISOString()
+    this.ctx.storage.transactionSync(() => {
+      for (const c of contacts) {
+        const email = c.email?.trim().toLowerCase() || null
+        const existing = email ? this.contactByEmail(ownerMemberId, email) : null
+        const row = existing ?? this.create({ kind: 'contact', domain: '', email, source, at, ownerMemberId })
+        const attrs = JSON.parse(row.attributes) as Attributes
+        const add = Object.fromEntries(Object.entries(c.attributes).filter(([k]) => !(k in attrs)))
+        // A real contact found again among "Other contacts" stays a real contact.
+        if (existing && !attrs.other) delete add.other
+        if (existing && attrs.other && !c.attributes.other) add.other = false
+        this.update(row, { name: row.name ?? c.name, phone: row.phone ?? c.phone, attributes: add })
+        ids.push(row.id)
+      }
+    })
+    return ids
+  }
+
+  /** Contacts the viewer can see whose name or email contains `q`, for compose: real contacts first. */
+  async suggest(viewer: Viewer, q: string, limit: number): Promise<{ name: string | null; email: string }[]> {
+    const term = q.trim().toLowerCase()
+    if (!term) return []
+    return this.all<{ name: string | null; email: string }>(
+      `SELECT name, email FROM people
+       WHERE kind = 'contact' AND email IS NOT NULL AND (owner_member_id IS NULL OR owner_member_id = ?)
+         AND (instr(lower(coalesce(name, '')), ?) > 0 OR instr(email, ?) > 0)
+       ORDER BY coalesce(json_extract(attributes, '$.other'), 0), instr(email, ?) <> 1, name IS NULL, name COLLATE NOCASE
+       LIMIT ?`,
+      viewer.memberId,
+      term,
+      term,
+      term,
+      limit,
+    )
+  }
+
   async exportPeople(query: Omit<ListQuery, 'cursor' | 'limit'>): Promise<Person[] | null> {
     const result = await this.listPeople({ ...query, limit: 50_000 })
     return result?.people ?? null
@@ -524,9 +663,12 @@ export class AudienceStore extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------------------------
   // Filters → SQL. Every value is a bound parameter; attribute keys go into a JSON path that is itself bound.
 
-  private where(filter: Filter, domain?: string, q?: string): { sql: string; args: Binding[] } {
-    const parts: string[] = []
-    const args: Binding[] = []
+  private where(filter: Filter, viewer: Viewer, domain?: string, q?: string): { sql: string; args: Binding[] } {
+    // Other members' contacts are never shown, and auto-saved "Other contacts" stay out of lists and counts.
+    const parts: string[] = [
+      "(p.kind <> 'contact' OR ((p.owner_member_id IS NULL OR p.owner_member_id = ?) AND coalesce(json_extract(p.attributes, '$.other'), 0) = 0))",
+    ]
+    const args: Binding[] = [viewer.memberId]
     if (filter.conditions.length) {
       const compiled = filter.conditions.map((c) => this.compile(c))
       parts.push(`(${compiled.map((c) => `(${c.sql})`).join(filter.match === 'any' ? ' OR ' : ' AND ')})`)
@@ -543,7 +685,7 @@ export class AudienceStore extends DurableObject<Env> {
       )
       args.push(term, term, term, term, term)
     }
-    return { sql: parts.length ? parts.join(' AND ') : '1', args }
+    return { sql: parts.join(' AND '), args }
   }
 
   private compile(c: Condition): { sql: string; args: Binding[] } {

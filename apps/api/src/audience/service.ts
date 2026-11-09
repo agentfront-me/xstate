@@ -1,22 +1,27 @@
 // What the dashboard (and agents over MCP) can do with an organization's audience and API keys. Checks access here,
 // then calls the organization's AudienceStore.
 //
-// Any member can see the audience. Changing people and segments needs the "audience.manage" permission (owners and
-// admins have it). API keys are for owners and admins only: the secret key acts for the whole organization.
+// Any member can see the audience, except other members' contacts. Changing website people, segments and shared
+// contacts needs the "audience.manage" permission (owners and admins have it); a member's own contacts are theirs to
+// change. API keys are for owners and admins only: the secret key acts for the whole organization.
 
 import { messagesWith } from '../mailserver'
 import { isAdmin, loadMember, requireOrgPermission } from '../mailserver/access'
 import type { Actor } from '../auth/types'
 import { ApiError } from '../errors'
 import * as keys from './keys'
-import type { ListQuery } from './store'
+import { organizationBucket } from '../storage/buckets'
+import { getObject } from '../storage/r2'
+import type { ListQuery, Viewer } from './store'
 import type { Filter, Person, PersonDetail, PersonFields, SegmentIcon } from './types'
 
 const store = (env: Env, organizationId: string) => env.AUDIENCE.get(env.AUDIENCE.idFromName(organizationId))
 
-async function reader(env: Env, actor: Actor, organizationId: string) {
-  await loadMember(env, organizationId, actor.userId)
-  return store(env, organizationId)
+/** The organization's store and who's looking, for any member. */
+async function reader(env: Env, actor: Actor, organizationId: string): Promise<{ s: ReturnType<typeof store>; viewer: Viewer }> {
+  const member = await loadMember(env, organizationId, actor.userId)
+  const manage = isAdmin(member) || member.permissions.org.includes('audience.manage')
+  return { s: store(env, organizationId), viewer: { memberId: member.id, manage } }
 }
 
 async function manager(env: Env, actor: Actor, organizationId: string) {
@@ -35,15 +40,17 @@ const notFound = (what: string) => new ApiError('not_found', `No such ${what}`, 
 // People
 
 export async function overview(env: Env, actor: Actor, organizationId: string) {
-  return (await reader(env, actor, organizationId)).overview()
+  const { s, viewer } = await reader(env, actor, organizationId)
+  return s.overview(viewer)
 }
 
 export async function schema(env: Env, actor: Actor, organizationId: string) {
-  return (await reader(env, actor, organizationId)).schema()
+  return (await reader(env, actor, organizationId)).s.schema()
 }
 
-export async function listPeople(env: Env, actor: Actor, organizationId: string, query: ListQuery) {
-  const result = await (await reader(env, actor, organizationId)).listPeople(query)
+export async function listPeople(env: Env, actor: Actor, organizationId: string, query: Omit<ListQuery, 'viewer'>) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const result = await s.listPeople({ ...query, viewer })
   if (!result) throw notFound('segment')
   return result
 }
@@ -52,7 +59,8 @@ export async function listPeople(env: Env, actor: Actor, organizationId: string,
  * viewer can read. If the mail server can't be reached the profile still loads, with `emails: null`. */
 export async function getPerson(env: Env, actor: Actor, organizationId: string, personId: string) {
   // Event properties are free-form JSON, which the RPC stub's types can't express; the shape is store.getPerson's.
-  const result = (await (await reader(env, actor, organizationId)).getPerson(personId)) as PersonDetail | null
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const result = (await s.getPerson(personId, viewer)) as PersonDetail | null
   if (!result) throw notFound('person')
   const email = result.person.email
   const emails = email
@@ -64,26 +72,69 @@ export async function getPerson(env: Env, actor: Actor, organizationId: string, 
   return { ...result, emails }
 }
 
-export async function addPerson(env: Env, actor: Actor, organizationId: string, input: { domain: string } & PersonFields) {
-  const domain = input.domain.toLowerCase().replace(/^www\./, '')
-  const result = await (await manager(env, actor, organizationId)).addPerson({ ...input, domain, source: 'Added manually' })
+/**
+ * Adds a lead to a website (needs audience.manage), or a contact: your own by default, or shared with the whole
+ * organization (`shared`, needs audience.manage). Contacts have no website domain.
+ */
+export async function addPerson(
+  env: Env,
+  actor: Actor,
+  organizationId: string,
+  input: { kind?: 'lead' | 'contact'; domain?: string; shared?: boolean } & PersonFields,
+) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const kind = input.kind ?? 'lead'
+  if ((kind === 'lead' || input.shared) && !viewer.manage) throw new ApiError('forbidden', 'Missing permission audience.manage', 403)
+  const domain = (input.domain ?? '').toLowerCase().replace(/^www\./, '')
+  if (kind === 'lead' && !domain) throw new ApiError('invalid_input', 'Enter the website domain this person belongs to')
+  const { kind: _k, shared: _s, ...fields } = input
+  const result = await s.addPerson({ ...fields, kind, domain, source: 'Added manually', ownerMemberId: kind === 'contact' && !input.shared ? viewer.memberId : null })
   if (result.conflict) throw new ApiError('conflict', result.conflict, 409)
   return result.person!
 }
 
 export async function updatePerson(env: Env, actor: Actor, organizationId: string, personId: string, fields: PersonFields) {
-  const result = await (await manager(env, actor, organizationId)).updatePerson(personId, fields)
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const result = await s.updatePerson(personId, fields, viewer)
   if (!result) throw notFound('person')
+  if (result.forbidden) throw new ApiError('forbidden', 'Missing permission audience.manage', 403)
   if (result.conflict) throw new ApiError('conflict', result.conflict, 409)
   return result.person!
 }
 
+/** Deletes the people the actor may change (others in the list are left alone). */
 export async function deletePeople(env: Env, actor: Actor, organizationId: string, ids: string[]) {
-  return { deleted: await (await manager(env, actor, organizationId)).deletePeople(ids) }
+  const { s, viewer } = await reader(env, actor, organizationId)
+  return { deleted: await s.deletePeople(ids, viewer) }
 }
 
-export async function exportCsv(env: Env, actor: Actor, organizationId: string, query: Omit<ListQuery, 'cursor' | 'limit'>) {
-  const people = await (await reader(env, actor, organizationId)).exportPeople(query)
+/** A contact's photo (imported from Google), served through the API so only people who can see the contact get it. */
+export async function personPhoto(env: Env, actor: Actor, organizationId: string, personId: string): Promise<Response> {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const result = (await s.getPerson(personId, viewer)) as PersonDetail | null
+  const key = result?.person.attributes.photoKey
+  if (typeof key !== 'string') throw notFound('photo')
+  const object = await getObject(env, await organizationBucket(env, organizationId), key)
+  if (!object?.body) throw notFound('photo')
+  return new Response(object.body, {
+    headers: { 'Content-Type': object.headers.get('Content-Type') ?? 'image/jpeg', 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' },
+  })
+}
+
+/** Contacts for the compose window's To, Cc and Bcc: yours and shared ones, real contacts before "Other contacts". */
+export async function suggestContacts(env: Env, actor: Actor, organizationId: string, q: string) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  return { contacts: await s.suggest(viewer, q, 8) }
+}
+
+/** For imports (no access check: the caller has done it). Adds or merges contacts owned by one member. */
+export function importContacts(env: Env, organizationId: string, ownerMemberId: string, contacts: Parameters<ReturnType<typeof store>['importContacts']>[1]) {
+  return store(env, organizationId).importContacts(ownerMemberId, contacts, 'Google')
+}
+
+export async function exportCsv(env: Env, actor: Actor, organizationId: string, query: Omit<ListQuery, 'cursor' | 'limit' | 'viewer'>) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const people = await s.exportPeople({ ...query, viewer })
   if (!people) throw notFound('segment')
   return new Response(toCsv(people), {
     headers: {
@@ -113,7 +164,8 @@ function toCsv(people: Person[]): string {
 // Segments
 
 export async function countFilter(env: Env, actor: Actor, organizationId: string, filter: Filter, domain?: string) {
-  return { count: await (await reader(env, actor, organizationId)).count(filter, domain) }
+  const { s, viewer } = await reader(env, actor, organizationId)
+  return { count: await s.count(filter, viewer, domain) }
 }
 
 export async function saveSegment(env: Env, actor: Actor, organizationId: string, input: { id?: string; name: string; icon?: SegmentIcon; filter: Filter }) {

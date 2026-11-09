@@ -34,6 +34,8 @@ function Onboarding() {
     const me = await api<{ user: User; organizations: Org[] }>('GET', '/auth/me')
     const org = me.organizations.find((o) => o.role === 'owner') ?? me.organizations[0]
     if (!org) throw new Error('Your account has no organization.')
+    // Someone invited to another organization: setting up domains is its owner's job, so straight to the dashboard.
+    if (org.role !== 'owner') return location.assign('/app/')
     const [{ domains }, { mailboxes }] = await Promise.all([
       api<{ domains: Domain[] }>('GET', `/email/orgs/${org.id}/domains`),
       api<{ mailboxes: Mailbox[] }>('GET', `/email/orgs/${org.id}/mailboxes`),

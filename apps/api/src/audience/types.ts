@@ -20,7 +20,7 @@ const eventName = z.string().trim().min(1).max(100)
 
 export const condition = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('date'), field: z.enum(['last_seen', 'first_seen', 'created']), op: z.enum(['within', 'not_within']), days }),
-  z.object({ kind: z.literal('type'), op: z.enum(['is', 'is_not']), value: z.enum(['user', 'lead']) }),
+  z.object({ kind: z.literal('type'), op: z.enum(['is', 'is_not']), value: z.enum(['user', 'lead', 'contact']) }),
   z.object({
     kind: z.literal('text'),
     field: z.enum(['name', 'email', 'phone', 'source', 'domain']),
@@ -59,7 +59,8 @@ export type Attributes = Record<string, string | number | boolean>
 
 export type Person = {
   id: string
-  kind: 'user' | 'lead'
+  /** 'contact': an address-book entry, not a website visitor (domain is ''). */
+  kind: 'user' | 'lead' | 'contact'
   domain: string
   externalId: string | null
   /** The first anonymous visitor id seen for this person ("vis_…" in the dashboard). */
@@ -73,6 +74,8 @@ export type Person = {
   lastSeenAt: string
   createdAt: string
   updatedAt: string
+  /** Contacts only: the member whose contact it is, or null when it's shared with the whole organization. */
+  owner?: string | null
 }
 
 export type AudienceEvent = { id: number; name: string; properties: Record<string, unknown>; url: string | null; occurredAt: string }

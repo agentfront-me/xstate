@@ -3,6 +3,9 @@ import { handleCollect } from './audience/collect'
 import { snippet } from './audience/snippet'
 import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
 import { consume as consumeSearch, hourly as searchHourly, type SearchJob } from './search/jobs'
+import { finalHourly } from './migration/final'
+import { migrationHourly } from './migration/watchdog'
+import { consumeMigration, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
@@ -59,15 +62,20 @@ app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpo
 
 // One per organization: its audience (people, events, segments). See audience/store.ts.
 export { AudienceStore } from './audience/store'
+// One per Google Workspace import: what was copied, and what was skipped. See migration/store.ts.
+export { MigrationStore } from './migration/store'
 
 export default {
   fetch: app.fetch,
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
   // SEARCH_INDEX jobs: index a file for Storage search.
+  // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
-      : consume(batch as MessageBatch<MailSyncJob>, env),
+      : batch.queue === 'xstate-migration'
+        ? consumeMigration(batch as MessageBatch<MigrationJob>, env)
+        : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>
@@ -75,9 +83,13 @@ export default {
       Promise.all([
         hourly(env),
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
+        // Google Workspace imports: the automatic second final pass, 24 hours after the first.
+        finalHourly(env).catch((err) => console.error('migration final-hourly failed', err)),
+        // Lost job chains restarted, the "copy is ready" email, Google access checks after an import, store cleanup.
+        migrationHourly(env),
         searchHourly(env).then((r) => {
           if (r.queued || r.retried || r.swept || r.sweepFailed) console.log('search-hourly', JSON.stringify(r))
         }),
       ]),
     ),
-} satisfies ExportedHandler<Env, MailSyncJob | SearchJob>
+} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob>

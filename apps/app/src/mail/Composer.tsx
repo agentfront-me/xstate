@@ -3,10 +3,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { useAccount } from '../lib/account'
 import { errorMessage, isEmail } from '../lib/core'
 import type { MailboxFolders, Message } from '../lib/types'
 import { parseRecipients } from './format'
 import { FileChips, readyAttachments, useUploads } from './Files'
+import { RecipientInput } from './RecipientInput'
 import type { MailSource } from './source'
 
 type Props = {
@@ -29,6 +31,9 @@ function forwardBody(m: Message) {
 export function Composer({ source, mailboxes, forward, onClose, onSent }: Props) {
   const choices = forward ? mailboxes.filter((mb) => mb.mailboxId === forward.mailboxId) : mailboxes
   const [from, setFrom] = useState(choices[0]?.mailboxId ?? '')
+  const account = useAccount()
+  // Contact suggestions come from the API, so none in demo mode.
+  const orgId = account.mode === 'live' ? account.org.id : null
   const [to, setTo] = useState('')
   const [cc, setCc] = useState('')
   const [bcc, setBcc] = useState('')
@@ -132,7 +137,7 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
         </div>
         <div className="modal-row">
           <label htmlFor="c-to">To</label>
-          <input ref={toInput} id="c-to" placeholder="name@example.com, …" autoComplete="off" value={to} onChange={(e) => setTo(e.target.value)} />
+          <RecipientInput inputRef={toInput} id="c-to" placeholder="name@example.com, …" orgId={orgId} value={to} onChange={setTo} />
           {!showCc && (
             <button type="button" className="btn-quiet small" onClick={() => setShowCc(true)}>
               Cc / Bcc
@@ -143,11 +148,11 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
           <>
             <div className="modal-row">
               <label htmlFor="c-cc">Cc</label>
-              <input ref={ccInput} id="c-cc" autoComplete="off" value={cc} onChange={(e) => setCc(e.target.value)} />
+              <RecipientInput inputRef={ccInput} id="c-cc" orgId={orgId} value={cc} onChange={setCc} />
             </div>
             <div className="modal-row">
               <label htmlFor="c-bcc">Bcc</label>
-              <input id="c-bcc" autoComplete="off" value={bcc} onChange={(e) => setBcc(e.target.value)} />
+              <RecipientInput id="c-bcc" orgId={orgId} value={bcc} onChange={setBcc} />
             </div>
           </>
         )}

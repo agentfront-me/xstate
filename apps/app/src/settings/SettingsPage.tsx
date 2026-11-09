@@ -1,7 +1,8 @@
-// Settings: Account, Members, Domains, Secrets, API keys, Billing, Integrations.
+// Settings: Account, Members, Domains, Migration, Secrets, API keys, Billing, Integrations.
 //
-// Account, Domains and API keys use the API when signed in. Members, Secrets, Billing and Integrations have no API yet:
-// they show sample data (./store), marked "Sample data" in the header when signed in, and changes stay in memory.
+// Account, Members, Domains and API keys use the API when signed in. Secrets, Billing and Integrations have no API
+// yet: they show sample data (./store), marked "Sample data" in the header when signed in, and changes stay in memory.
+// In demo mode (?demo) every section uses sample data.
 
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -23,18 +24,22 @@ import {
   type ThemeChoice,
 } from '../lib/core'
 import type { Member } from '../lib/sample'
+import { accessReminder, summary as migrationSummary, type AccessReminder } from '../migration/api'
+import type { Stage as MigrationStage } from '../migration/types'
 import type { Domain } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
 import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
+import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
+  id: 'account' | 'members' | 'domains' | 'migration' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
   label: string
   icon: IconName
   sample?: boolean
-  sub: (a: Account, d: SettingsData) => string
+  /** `m`: the organization's members from the API (signed in), undefined while loading or in demo mode. */
+  sub: (a: Account, d: SettingsData, m: OrgMember[] | undefined) => string
 }
 
 const SECTIONS: Section[] = [
@@ -43,7 +48,8 @@ const SECTIONS: Section[] = [
     id: 'members',
     label: 'Members',
     icon: 'users',
-    sub: (_a, d) => {
+    sub: (a, d, m) => {
+      if (a.mode === 'live') return m ? membersSub(m) : 'Members and invites'
       const invited = d.members.filter((m) => m.invited).length
       const n = 1 + d.members.length - invited
       return `${n} ${n === 1 ? 'member' : 'members'}${invited ? ` · ${invited} invited` : ''}`
@@ -59,6 +65,7 @@ const SECTIONS: Section[] = [
       return `${a.domains.filter((d) => d.status === 'verified').length} of ${n} verified`
     },
   },
+  { id: 'migration', label: 'Migration', icon: 'download', sub: (a) => migrationSub(a) },
   { id: 'secrets', label: 'Secrets', icon: 'key-round', sample: true, sub: (_a, d) => `${d.secrets.length} organization secrets` },
   { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
   { id: 'billing', label: 'Billing', icon: 'credit-card', sample: true, sub: (_a, d) => `${d.billing.plan} · renews ${d.billing.renewsShort}` },
@@ -76,6 +83,7 @@ export function SettingsPage({ section }: { section: string }) {
   const data = useSettingsData()
   const navigate = useNavigate()
   const s = SECTIONS.find((x) => x.id === section) ?? SECTIONS[0]!
+  const members = useMembers(account.org.id, account.mode === 'live').data
 
   return (
     <section className="settings">
@@ -96,7 +104,7 @@ export function SettingsPage({ section }: { section: string }) {
               </span>
               <span className="text">
                 <span className="name">{x.label}</span>
-                <span className="sub ellipsis">{x.sub(account, data)}</span>
+                <span className="sub ellipsis">{x.sub(account, data, members)}</span>
               </span>
             </button>
           ))}
@@ -112,13 +120,14 @@ export function SettingsPage({ section }: { section: string }) {
               </span>
             )}
           </div>
-          <div className="sub">{s.sub(account, data)}</div>
+          <div className="sub">{s.sub(account, data, members)}</div>
         </div>
         <div className="settings-scroll">
           <div className="settings-body">
             {s.id === 'account' && <AccountSection account={account} />}
-            {s.id === 'members' && <MembersSection account={account} data={data} />}
+            {s.id === 'members' && (account.mode === 'live' ? <LiveMembers account={account} /> : <MembersSection account={account} data={data} />)}
             {s.id === 'domains' && <DomainsSection account={account} />}
+            {s.id === 'migration' && <MigrationSection account={account} />}
             {s.id === 'secrets' && <SecretsSection data={data} />}
             {s.id === 'api-keys' && <ApiKeysSection account={account} />}
             {s.id === 'billing' && <BillingSection data={data} />}
@@ -127,6 +136,97 @@ export function SettingsPage({ section }: { section: string }) {
         </div>
       </div>
     </section>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Migration: the Google Workspace import runs on its own page (/migrate/); this shows where it stands.
+
+const MIGRATION_STAGES: Record<MigrationStage, string> = {
+  connect: 'Not started',
+  discover: 'Connected to Google',
+  plan: 'Planning',
+  review: 'Ready to start',
+  copying: 'Copying from Google',
+  switch: 'Ready to switch',
+  final: 'Final sync running',
+  finish: 'Finishing up',
+  done: 'Finished',
+}
+
+const migrationUrl = () => `/migrate/${isDemo() ? '?demo' : ''}`
+
+function migrationSub(account: Account): string {
+  const m = migrationSummary(account.org.id)
+  if (!m || m.stage === 'connect') return 'Import from Google Workspace'
+  return m.percent !== null ? `${MIGRATION_STAGES[m.stage]} · ${m.percent}%` : MIGRATION_STAGES[m.stage]
+}
+
+function MigrationSection({ account }: { account: Account }) {
+  const admin = account.org.role === 'owner' || account.org.role === 'admin'
+  const m = migrationSummary(account.org.id)
+  const started = !!m && m.stage !== 'connect'
+  // After an import ends, a reminder until xstate's access to Google Workspace is removed.
+  const [reminder, setReminder] = useState<AccessReminder>({ open: false })
+  useEffect(() => {
+    if (account.mode !== 'live' || !admin) return
+    accessReminder(account.org.id).then(setReminder, () => undefined)
+  }, [account.mode, account.org.id, admin])
+  return (
+    <div className="group">
+      <GroupHead
+        title="Import from Google Workspace"
+        sub="Move every user's mail, contacts and Drive files from Google Workspace to xstate. xstate only reads from Google; nothing there is changed or deleted."
+      />
+      <div className="card">
+        <div className="card-row">
+          <span className="lead">
+            <Icon name="download" size={15} />
+          </span>
+          <div className="text">
+            <span className="name">{started ? MIGRATION_STAGES[m.stage] : 'Google Workspace'}</span>
+            <span className="sub">
+              {!started
+                ? 'Mail with labels and attachments, contacts, My Drive and Shared drives. Calendar is coming soon.'
+                : m.stage === 'done'
+                  ? 'Everything was moved. The report stays available on the migration page.'
+                  : m.percent !== null
+                    ? `${m.percent}% copied. You can leave and come back; copying keeps running.`
+                    : 'Pick up where you left off.'}
+            </span>
+          </div>
+          <div className="right">
+            {admin || started ? (
+              <a className="btn btn-primary" style={{ height: 34 }} href={migrationUrl()}>
+                {!started ? 'Start import' : m.stage === 'done' ? 'View report' : 'Open'}
+              </a>
+            ) : (
+              <span>Only owners and admins can start an import.</span>
+            )}
+          </div>
+        </div>
+        {reminder.open && (
+          <div className="card-row is-warn">
+            <span className="lead">
+              <Icon name="circle-alert" size={15} />
+            </span>
+            <div className="text">
+              <span className="name">xstate can still read {reminder.domain ?? 'your Google Workspace'}</span>
+              <span className="sub">
+                {reminder.ended === 'finished' ? 'The import is finished. ' : 'The import was cancelled. Unless you’ll import again, '}
+                In the Google Admin console, go to Security → API controls → Domain-wide delegation and delete xstate’s client ID. This note
+                goes away once Google stops accepting it.
+              </span>
+            </div>
+            <div className="right">
+              <a className="btn" style={{ height: 34 }} href="https://admin.google.com/ac/owl/domainwidedelegation" target="_blank" rel="noreferrer">
+                Open Google Admin
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -297,6 +397,200 @@ function DesktopSettingsCard() {
 // ---------------------------------------------------------------------------------------------------------------
 // Members
 
+const canManageMembers = (account: Account) => account.org.role === 'owner' || account.org.role === 'admin'
+
+function sentLabel(m: OrgMember): string {
+  if (!m.invite) return ''
+  if (Date.parse(m.invite.expiresAt) < Date.now()) return 'Invite expired'
+  if (!m.invite.sentAt) return 'Invite not sent yet'
+  const day = new Date(m.invite.sentAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return `Invited ${day}`
+}
+
+/** What happened to the invite email, as a line under the form. */
+type InviteNote = { email: string; sent: boolean; reason?: string; url?: string } | null
+
+function LiveMembers({ account }: { account: Account }) {
+  const client = useQueryClient()
+  const orgId = account.org.id
+  const query = useMembers(orgId, true)
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<'admin' | 'member'>('member')
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(false)
+  const [note, setNote] = useState<InviteNote>(null)
+  const [removing, setRemoving] = useState<OrgMember | null>(null)
+  const manage = canManageMembers(account)
+  const rows = query.data ?? []
+
+  const report = (to: string, delivery: { sent: boolean; reason?: string; inviteUrl?: string }) => {
+    setNote({ email: to, sent: delivery.sent, reason: delivery.reason, url: delivery.inviteUrl })
+    if (delivery.sent) toast(`Invite sent to ${to}`)
+  }
+
+  const invite = async (event: FormEvent) => {
+    event.preventDefault()
+    const value = email.trim().toLowerCase()
+    if (!isEmail(value)) return setError('Enter a valid email address.')
+    if (rows.some((m) => m.email === value)) return setError(`${value} is already on the team.`)
+    setError('')
+    setSending(true)
+    try {
+      const result = await inviteMember(client, orgId, { email: value, role })
+      setEmail('')
+      report(value, result.email)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const resend = async (m: OrgMember) => {
+    try {
+      report(m.email, (await resendInvite(client, orgId, m.id)).email)
+    } catch (err) {
+      toast(errorMessage(err))
+    }
+  }
+
+  const changeRole = async (m: OrgMember, next: 'admin' | 'member') => {
+    try {
+      await setMemberRole(client, orgId, m.id, next)
+      toast('Role updated')
+    } catch (err) {
+      toast(errorMessage(err))
+    }
+  }
+
+  return (
+    <>
+      {manage && (
+        <div className="group">
+          <GroupHead title="Invite" sub="Members can use the shared inbox, storage and agents. Admins can also manage members, billing and secrets." />
+          <form className="inline-form invite-form" noValidate onSubmit={(e) => void invite(e)}>
+            <input
+              className="text-input"
+              type="email"
+              placeholder="name@company.com"
+              aria-label="Email to invite"
+              autoComplete="off"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <select className="select" aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button className="btn btn-primary" style={{ height: 34 }} disabled={sending} aria-busy={sending || undefined}>
+              Send invite
+            </button>
+          </form>
+          <div className="form-error" role="alert">
+            {error}
+          </div>
+          {note && !note.sent && (
+            <div className="invite-note" role="status">
+              <Icon name="circle-alert" size={14} />
+              <span>
+                The invite to {note.email} wasn't emailed: {note.reason ?? 'unknown reason'}.
+                {note.url ? ' Share this link with them instead:' : ' Try sending it again.'}
+                {note.url && (
+                  <span className="invite-link">
+                    <code className="ellipsis">{note.url}</code>
+                    <button className="btn btn-sm" type="button" onClick={() => void copyText(note.url!).then((ok) => ok && toast('Link copied'))}>
+                      Copy
+                    </button>
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="group">
+        <GroupHead title="Members" />
+        {query.isError ? (
+          <div className="form-error" role="alert">
+            {errorMessage(query.error)}
+          </div>
+        ) : (
+          <div className="card">
+            {query.isPending && (
+              <div className="card-row">
+                <span className="spinner" />
+              </div>
+            )}
+            {rows.map((m) => {
+              const invited = m.status === 'invited'
+              const label = m.name || m.email
+              const editable = manage && m.role !== 'owner'
+              return (
+                <div className="card-row member-row" key={m.id}>
+                  <span className="avatar md">{invited && !m.name ? m.email[0]!.toUpperCase() : initials(label)}</span>
+                  <div className="text">
+                    <span className="name ellipsis">
+                      {label}
+                      {m.you && <span className="muted"> (you)</span>}
+                    </span>
+                    <span className="sub ellipsis">{invited ? `${m.name ? `${m.email} · ` : ''}${sentLabel(m)}` : m.email}</span>
+                  </div>
+                  <span className="right">
+                    {invited && manage && (
+                      <button className="btn btn-sm btn-quiet" onClick={() => void resend(m)}>
+                        {m.invite?.sentAt ? 'Send again' : 'Send invite'}
+                      </button>
+                    )}
+                    {editable ? (
+                      <>
+                        <select
+                          className="select sm"
+                          aria-label={`Role for ${label}`}
+                          value={m.role}
+                          onChange={(e) => void changeRole(m, e.target.value as 'admin' | 'member')}
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                        </select>
+                        <button className="x-btn" aria-label={invited ? `Cancel invite for ${label}` : `Remove ${label}`} onClick={() => setRemoving(m)}>
+                          <Icon name="x" size={14} />
+                        </button>
+                      </>
+                    ) : (
+                      cap(m.role)
+                    )}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      {removing && (
+        <ConfirmDialog
+          title={removing.status === 'invited' ? 'Cancel invite' : 'Remove member'}
+          body={
+            removing.status === 'invited'
+              ? `Cancel the invite for ${removing.email}? Their invite link stops working.`
+              : `Remove ${removing.name || removing.email} from ${account.org.name}? They lose access right away, and their own My Files are deleted.`
+          }
+          action={removing.status === 'invited' ? 'Cancel invite' : 'Remove'}
+          onClose={() => setRemoving(null)}
+          onConfirm={async () => {
+            try {
+              await removeMember(client, orgId, removing.id)
+              toast(removing.status === 'invited' ? 'Invite cancelled' : 'Member removed')
+            } catch (err) {
+              toast(errorMessage(err))
+            }
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+/** Demo mode: the sample members, changed in memory. */
 function MembersSection({ account, data }: { account: Account; data: SettingsData }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Member['role']>('member')
@@ -308,7 +602,6 @@ function MembersSection({ account, data }: { account: Account; data: SettingsDat
     event.preventDefault()
     const value = email.trim().toLowerCase()
     if (!isEmail(value)) return setError('Enter a valid email address.')
-    if (!isDemo()) return setError('Inviting teammates is coming soon.')
     if (rows.some((m) => m.email === value)) return setError(`${value} is already on the team.`)
     setError('')
     setEmail('')

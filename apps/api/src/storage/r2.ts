@@ -5,6 +5,7 @@
 
 import { AwsClient } from 'aws4fetch'
 import { ApiError } from '../errors'
+import { fixedChunks } from './chunks'
 
 export type R2Env = Pick<Env, 'CLOUDFLARE_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY'>
 
@@ -53,7 +54,68 @@ export async function putObject(
   for (const [name, value] of Object.entries(options.metadata ?? {})) headers.set(`x-amz-meta-${name}`, value)
   // Streams can't be hashed up front; R2 accepts the standard "unsigned payload" marker for them.
   if (body instanceof ReadableStream) headers.set('x-amz-content-sha256', 'UNSIGNED-PAYLOAD')
+  // A stream that isn't a request body (one half of a tee, a download from elsewhere) is sent chunked unless its
+  // length is known, and R2 then refuses it (411). FixedLengthStream gives it the length, and errors if it's wrong.
+  if (body instanceof ReadableStream && options.size !== undefined) body = body.pipeThrough(new FixedLengthStream(options.size))
   await send(env, objectUrl(env, bucket, key), { method: 'PUT', headers, body })
+}
+
+/** Part size for multipart uploads: 16 MiB × R2's 10,000 parts allows objects up to 156 GiB. */
+const PART_BYTES = 16 * 1024 * 1024
+
+/**
+ * Writes an object of any size, or of unknown size, with a multipart upload: the stream is cut into 16 MiB parts
+ * and each is sent on its own, so no single request hits the Worker's limits and only one part is in memory at a
+ * time. Server-side only (imports). Returns the number of bytes written. A failed upload is aborted, so R2 doesn't
+ * keep its parts.
+ */
+export async function putLargeObject(
+  env: R2Env,
+  bucket: string,
+  key: string,
+  body: ReadableStream<Uint8Array>,
+  options: { contentType: string; metadata?: Record<string, string> },
+): Promise<{ size: number }> {
+  const url = objectUrl(env, bucket, key)
+  const start = new URL(url)
+  start.searchParams.set('uploads', '')
+  const headers = new Headers({ 'Content-Type': options.contentType })
+  for (const [name, value] of Object.entries(options.metadata ?? {})) headers.set(`x-amz-meta-${name}`, value)
+  const created = await (await send(env, start, { method: 'POST', headers })).text()
+  const uploadId = /<UploadId>([^<]+)<\/UploadId>/.exec(created)?.[1]
+  if (!uploadId) throw new ApiError('storage_error', "File storage didn't start the upload", 502)
+
+  const partUrl = (n?: number) => {
+    const u = new URL(url)
+    if (n !== undefined) u.searchParams.set('partNumber', String(n))
+    u.searchParams.set('uploadId', decodeXml(uploadId))
+    return u
+  }
+  try {
+    const parts: { n: number; etag: string }[] = []
+    let size = 0
+    for await (const chunk of fixedChunks(body, PART_BYTES)) {
+      const n = parts.length + 1
+      const res = await send(env, partUrl(n), { method: 'PUT', body: chunk })
+      const etag = res.headers.get('ETag')
+      if (!etag) throw new ApiError('storage_error', `File storage didn't accept part ${n}`, 502)
+      parts.push({ n, etag })
+      size += chunk.byteLength
+    }
+    // An empty file is still one (empty) part.
+    if (!parts.length) {
+      const res = await send(env, partUrl(1), { method: 'PUT', body: new Uint8Array() })
+      parts.push({ n: 1, etag: res.headers.get('ETag') ?? '' })
+    }
+    const xml = `<CompleteMultipartUpload>${parts.map((p) => `<Part><PartNumber>${p.n}</PartNumber><ETag>${p.etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`
+    const done = await (await send(env, partUrl(), { method: 'POST', headers: { 'Content-Type': 'application/xml' }, body: xml })).text()
+    // S3 can answer 200 and still report an error in the body.
+    if (done.includes('<Error>')) throw new ApiError('storage_error', `File storage didn't finish the upload: ${done.slice(0, 200)}`, 502)
+    return { size }
+  } catch (err) {
+    await send(env, partUrl(), { method: 'DELETE' }).catch(() => null)
+    throw err
+  }
 }
 
 /** The object, or null if it doesn't exist. */

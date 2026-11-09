@@ -6,7 +6,7 @@ import { syncMailbox } from '../storage/mail-sync'
 import { emptyExpiredTrash } from '../storage/drive'
 import { purgeDeletedFiles } from '../storage/purge'
 
-export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' }
+export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
 export async function enqueue(env: Pick<Env, 'MAIL_SYNC'>, jobs: MailSyncJob[]): Promise<void> {
   // sendBatch takes up to 100 messages.

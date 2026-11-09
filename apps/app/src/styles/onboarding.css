@@ -145,6 +145,9 @@ fieldset.panel-section + .panel-section { border-top-width: 1px; }
 .option input:checked + .radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-hi); }
 .option input:focus-visible + .box, .option input:focus-visible + .radio { outline: 2px solid var(--border-strong); outline-offset: 2px; }
 .option small { display: block; font-size: 12px; color: var(--text-muted); }
+.import-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text-dim); }
+.import-card:hover { background: var(--bg-muted); text-decoration: none; }
+.import-card .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
 .tip { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 7px; font-size: 12px; color: var(--text-muted); }
 
 /* Done */

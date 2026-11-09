@@ -2,7 +2,7 @@
 // contact details, the segments they're in, custom attributes and their activity.
 
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
 import { useAccount } from '../lib/account'
 import { errorMessage, initials } from '../lib/core'
@@ -15,8 +15,10 @@ import {
   type PersonFields,
   audienceApi,
   audienceKeys,
+  canEditPerson,
   displayName,
   isAnonymous,
+  kindLabel,
   longDate,
   relative,
   shortDate,
@@ -26,6 +28,7 @@ import {
 export function PersonPanel({
   orgId,
   personId,
+  memberId,
   canManage,
   onClose,
   onSegment,
@@ -34,6 +37,8 @@ export function PersonPanel({
 }: {
   orgId: string
   personId: string
+  /** The viewer's member id: their own contacts are theirs to edit. */
+  memberId?: string
   canManage: boolean
   onClose: () => void
   onSegment: (segmentId: string) => void
@@ -44,6 +49,7 @@ export function PersonPanel({
   const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null)
   const data = query.data
   const p = data?.person
+  const canEdit = p ? canEditPerson(p, memberId, canManage) : false
 
   return (
     <aside className="u-panel" aria-label="Profile">
@@ -59,15 +65,16 @@ export function PersonPanel({
       ) : (
         <>
           <div className="u-panel-head">
-            <Avatar person={p} size={40} />
+            <Avatar person={p} size={40} orgId={orgId} />
             <div className="u-panel-title">
               <span className="row-gap">
                 <span className="hi ellipsis">{isAnonymous(p) ? 'Anonymous visitor' : displayName(p)}</span>
-                <span className="tag">{p.kind === 'user' ? 'User' : 'Lead'}</span>
+                <span className="tag">{kindLabel(p)}</span>
+                {p.kind === 'contact' && !p.owner && <span className="tag">Shared</span>}
               </span>
               <span className={`small ${isAnonymous(p) ? 'mono dim' : 'muted'} ellipsis`}>{isAnonymous(p) ? shortVisitor(p) : p.email ?? p.externalId}</span>
             </div>
-            {canManage && <button className="ghost" title="Edit" aria-label="Edit" onClick={() => setDialog('edit')}><Icon name="square-pen" size={15} /></button>}
+            {canEdit && <button className="ghost" title="Edit" aria-label="Edit" onClick={() => setDialog('edit')}><Icon name="square-pen" size={15} /></button>}
             <button className="ghost" title="Close" aria-label="Close" onClick={onClose}><Icon name="x" size={15} /></button>
           </div>
           <div className="u-panel-scroll">
@@ -100,7 +107,7 @@ export function PersonPanel({
                   {Object.entries(p.attributes).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => <Row key={k} label={k} value={String(v)} mono />)}
                 </dl>
               ) : (
-                <p className="dim small">No attributes yet.{canManage && <> <button className="link" onClick={() => setDialog('edit')}>Add one</button></>}</p>
+                <p className="dim small">No attributes yet.{canEdit && <> <button className="link" onClick={() => setDialog('edit')}>Add one</button></>}</p>
               )}
             </section>
 
@@ -114,7 +121,7 @@ export function PersonPanel({
               {data.emails === null && <p className="dim small">Couldn't load emails with this person right now.</p>}
             </section>
 
-            {canManage && (
+            {canEdit && (
               <div className="u-panel-foot">
                 <button className="btn btn-sm" onClick={() => setDialog('delete')}><Icon name="trash" size={13} />Delete user</button>
               </div>
@@ -159,10 +166,29 @@ function Row({ label, value, mono, title }: { label: string; value: string | nul
   )
 }
 
-export function Avatar({ person, size = 28 }: { person: Person; size?: number }) {
+/** Initials, or a contact's photo when one was imported (pass `orgId` to load it). */
+export function Avatar({ person, size = 28, orgId }: { person: Person; size?: number; orgId?: string }) {
+  const [photo, setPhoto] = useState<string | null>(null)
+  const hasPhoto = !!orgId && typeof person.attributes.photoKey === 'string'
+  useEffect(() => {
+    if (!hasPhoto) return
+    let url: string | null = null
+    let live = true
+    audienceApi
+      .photo(orgId, person.id)
+      .then((u) => {
+        url = u
+        if (live) setPhoto(u)
+      })
+      .catch(() => null)
+    return () => {
+      live = false
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [hasPhoto, orgId, person.id])
   return (
     <span className="u-avatar" style={{ width: size, height: size, fontSize: size > 32 ? 13 : 11 }}>
-      {isAnonymous(person) ? <Icon name="user" size={size > 32 ? 16 : 13} /> : initials(person.name || person.email)}
+      {photo ? <img src={photo} alt="" className="u-avatar-img" /> : isAnonymous(person) ? <Icon name="user" size={size > 32 ? 16 : 13} /> : initials(person.name || person.email)}
     </span>
   )
 }

@@ -26,3 +26,17 @@ export function insert(
     .prepare('INSERT INTO users (id, email, name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
     .bind(user.id, user.email, user.name, user.passwordHash, user.now, user.now)
 }
+
+/** Someone invited to an organization who has no xstate account yet: no password until they accept. */
+export function insertInvited(db: D1Database, user: { id: string; email: string; name: string | null; now: string }): D1PreparedStatement {
+  return db
+    .prepare('INSERT INTO users (id, email, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(user.id, user.email, user.name, user.now, user.now)
+}
+
+/** Sets the password, and the name if they give one. Only while there's no password yet (accepting an invite). */
+export function setFirstPassword(db: D1Database, id: string, passwordHash: string, name: string | null, now: string): D1PreparedStatement {
+  return db
+    .prepare('UPDATE users SET password_hash = ?, name = COALESCE(?, name), updated_at = ? WHERE id = ? AND password_hash IS NULL')
+    .bind(passwordHash, name, now, id)
+}

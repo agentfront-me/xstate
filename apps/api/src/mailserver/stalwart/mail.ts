@@ -9,7 +9,7 @@ import { jmap, MAIL_CAPABILITIES, type StalwartEnv } from './client'
 type JmapArgs = Record<string, unknown>
 
 export type FolderRole = 'inbox' | 'sent' | 'drafts' | 'archive' | 'junk' | 'trash'
-export type JmapFolder = { id: string; name: string; role: string | null; unreadEmails: number; totalEmails: number }
+export type JmapFolder = { id: string; name: string; role: string | null; parentId?: string | null; unreadEmails: number; totalEmails: number }
 export type JmapAddress = { name: string | null; email: string }
 export type JmapEmailSummary = {
   id: string
@@ -63,7 +63,7 @@ export async function getFolders(env: StalwartEnv, accountIds: string[]): Promis
     env,
     accountIds.map((accountId) => [
       'Mailbox/get',
-      { accountId, properties: ['name', 'role', 'unreadEmails', 'totalEmails'] },
+      { accountId, properties: ['name', 'role', 'parentId', 'unreadEmails', 'totalEmails'] },
     ]),
   )
   return new Map(accountIds.map((id, i) => [id, (results[i]!.list as JmapFolder[]) ?? []]))
@@ -74,6 +74,17 @@ export async function createFolder(env: StalwartEnv, accountId: string, name: st
   const [result] = await mail(env, [['Mailbox/set', { accountId, create: { f: { name, role, parentId: null } } }]])
   const id = (result!.created as Record<string, { id: string }> | undefined)?.f?.id
   if (!id) throw new EmailError('mail_server_error', `Couldn't create the ${name} folder`, 502)
+  return id
+}
+
+/** Creates a plain folder (no role), at the top or inside `parentId`, and returns its id. */
+export async function createChildFolder(env: StalwartEnv, accountId: string, name: string, parentId: string | null): Promise<string> {
+  const [result] = await mail(env, [['Mailbox/set', { accountId, create: { f: { name, parentId } } }]])
+  const id = (result!.created as Record<string, { id: string }> | undefined)?.f?.id
+  if (!id) {
+    const err = (result!.notCreated as Record<string, { type?: string; description?: string }> | undefined)?.f
+    throw new EmailError('mail_server_error', `Couldn't create the folder ${name}: ${err?.description ?? err?.type ?? 'unknown error'}`, 502)
+  }
   return id
 }
 
@@ -460,4 +471,117 @@ export async function downloadBlob(env: StalwartEnv, accountId: string, blobId: 
   if (res.status === 404) throw new EmailError('attachment_not_found', 'Attachment not found', 404)
   if (!res.ok || !res.body) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status}`, 502)
   return res
+}
+
+export type ImportEmail = {
+  /** From uploadBlob: the raw message (RFC 5322), as fetched from the other provider. */
+  blobId: string
+  folderIds: string[]
+  /** JMAP keywords: $seen, $flagged, $draft, $answered… */
+  keywords: string[]
+  /** When the original provider received it. Sorting and "received" dates use this. */
+  receivedAt: string
+}
+
+export type ImportResult =
+  | { ok: true; id: string; threadId: string; size: number }
+  /** `existingId`: only if the server reports the message as already there (Stalwart 1.0 doesn't). */
+  | { ok: false; type: string; description: string; existingId?: string }
+
+/**
+ * Puts already-uploaded raw messages into the account as they are (RFC 8621 Email/import): no sending, no filters,
+ * the original received date kept. One result per input, in the same order. A batch should stay within the
+ * server's maxObjectsInSet (see getLimits).
+ *
+ * Not idempotent: Stalwart 1.0.2 imports the same message again as a second copy (checked 2026-11-08), so callers
+ * must remember what they've imported and skip it on a retry.
+ */
+export async function importEmails(env: StalwartEnv, accountId: string, emails: ImportEmail[]): Promise<ImportResult[]> {
+  if (!emails.length) return []
+  const [result] = await mail(env, [
+    [
+      'Email/import',
+      {
+        accountId,
+        emails: Object.fromEntries(
+          emails.map((e, i) => [
+            `e${i}`,
+            {
+              blobId: e.blobId,
+              mailboxIds: Object.fromEntries(e.folderIds.map((id) => [id, true])),
+              keywords: Object.fromEntries(e.keywords.map((k) => [k, true])),
+              receivedAt: e.receivedAt,
+            },
+          ]),
+        ),
+      },
+    ],
+  ])
+  const created = (result!.created as Record<string, { id: string; threadId: string; size: number }> | null) ?? {}
+  const failed = (result!.notCreated as Record<string, SetError & { existingId?: string }> | null) ?? {}
+  return emails.map((_, i) => {
+    const ok = created[`e${i}`]
+    if (ok) return { ok: true, id: ok.id, threadId: ok.threadId, size: ok.size }
+    const err = failed[`e${i}`]
+    return {
+      ok: false,
+      type: err?.type ?? 'unknown',
+      description: err?.description ?? err?.type ?? 'Not imported',
+      ...(err?.existingId && { existingId: err.existingId }),
+    }
+  })
+}
+
+export type MailLimits = {
+  /** Largest blob (so largest raw message) one upload may be. */
+  maxSizeUpload: number
+  /** Most objects one /set or /import call may create. */
+  maxObjectsInSet: number
+  maxCallsInRequest: number
+  maxConcurrentUpload: number
+  /** Largest total size of a message's attachments, when the server says. */
+  maxSizeAttachmentsPerEmail: number | null
+}
+
+/** The server's JMAP limits, from its session object. Imports size their batches and skip messages by these. */
+export async function getLimits(env: StalwartEnv): Promise<MailLimits> {
+  const res = await fetch(new URL('/jmap/session', env.STALWART_URL), {
+    headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` },
+  })
+  if (!res.ok) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status} for its session`, 502)
+  const session = (await res.json()) as {
+    capabilities: Record<string, Record<string, unknown>>
+    accounts?: Record<string, { accountCapabilities?: Record<string, Record<string, unknown>> }>
+  }
+  const core = session.capabilities['urn:ietf:params:jmap:core'] ?? {}
+  const mailCaps = Object.values(session.accounts ?? {})[0]?.accountCapabilities?.['urn:ietf:params:jmap:mail'] ?? {}
+  const n = (v: unknown, fallback: number) => (typeof v === 'number' && v > 0 ? v : fallback)
+  return {
+    maxSizeUpload: n(core.maxSizeUpload, 50_000_000),
+    maxObjectsInSet: n(core.maxObjectsInSet, 500),
+    maxCallsInRequest: n(core.maxCallsInRequest, 16),
+    maxConcurrentUpload: n(core.maxConcurrentUpload, 4),
+    maxSizeAttachmentsPerEmail: typeof mailCaps.maxSizeAttachmentsPerEmail === 'number' ? mailCaps.maxSizeAttachmentsPerEmail : null,
+  }
+}
+
+/** Puts a message in exactly these folders with exactly these keywords (the final pass: labels changed in Gmail). */
+export async function setEmailPlacement(env: StalwartEnv, accountId: string, emailId: string, folderIds: string[], keywords: string[]): Promise<boolean> {
+  const [result] = await mail(env, [
+    [
+      'Email/set',
+      {
+        accountId,
+        update: {
+          [emailId]: {
+            mailboxIds: Object.fromEntries(folderIds.map((id) => [id, true])),
+            keywords: Object.fromEntries(keywords.map((k) => [k, true])),
+          },
+        },
+      },
+    ],
+  ])
+  // JMAP reports a successful update as `updated: { <id>: null }`.
+  const updated = result!.updated as Record<string, unknown> | null
+  return !!updated && emailId in updated
 }

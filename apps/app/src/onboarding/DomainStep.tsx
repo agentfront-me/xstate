@@ -1,6 +1,7 @@
 // 2 · Your domain.
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Icon } from '../components/Icon'
 import { api, DOMAIN_RE, errorMessage } from '../lib/core'
 import type { Domain } from '../lib/types'
 import { setProgress, type Data, type Provider } from './state'
@@ -122,6 +123,16 @@ export function DomainStep({ data, update, next }: { data: Data; update: (patch:
         I don't have a domain
       </a>
       <Help id="no-domain-help" message={noDomain} />
+      <a className="import-card" href="/migrate/" id="import-google">
+        <span className="agent-icon">
+          <Icon name="download" size={15} />
+        </span>
+        <span className="text">
+          <span className="hi">Moving from Google Workspace? Import everything.</span>
+          <span className="small muted">Mail, contacts and Drive for every user. Google stays untouched.</span>
+        </span>
+        <Icon name="chevron-right" size={14} />
+      </a>
     </>
   )
 }
