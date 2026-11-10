@@ -39,9 +39,9 @@ const notFound = (what: string) => new ApiError('not_found', `No such ${what}`, 
 
 // People
 
-export async function overview(env: Env, actor: Actor, organizationId: string) {
+export async function overview(env: Env, actor: Actor, organizationId: string, domain?: string) {
   const { s, viewer } = await reader(env, actor, organizationId)
-  return s.overview(viewer)
+  return s.overview(viewer, domain)
 }
 
 export async function schema(env: Env, actor: Actor, organizationId: string) {

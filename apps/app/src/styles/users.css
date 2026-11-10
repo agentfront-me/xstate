@@ -15,11 +15,6 @@
 .users .s-head-text { flex: 0 1 auto; min-width: 90px; }
 .users .s-head .spacer-grow { flex: 1; }
 .users .s-search { flex: 0 1 240px; min-width: 120px; }
-.u-domain { position: relative; height: 30px; max-width: 200px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--text-toned); flex-shrink: 0; }
-.u-domain:hover { border-color: var(--border-strong); }
-.u-domain:focus-within { border-color: var(--border-hi); }
-.u-domain .icon { color: var(--text-muted); }
-.u-domain select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
 
 /* Table */
 .u-row { grid-template-columns: minmax(0, 2.6fr) 80px minmax(0, 1.3fr) minmax(0, 1.2fr) 100px; padding: 8px 16px; }
@@ -106,7 +101,6 @@
 @media (max-width: 680px) {
   .u-row { grid-template-columns: minmax(0, 1fr) 64px 80px; }
   .u-row > :nth-child(3) { display: none; }
-  .u-domain { display: none; }
   .u-panel { top: 0; width: 100%; }
 }
 .seg-kind { display: flex; gap: 18px; margin-bottom: 12px; font-size: 13px; color: var(--text-toned); }

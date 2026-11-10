@@ -8,9 +8,10 @@ import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { useAccount } from '../lib/account'
 import { errorMessage } from '../lib/core'
+import { inDomain, useDomainScope } from '../lib/scope'
 import type { Domain, FolderView, MailboxFolders, Message, MessageSummary } from '../lib/types'
 import { Composer } from './Composer'
-import { adjustUnread, keyOf, patchRow, reloadFolders, reloadLists, useFolders, useMailSource, useUnreadCount } from './data'
+import { adjustUnread, keyOf, patchRow, reloadFolders, reloadLists, useFolders, useMailSource } from './data'
 import { formatTime, sender } from './format'
 import { useMailIntent } from './intents'
 import { Reader } from './Reader'
@@ -62,7 +63,11 @@ export function MailPage() {
   const navigate = useNavigate()
   const narrow = useNarrow()
   const folders = useFolders()
-  const mailboxes = folders.data ?? []
+  const allMailboxes = folders.data ?? []
+  // The domain picked in the rail narrows everything here to its domain and its addresses.
+  const domainScope = useDomainScope()
+  const domains = useMemo(() => (domainScope ? [domainScope] : account.domains), [domainScope, account.domains])
+  const mailboxes = useMemo(() => allMailboxes.filter((mb) => inDomain(mb.address, domainScope)), [allMailboxes, domainScope])
   const [view, setViewState] = useState<View>(remembered)
   const [composer, setComposer] = useState<{ forward: Message | null } | null>(null)
   const [debouncedQuery, setDebouncedQuery] = useState(view.query)
@@ -78,6 +83,14 @@ export function MailPage() {
   /** Changing what's listed starts over with nothing selected. */
   const setView = (changes: Partial<View>) => setViewState((v) => ({ ...v, ...changes, selected: null }))
 
+  // A domain or address outside the picked domain goes back to all of the picked domain's inboxes.
+  useEffect(() => {
+    const s = view.scope
+    if (!s || !domainScope || !folders.isSuccess) return
+    const outside = 'domainId' in s ? s.domainId !== domainScope.id : !mailboxes.some((mb) => mb.mailboxId === s.mailboxId)
+    if (outside) setView({ scope: null })
+  }, [domainScope, view.scope, mailboxes, folders.isSuccess])
+
   useMailIntent(
     useCallback((intent) => {
       if (intent === 'compose') setComposer({ forward: null })
@@ -88,11 +101,11 @@ export function MailPage() {
   // Mailboxes in the current scope, or undefined for all.
   const scopeIds = useMemo(() => {
     const s = view.scope
-    if (!s) return undefined
+    if (!s) return domainScope ? mailboxes.map((mb) => mb.mailboxId) : undefined
     if ('mailboxId' in s) return [s.mailboxId]
     const domain = account.domains.find((d) => d.id === s.domainId)
     return mailboxes.filter((mb) => domainName(mb.address) === domain?.name).map((mb) => mb.mailboxId)
-  }, [view.scope, account.domains, mailboxes])
+  }, [view.scope, domainScope, account.domains, mailboxes])
 
   const listKey = { folder: view.folder, scope: scopeIds ?? null, unreadOnly: view.unreadOnly, query: debouncedQuery }
   const list = useInfiniteQuery({
@@ -190,13 +203,13 @@ export function MailPage() {
     if (remembered.folder === 'sent') void reloadLists(client)
   }, [client])
 
-  const ownAddress = (mailboxId: string) => mailboxes.find((mb) => mb.mailboxId === mailboxId)?.address ?? ''
+  const ownAddress = (mailboxId: string) => allMailboxes.find((mb) => mb.mailboxId === mailboxId)?.address ?? ''
 
   return (
     <section className={`mail${view.selected ? ' has-open' : ''}`}>
       <FolderNav
         view={view}
-        domains={account.domains}
+        domains={domains}
         mailboxes={mailboxes}
         onView={setView}
         onCompose={() => setComposer({ forward: null })}
@@ -205,9 +218,10 @@ export function MailPage() {
       <div className="list">
         <ListHead
           view={view}
-          domains={account.domains}
+          domains={domains}
           mailboxes={mailboxes}
           scopeCount={scopeIds?.length ?? 0}
+          domainScope={domainScope}
           onUnread={(unreadOnly) => setView({ unreadOnly })}
           onQuery={(query) => setViewState((v) => ({ ...v, query }))}
           onCloseSearch={() => setView({ searching: false, query: '' })}
@@ -226,7 +240,7 @@ export function MailPage() {
             error={folders.error?.message ?? list.error?.message ?? null}
             more={list.hasNextPage}
             loadingMore={list.isFetchingNextPage}
-            empty={emptyText(view, mailboxes.length === 0, debouncedQuery, listTitle(view, account.domains, mailboxes, scopeIds?.length ?? 0).title)}
+            empty={emptyText(view, mailboxes.length === 0, debouncedQuery, listTitle(view, domains, mailboxes, scopeIds?.length ?? 0, domainScope).title)}
             onOpen={open}
             onRetry={() => void (folders.isError ? folders.refetch() : list.refetch())}
           />
@@ -255,7 +269,7 @@ export function MailPage() {
           </>
         )}
       </div>
-      {composer && <Composer source={source} mailboxes={mailboxes} forward={composer.forward} onClose={closeComposer} onSent={sent} />}
+      {composer && <Composer source={source} mailboxes={allMailboxes} forward={composer.forward} onClose={closeComposer} onSent={sent} />}
     </section>
   )
 }
@@ -273,7 +287,6 @@ type FolderNavProps = {
 }
 
 function FolderNav({ view, domains, mailboxes, onView, onCompose, onAddDomain }: FolderNavProps) {
-  const unread = useUnreadCount()
   const all = !view.scope
   const count = (id: FolderView) => {
     const sum = (role: string, key: 'unread' | 'total') =>
@@ -316,7 +329,7 @@ function FolderNav({ view, domains, mailboxes, onView, onCompose, onAddDomain }:
       <button className="folder" aria-current={all && view.folder === 'inbox' ? 'true' : undefined} onClick={() => onView({ folder: 'inbox', scope: null })}>
         <Icon name="layers" size={15} />
         <span className="label">All inboxes</span>
-        {unread > 0 && <span className="count">{unread}</span>}
+        {count('inbox') > 0 && <span className="count">{count('inbox')}</span>}
       </button>
       {domains.map((d) => {
         const verified = d.status === 'verified'
@@ -370,7 +383,7 @@ function FolderNav({ view, domains, mailboxes, onView, onCompose, onAddDomain }:
 // ---------------------------------------------------------------------------------------------------------------
 // The list
 
-function listTitle(view: View, domains: Domain[], mailboxes: MailboxFolders[], scopeCount: number) {
+function listTitle(view: View, domains: Domain[], mailboxes: MailboxFolders[], scopeCount: number, domainScope: Domain | null = null) {
   const folder = FOLDERS.find((f) => f.id === view.folder)!.label
   const s = view.scope
   if (s && 'mailboxId' in s) return { title: mailboxes.find((mb) => mb.mailboxId === s.mailboxId)?.address ?? '', sub: folder }
@@ -378,6 +391,7 @@ function listTitle(view: View, domains: Domain[], mailboxes: MailboxFolders[], s
     const d = domains.find((x) => x.id === s.domainId)
     return { title: d?.name ?? '', sub: `${folder} · ${scopeCount} ${scopeCount === 1 ? 'address' : 'addresses'}` }
   }
+  if (domainScope) return { title: folder, sub: `${domainScope.name} · ${scopeCount} ${scopeCount === 1 ? 'address' : 'addresses'}` }
   const n = domains.length
   return { title: folder, sub: `All inboxes · ${n} ${n === 1 ? 'domain' : 'domains'}` }
 }
@@ -387,13 +401,14 @@ type ListHeadProps = {
   domains: Domain[]
   mailboxes: MailboxFolders[]
   scopeCount: number
+  domainScope: Domain | null
   onUnread: (unreadOnly: boolean) => void
   onQuery: (query: string) => void
   onCloseSearch: () => void
 }
 
-function ListHead({ view, domains, mailboxes, scopeCount, onUnread, onQuery, onCloseSearch }: ListHeadProps) {
-  const { title, sub } = listTitle(view, domains, mailboxes, scopeCount)
+function ListHead({ view, domains, mailboxes, scopeCount, domainScope, onUnread, onQuery, onCloseSearch }: ListHeadProps) {
+  const { title, sub } = listTitle(view, domains, mailboxes, scopeCount, domainScope)
   const search = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (view.searching) search.current?.focus()

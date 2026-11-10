@@ -2,13 +2,13 @@
 // and the unread and approval badges.
 
 import { Outlet, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApprovalAlerts, usePendingApprovals } from '../agents/alerts'
 import { Icon } from '../components/Icon'
 import { useAccount } from '../lib/account'
-import { applyTheme, desktop, initials, isMac } from '../lib/core'
-import { useIsDark } from '../lib/theme'
-import { MailSync, useUnreadCount } from '../mail/data'
+import { desktop, initials, isMac } from '../lib/core'
+import { setDomainScope, useDomainScope } from '../lib/scope'
+import { MailSync, useScopedUnreadCount, useUnreadCount } from '../mail/data'
 import { requestMail } from '../mail/intents'
 import { PAGES, ROUTED } from './pages'
 
@@ -77,8 +77,8 @@ function Rail() {
   const navigate = useNavigate()
   const path = useRouterState({ select: (s) => s.location.pathname })
   const page = path.split('/')[1] || 'mail'
-  const dark = useIsDark()
-  const unread = useUnreadCount()
+  const unread = useScopedUnreadCount()
+  const totalUnread = useUnreadCount()
   const approvals = usePendingApprovals()
   const history = useHistoryButtons()
   const [collapsed, setCollapsed] = useState(() => {
@@ -90,8 +90,8 @@ function Rail() {
   })
 
   useEffect(() => {
-    desktop?.setUnread(unread)
-  }, [unread])
+    desktop?.setUnread(totalUnread)
+  }, [totalUnread])
 
   const toggle = () => {
     setCollapsed((c) => {
@@ -119,15 +119,7 @@ function Rail() {
             <Icon name="chevron-right" size={16} />
           </button>
         </span>
-        <span className="spacer" />
-        <div className="seg icons" role="group" aria-label="Theme">
-          <button aria-pressed={!dark} aria-label="Light" onClick={() => applyTheme('light')}>
-            <Icon name="sun" size={14} />
-          </button>
-          <button aria-pressed={dark} aria-label="Dark" onClick={() => applyTheme('dark')}>
-            <Icon name="moon" size={14} />
-          </button>
-        </div>
+        <DomainPicker />
       </div>
       <nav className="nav">
         <button
@@ -169,13 +161,65 @@ function Rail() {
           onClick={() => void navigate({ to: '/settings/$section', params: { section: 'account' } })}
         >
           <span className="avatar">{initials(name)[0]}</span>
-          <span className="ellipsis">
-            <span className="name">{name}</span>
-            <span className="muted"> · {account.org.plan ?? 'Free'}</span>
-          </span>
-          <Icon name="chevron-down" size={13} />
+          <span className="name ellipsis">{name}</span>
+          <span className="plan">{account.org.plan ?? 'Free'}</span>
+          <Icon name="chevron-down" size={14} />
         </button>
       </div>
     </aside>
+  )
+}
+
+/** Picks the domain that Email, Agents and Users show. */
+function DomainPicker() {
+  const account = useAccount()
+  const scope = useDomainScope()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const pick = (id: string | null) => {
+    setDomainScope(id)
+    setOpen(false)
+  }
+  const options = [{ id: null, name: 'All domains', pending: false }, ...account.domains.map((d) => ({ id: d.id, name: d.name, pending: d.status !== 'verified' }))]
+
+  return (
+    <div className="domain-picker" ref={ref}>
+      <button className="domain-picker-btn" title="Domain scope" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="ellipsis">{scope?.name ?? 'All domains'}</span>
+        <Icon name="chevrons-up-down" size={12} />
+      </button>
+      {open && (
+        <div className="domain-menu" role="menu">
+          {options.map((o) => (
+            <button key={o.id ?? 'all'} role="menuitemradio" aria-checked={(scope?.id ?? null) === o.id} onClick={() => pick(o.id)}>
+              <span className="ellipsis">{o.name}</span>
+              {o.pending && (
+                <span className="pending" title="DNS records pending">
+                  <Icon name="circle-alert" size={12} />
+                </span>
+              )}
+              {(scope?.id ?? null) === o.id && <Icon name="check" size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

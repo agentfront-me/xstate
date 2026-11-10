@@ -1,7 +1,7 @@
 // Users: the people who visit or use the organization's websites (the audience_* API, users/api.ts). Follows the
 // Users screen of the "xstate App" design: segments on the left with live counts, people in a bordered table with
-// a domain switcher and search above it, a profile panel over the right of the table, and the "New segment" dialog.
-// Where you are lives in the URL (#/users?segment=…&domain=…&q=…&person=…).
+// search above it, a profile panel over the right of the table, and the "New segment" dialog. The domain picked in
+// the rail scopes the counts and the list. Where you are lives in the URL (#/users?segment=…&q=…&person=…).
 
 import '../styles/storage.css'
 import '../styles/users.css'
@@ -12,6 +12,7 @@ import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { isOrgAdmin, useAccount } from '../lib/account'
 import { apiUrl, copyText, errorMessage } from '../lib/core'
+import { useDomainScope } from '../lib/scope'
 import { ConfirmDialog, Menu, type MenuItem } from '../storage/dialogs'
 import { saveBlob } from '../storage/api'
 import { type Person, type Segment, audienceApi, audienceKeys, displayName, isAnonymous, keysApi, kindLabel, relative, shortVisitor } from './api'
@@ -20,7 +21,7 @@ import { PersonDialog } from './PersonDialog'
 import { SegmentDialog } from './SegmentDialog'
 
 /** segment 'other' is the viewer's own auto-saved "Other contacts", not a saved segment. */
-export type UsersSearch = { segment?: string; domain?: string; q?: string; person?: string }
+export type UsersSearch = { segment?: string; q?: string; person?: string }
 
 const OTHER = 'other'
 
@@ -51,7 +52,8 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
   const [dialog, setDialog] = useState<Dialog | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
-  const overview = useQuery({ queryKey: [...audienceKeys.all, 'overview'], queryFn: () => audienceApi.overview(orgId) })
+  const domain = useDomainScope()?.name
+  const overview = useQuery({ queryKey: [...audienceKeys.all, 'overview', domain ?? null], queryFn: () => audienceApi.overview(orgId, domain) })
   const segments = overview.data?.segments ?? []
   const segment = segments.find((s) => s.id === search.segment)
   const other = search.segment === OTHER
@@ -76,7 +78,7 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
           {canManage && <button className="ghost" title="New segment" aria-label="New segment" onClick={() => setDialog({ kind: 'new-segment' })}><Icon name="plus" size={16} /></button>}
         </div>
         <nav className="s-sections">
-          <button className="s-section" aria-current={!search.segment ? 'true' : undefined} onClick={() => go({ domain: search.domain })}>
+          <button className="s-section" aria-current={!search.segment ? 'true' : undefined} onClick={() => go({})}>
             <span className="s-tile"><Icon name="users" size={15} /></span>
             <span className="s-section-name">All users</span>
             {overview.data && <span className="s-section-meta">{overview.data.total.toLocaleString()}</span>}
@@ -84,7 +86,7 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
           {segments.length > 0 && <div className="u-side-label">Segments</div>}
           {segments.map((s) => (
             <div key={s.id} className="u-seg-item">
-              <button className="s-section" aria-current={search.segment === s.id ? 'true' : undefined} onClick={() => go({ segment: s.id, domain: search.domain })}>
+              <button className="s-section" aria-current={search.segment === s.id ? 'true' : undefined} onClick={() => go({ segment: s.id })}>
                 <span className="s-tile"><Icon name={s.icon as IconName} size={15} /></span>
                 <span className="s-section-name">{s.name}</span>
                 <span className="s-section-meta">{s.count.toLocaleString()}</span>
@@ -136,7 +138,7 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
         go={go}
         title={other ? 'Other contacts' : (segment?.name ?? 'All users')}
         other={other}
-        domains={overview.data?.domains ?? []}
+        domain={domain}
         empty={!other && overview.data?.total === 0}
         onAdd={() => setDialog({ kind: 'add-user' })}
       />
@@ -172,7 +174,7 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
           onClose={() => setDialog(null)}
           onConfirm={async () => {
             await audienceApi.deleteSegment(orgId, dialog.segment.id)
-            if (search.segment === dialog.segment.id) go({ domain: search.domain }, true)
+            if (search.segment === dialog.segment.id) go({}, true)
             void refresh()
             toast(`Deleted ${dialog.segment.name}`)
           }}
@@ -181,7 +183,7 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
       {dialog?.kind === 'add-user' && (
         <PersonDialog
           title={canManage ? 'Add user' : 'Add contact'}
-          domains={(overview.data?.domains ?? []).map((d) => d.domain)}
+          domains={[...new Set([...(domain ? [domain] : []), ...(overview.data?.domains ?? []).map((d) => d.domain)])]}
           canManage={canManage}
           onClose={() => setDialog(null)}
           onSubmit={async ({ domain, kind, shared, ...fields }) => {
@@ -206,7 +208,7 @@ function PeopleList({
   go,
   title,
   other,
-  domains,
+  domain,
   empty,
   onAdd,
 }: {
@@ -216,11 +218,12 @@ function PeopleList({
   go: (s: UsersSearch, replace?: boolean) => void
   title: string
   other: boolean
-  domains: { domain: string; count: number }[]
+  /** The domain picked in the rail, if any. */
+  domain?: string
   empty: boolean
   onAdd: () => void
 }) {
-  const params = other ? { other: true, q: search.q } : { segmentId: search.segment, domain: search.domain, q: search.q }
+  const params = other ? { other: true, q: search.q } : { segmentId: search.segment, domain, q: search.q }
   const [term, setTerm] = useState(search.q ?? '')
   const [exporting, setExporting] = useState(false)
   useEffect(() => setTerm(search.q ?? ''), [search.q])
@@ -261,16 +264,6 @@ function PeopleList({
           {total !== undefined && <span className="sub">{total.toLocaleString()} {other ? (total === 1 ? 'address' : 'addresses') : total === 1 ? 'user' : 'users'}</span>}
         </div>
         <span className="spacer-grow" />
-        {!other && <label className="u-domain" title="Domain">
-          <Icon name="globe" size={14} />
-          <span className="ellipsis">{search.domain ?? 'All domains'}</span>
-          <Icon name="chevron-down" size={13} />
-          <select aria-label="Domain" value={search.domain ?? ''} onChange={(e) => go({ ...search, domain: e.target.value || undefined, person: undefined })}>
-            <option value="">All domains</option>
-            {domains.map((d) => <option key={d.domain} value={d.domain}>{d.domain} ({d.count.toLocaleString()})</option>)}
-            {search.domain && !domains.some((d) => d.domain === search.domain) && <option value={search.domain}>{search.domain}</option>}
-          </select>
-        </label>}
         <label className="s-search">
           <Icon name="search" size={14} />
           <input type="search" placeholder={other ? 'Search other contacts' : 'Search users'} aria-label={other ? 'Search other contacts' : 'Search users'} value={term} onChange={(e) => setTerm(e.target.value)} />

@@ -8,6 +8,7 @@ import { type InfiniteData, type QueryClient, useQuery, useQueryClient } from '@
 import { useEffect, useMemo, useRef } from 'react'
 import { useAccount } from '../lib/account'
 import { desktop } from '../lib/core'
+import { inDomain, useDomainScope } from '../lib/scope'
 import type { MailboxFolders, MessageSummary } from '../lib/types'
 import { type ListPage, mailSource, type MailSource, type Patch } from './source'
 
@@ -29,9 +30,15 @@ export function useFolders() {
 const inboxUnread = (mailboxes: MailboxFolders[] = []) =>
   mailboxes.reduce((n, mb) => n + (mb.folders.find((f) => f.role === 'inbox')?.unread ?? 0), 0)
 
-/** Unread messages across every inbox, for the rail. */
+/** Unread messages across every inbox, for the desktop app's badge. */
 export function useUnreadCount(): number {
   return inboxUnread(useFolders().data)
+}
+
+/** Unread messages in the inboxes on the domain picked in the rail (every inbox when none is). */
+export function useScopedUnreadCount(): number {
+  const scope = useDomainScope()
+  return inboxUnread(useFolders().data?.filter((mb) => inDomain(mb.address, scope)))
 }
 
 /**

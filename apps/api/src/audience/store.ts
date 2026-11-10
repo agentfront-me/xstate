@@ -438,9 +438,10 @@ export class AudienceStore extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------------------------
   // Dashboard
 
-  async overview(viewer: Viewer) {
+  async overview(viewer: Viewer, domain?: string) {
     const all = this.where({ match: 'all', conditions: [] }, viewer)
-    const total = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${all.sql}`, ...all.args)!.n
+    const scoped = domain ? this.where({ match: 'all', conditions: [] }, viewer, domain) : all
+    const total = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${scoped.sql}`, ...scoped.args)!.n
     const domains = this.all<{ domain: string; count: number }>(
       "SELECT domain, count(*) AS count FROM people WHERE kind <> 'contact' GROUP BY domain ORDER BY count DESC",
     )
@@ -451,7 +452,7 @@ export class AudienceStore extends DurableObject<Env> {
     const none = { match: 'all', conditions: [] } satisfies Filter
     const other = this.where(none, viewer, undefined, undefined, true)
     const otherContacts = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${other.sql}`, ...other.args)!.n
-    const segments = this.listSegments().map((s) => ({ ...s, count: this.count(s.filter, viewer) }))
+    const segments = this.listSegments().map((s) => ({ ...s, count: this.count(s.filter, viewer, domain) }))
     return { total, domains, contacts, otherContacts, segments }
   }
 
@@ -682,8 +683,9 @@ export class AudienceStore extends DurableObject<Env> {
       for (const c of compiled) args.push(...c.args)
     }
     if (domain) {
-      parts.push('p.domain = ?')
-      args.push(domain)
+      // The dashboard scopes by the organization's mail domain (acme.com), which covers its sites (www.acme.com).
+      parts.push("(p.domain = ? OR substr(p.domain, -length(?) - 1) = '.' || ?)")
+      args.push(domain, domain, domain)
     }
     const term = q?.trim().toLowerCase()
     if (term) {

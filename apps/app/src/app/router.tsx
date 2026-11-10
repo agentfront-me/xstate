@@ -42,7 +42,6 @@ const users = createRoute({
   path: '/users',
   validateSearch: (raw: Record<string, unknown>): UsersSearch => ({
     segment: str(raw.segment),
-    domain: typeof raw.domain === 'string' && raw.domain && raw.domain.length <= 253 ? raw.domain : undefined,
     q: typeof raw.q === 'string' && raw.q.trim() ? raw.q.slice(0, 200) : undefined,
     person: str(raw.person),
   }),

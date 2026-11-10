@@ -37,11 +37,12 @@ export const audienceOverview = defineOperation({
   name: 'audience_overview',
   description:
     'Summary of the Users section: how many people there are, the website domains they came from (with counts), ' +
-    'how many contacts and auto-saved "Other contacts" you have, and every saved segment with its filter and current member count.',
-  input: z.object({ organizationId: id }),
+    'how many contacts and auto-saved "Other contacts" you have, and every saved segment with its filter and current member count. ' +
+    'With domain, the total and segment counts cover only people on that domain or its subdomains.',
+  input: z.object({ organizationId: id, domain: domain.optional() }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/overview' },
   mcp: { readOnly: true },
-  run: ({ env, actor }, input) => audience.overview(env, actor, input.organizationId),
+  run: ({ env, actor }, input) => audience.overview(env, actor, input.organizationId, input.domain),
 })
 
 export const audienceSchema = defineOperation({

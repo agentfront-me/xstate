@@ -62,6 +62,8 @@ export type AgentSummary = {
   pendingApprovals?: number
   issue?: Issue | null
   monthSpend?: number
+  /** Mailbox ids it uses or watches (list only); none means it's on no domain. */
+  mailboxes?: string[]
 }
 
 export type Agent = AgentSummary & { draft: AgentConfig; published: AgentConfig | null }

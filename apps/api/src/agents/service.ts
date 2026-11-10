@@ -36,6 +36,8 @@ export type AgentSummary = {
   issue?: Issue | null
   /** Estimated AI spend this month, USD (list only). */
   monthSpend?: number
+  /** Mailbox ids it uses, draft and published, plus the ones its email triggers watch (list only). */
+  mailboxes?: string[]
 }
 
 /**
@@ -131,8 +133,10 @@ export async function list(env: Env, actor: Actor, organizationId: string): Prom
       const published = await publishedConfig(env, a)
       // Agents that never ran have nothing in their store worth waking it for.
       const h = published ? await (await store(env, a.id)).health() : { monthSpend: 0, failed24h: 0, lastError: null }
-      const found = findIssues(published?.config ?? parseConfig(a.draft), providers, connectors, h)
-      return { ...summary(a, published?.raw), pendingApprovals: pending.get(a.id) ?? 0, issue: found[0] ?? null, monthSpend: h.monthSpend }
+      const draft = parseConfig(a.draft)
+      const found = findIssues(published?.config ?? draft, providers, connectors, h)
+      const mailboxes = await agentMailboxes(env, a.id, { ...draft, mailboxes: [...draft.mailboxes, ...(published?.config.mailboxes ?? [])] })
+      return { ...summary(a, published?.raw), pendingApprovals: pending.get(a.id) ?? 0, issue: found[0] ?? null, monthSpend: h.monthSpend, mailboxes }
     }),
   )
 }

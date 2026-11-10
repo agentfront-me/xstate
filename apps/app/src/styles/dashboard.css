@@ -66,9 +66,23 @@ button:disabled { cursor: default; opacity: 0.4; }
 .nav-item .label { flex: 1; min-width: 0; }
 .nav-item .count, .nav-item kbd { font: 12px/1 inherit; color: var(--text-muted); }
 .rail-foot { margin-top: auto; padding: 8px; border-top: 1px solid var(--border); }
-.me { width: 100%; height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 8px; border-radius: 7px; }
+.me { width: 100%; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 7px; }
 .me:hover, .me[aria-current="page"] { background: var(--bg-active); }
-.me .name { color: var(--text-hi); }
+.me .name { flex: 1; min-width: 0; text-align: left; color: var(--text-hi); }
+.me .avatar { border: 1px solid var(--border); font-size: 12px; color: var(--text-toned); }
+.me .plan { flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
+.me > .icon { flex-shrink: 0; color: var(--text-dim); }
+/* Domain scope, in the rail's header */
+.domain-picker { position: relative; flex: 1; min-width: 0; margin: 0 0 0 4px; -webkit-app-region: no-drag; }
+.domain-picker-btn { width: 100%; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-toned); }
+.domain-picker-btn > .ellipsis { flex: 1; text-align: left; }
+.domain-picker-btn > .icon { flex-shrink: 0; color: var(--text-dim); }
+.domain-picker-btn:hover, .domain-picker-btn[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-hi); }
+.domain-menu { position: absolute; top: 32px; left: 0; z-index: 30; min-width: 200px; max-width: 280px; max-height: 60vh; overflow: auto; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18); display: flex; flex-direction: column; }
+.domain-menu button { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 14px; color: var(--text-hi); white-space: nowrap; }
+.domain-menu button > .ellipsis { flex: 1; text-align: left; }
+.domain-menu button:hover, .domain-menu button:focus-visible { background: var(--bg-muted); outline: none; }
+.domain-menu .pending { display: flex; color: var(--text-dim); }
 .avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--bg-muted); color: var(--text-hi); display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; letter-spacing: 0.02em; }
 .avatar.lg { width: 34px; height: 34px; font-size: 12px; border: 1px solid var(--border-strong); background: transparent; }
 .avatar.md { width: 28px; height: 28px; font-size: 11px; }
@@ -76,7 +90,7 @@ button:disabled { cursor: default; opacity: 0.4; }
 .rail.is-collapsed { width: 56px; }
 .rail.is-collapsed .rail-top { flex-direction: column; height: auto; padding: 12px 0 6px; gap: 6px; }
 .is-mac .rail.is-collapsed .rail-top { padding-top: 40px; }
-.rail.is-collapsed .history, .rail.is-collapsed .spacer { display: none; }
+.rail.is-collapsed .history, .rail.is-collapsed .spacer, .rail.is-collapsed .domain-picker { display: none; }
 .rail.is-collapsed .nav-item { justify-content: center; padding: 0; }
 .rail.is-collapsed .nav-item > :not(.icon), .rail.is-collapsed .me > :not(.avatar) { display: none; }
 .rail.is-collapsed .me { justify-content: center; padding: 0; }
@@ -380,7 +394,7 @@ button.sender { width: 100%; text-align: left; }
 @media (max-width: 900px) {
   .rail:not(.is-collapsed) { width: 56px; }
   .rail .rail-top { flex-direction: column; height: auto; padding: 12px 0 6px; gap: 6px; }
-  .rail .history, .rail .spacer { display: none; }
+  .rail .history, .rail .spacer, .rail .domain-picker { display: none; }
   .rail .nav-item { justify-content: center; padding: 0; }
   .rail .nav-item > :not(.icon), .rail .me > :not(.avatar) { display: none; }
   /* Counts become a dot on the icon. */

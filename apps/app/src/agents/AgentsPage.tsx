@@ -12,6 +12,7 @@ import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { isDemo, isOrgAdmin, useAccount } from '../lib/account'
 import { copyText, errorMessage, initials } from '../lib/core'
+import { useDomainScope } from '../lib/scope'
 import type { Mailbox } from '../lib/types'
 import { useMembers } from '../settings/members'
 import { ConfirmDialog, Menu, Modal, type MenuItem } from '../storage/dialogs'
@@ -81,13 +82,24 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
   const [creating, setCreating] = useState(false)
   // Refreshed every 30 s so "needs approval" badges appear without a reload.
   const list = useQuery({ queryKey: agentKeys.list(orgId), queryFn: () => agentsApi.list(orgId), refetchInterval: 30_000 })
-  const agents = list.data?.agents ?? []
+  // The domain picked in the rail: agents on its mailboxes, and agents tied to no mailbox (they belong to no domain).
+  const scope = useDomainScope()
+  const agents = useMemo(() => {
+    const all = list.data?.agents ?? []
+    if (!scope) return all
+    const onDomain = new Set(mailboxes.filter((m) => m.domainId === scope.id).map((m) => m.id))
+    return all.filter((a) => !a.mailboxes?.length || a.mailboxes.some((id) => onDomain.has(id)))
+  }, [list.data, scope, mailboxes])
   // On a phone the list is the starting point, so nothing is picked for you.
   const selected = agents.find((a) => a.id === search.agent) ?? (narrow ? undefined : agents[0])
 
+  // An open agent that's not on the newly picked domain closes.
+  const outOfScope = !!search.agent && !agents.some((a) => a.id === search.agent) && !!list.data?.agents.some((a) => a.id === search.agent)
+
   useEffect(() => {
-    if (!narrow && !search.agent && agents[0]) go({ agent: agents[0].id, tab: search.tab }, true)
-  }, [search.agent, agents[0]?.id, narrow])
+    if (outOfScope) go(agents[0] && !narrow ? { agent: agents[0].id, tab: search.tab } : {}, true)
+    else if (!narrow && !search.agent && agents[0]) go({ agent: agents[0].id, tab: search.tab }, true)
+  }, [search.agent, agents[0]?.id, narrow, outOfScope])
 
   return (
     // With no agents yet, the main pane (its "New agent" invitation) is what a phone shows.
@@ -119,14 +131,14 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
           !agents.length && (
             <div className="empty">
               <Icon name="bot" size={28} />
-              <strong>No agents yet</strong>
+              <strong>{scope && list.data.agents.length ? `No agents on ${scope.name}` : 'No agents yet'}</strong>
               <span>An agent follows your instructions and uses tools like email, contacts and storage search.</span>
               <button className="btn btn-primary" onClick={() => setCreating(true)}><Icon name="plus" size={14} />New agent</button>
             </div>
           )
         )}
       </main>
-      {creating && <NewAgentDialog orgId={orgId} mailboxes={mailboxes} onClose={() => setCreating(false)} onCreated={(id) => go({ agent: id, tab: 'setup' })} />}
+      {creating && <NewAgentDialog orgId={orgId} mailboxes={scope ? mailboxes.filter((m) => m.domainId === scope.id) : mailboxes} onClose={() => setCreating(false)} onCreated={(id) => go({ agent: id, tab: 'setup' })} />}
     </div>
   )
 }

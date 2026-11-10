@@ -71,7 +71,7 @@ const qs = (params: Record<string, string | number | boolean | undefined>) => {
 export const audienceKeys = { all: ['audience'] as const }
 
 export const audienceApi = {
-  overview: (org: string) => api<Overview>('GET', `/audience/orgs/${org}/overview`),
+  overview: (org: string, domain?: string) => api<Overview>('GET', `/audience/orgs/${org}/overview${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`),
   schema: (org: string) => api<Schema>('GET', `/audience/orgs/${org}/schema`),
   people: (org: string, p: ListParams & { cursor?: string }) =>
     api<{ people: Person[]; total: number; nextCursor: string | null }>('GET', `/audience/orgs/${org}/people${qs({ ...p, limit: 50 })}`),
