@@ -29,7 +29,7 @@
 .u-person-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .u-avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .u-avatar { overflow: hidden; border-radius: 50%; background: var(--bg-muted); border: 1px solid var(--border); color: var(--text-toned); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-weight: 500; letter-spacing: 0.02em; }
-.u-type { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; background: var(--bg-muted); color: var(--text-toned); font-size: 11px; }
+.u-type { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; background: var(--bg-muted); color: var(--text-toned); font-size: 11px; white-space: nowrap; }
 
 /* Profile panel: over the right of the table, as in the design. */
 .u-panel { position: absolute; top: 50px; right: 0; bottom: 0; width: 340px; max-width: 100%; z-index: 10; background: var(--panel); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.12); display: flex; flex-direction: column; min-height: 0; }
@@ -113,3 +113,4 @@
 .seg-kind label, .check-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .check-row { flex-wrap: wrap; margin: 10px 0 4px; font-size: 13px; color: var(--text-toned); }
 .check-row .dim { flex-basis: 100%; padding-left: 22px; }
+.u-other-note { padding: 10px 14px; border-bottom: 1px solid var(--border); }

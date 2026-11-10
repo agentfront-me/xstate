@@ -29,13 +29,15 @@ const listInput = z.object({
   filter: filterParam.optional(),
   domain: domain.optional(),
   q: z.string().trim().max(200).optional(),
+  // A query string: "true" lists your own auto-saved "Other contacts" (Google's) instead.
+  other: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
 })
 
 export const audienceOverview = defineOperation({
   name: 'audience_overview',
   description:
     'Summary of the Users section: how many people there are, the website domains they came from (with counts), ' +
-    'and every saved segment with its filter and current member count.',
+    'how many contacts and auto-saved "Other contacts" you have, and every saved segment with its filter and current member count.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/overview' },
   mcp: { readOnly: true },
@@ -56,7 +58,8 @@ export const audienceListPeople = defineOperation({
   description:
     'List people (users and leads, including anonymous visitors), most recently seen first. Narrow by segmentId, by ' +
     'an ad-hoc filter (JSON, same shape as a segment filter), by website domain, or by a search term (name, email, ' +
-    'phone, user id or visitor id). Pages of up to 100; pass nextCursor back as cursor.',
+    'phone, user id or visitor id). other=true lists your own auto-saved "Other contacts" instead (addresses imported ' +
+    'from Google that you emailed but never saved). Pages of up to 100; pass nextCursor back as cursor.',
   input: listInput.extend({ cursor: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/people' },
   mcp: { readOnly: true },

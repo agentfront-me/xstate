@@ -19,7 +19,10 @@ import { Avatar, PersonPanel } from './PersonPanel'
 import { PersonDialog } from './PersonDialog'
 import { SegmentDialog } from './SegmentDialog'
 
+/** segment 'other' is the viewer's own auto-saved "Other contacts", not a saved segment. */
 export type UsersSearch = { segment?: string; domain?: string; q?: string; person?: string }
+
+const OTHER = 'other'
 
 export function UsersPage({ search }: { search: UsersSearch }) {
   const account = useAccount()
@@ -51,6 +54,8 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
   const overview = useQuery({ queryKey: [...audienceKeys.all, 'overview'], queryFn: () => audienceApi.overview(orgId) })
   const segments = overview.data?.segments ?? []
   const segment = segments.find((s) => s.id === search.segment)
+  const other = search.segment === OTHER
+  const otherCount = overview.data?.otherContacts ?? 0
   const refresh = () => client.invalidateQueries({ queryKey: audienceKeys.all })
 
   const saveSegment = async (input: { name: string; filter: Segment['filter'] }, existing?: Segment) => {
@@ -105,6 +110,22 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
               )}
             </div>
           ))}
+          {/* Only yours, and only once an import brought some in (or you're looking at them). */}
+          {(otherCount > 0 || other) && (
+            <>
+              <div className="u-side-label">Contacts</div>
+              <button
+                className="s-section"
+                aria-current={other ? 'true' : undefined}
+                title="Addresses Gmail saved when you emailed someone. They're suggested when you write an address."
+                onClick={() => go({ segment: OTHER })}
+              >
+                <span className="s-tile"><Icon name="user" size={15} /></span>
+                <span className="s-section-name">Other contacts</span>
+                <span className="s-section-meta">{otherCount.toLocaleString()}</span>
+              </button>
+            </>
+          )}
         </nav>
       </aside>
 
@@ -113,9 +134,10 @@ function Users({ orgId, memberId, canManage, search }: { orgId: string; memberId
         canManage={canManage}
         search={search}
         go={go}
-        title={segment?.name ?? 'All users'}
+        title={other ? 'Other contacts' : (segment?.name ?? 'All users')}
+        other={other}
         domains={overview.data?.domains ?? []}
-        empty={overview.data?.total === 0}
+        empty={!other && overview.data?.total === 0}
         onAdd={() => setDialog({ kind: 'add-user' })}
       />
 
@@ -183,6 +205,7 @@ function PeopleList({
   search,
   go,
   title,
+  other,
   domains,
   empty,
   onAdd,
@@ -192,11 +215,12 @@ function PeopleList({
   search: UsersSearch
   go: (s: UsersSearch, replace?: boolean) => void
   title: string
+  other: boolean
   domains: { domain: string; count: number }[]
   empty: boolean
   onAdd: () => void
 }) {
-  const params = { segmentId: search.segment, domain: search.domain, q: search.q }
+  const params = other ? { other: true, q: search.q } : { segmentId: search.segment, domain: search.domain, q: search.q }
   const [term, setTerm] = useState(search.q ?? '')
   const [exporting, setExporting] = useState(false)
   useEffect(() => setTerm(search.q ?? ''), [search.q])
@@ -234,10 +258,10 @@ function PeopleList({
       <div className="col-head drag s-head">
         <div className="grow s-head-text">
           <span className="crumb" aria-current="page">{title}</span>
-          {total !== undefined && <span className="sub">{total.toLocaleString()} {total === 1 ? 'user' : 'users'}</span>}
+          {total !== undefined && <span className="sub">{total.toLocaleString()} {other ? (total === 1 ? 'address' : 'addresses') : total === 1 ? 'user' : 'users'}</span>}
         </div>
         <span className="spacer-grow" />
-        <label className="u-domain" title="Domain">
+        {!other && <label className="u-domain" title="Domain">
           <Icon name="globe" size={14} />
           <span className="ellipsis">{search.domain ?? 'All domains'}</span>
           <Icon name="chevron-down" size={13} />
@@ -246,16 +270,16 @@ function PeopleList({
             {domains.map((d) => <option key={d.domain} value={d.domain}>{d.domain} ({d.count.toLocaleString()})</option>)}
             {search.domain && !domains.some((d) => d.domain === search.domain) && <option value={search.domain}>{search.domain}</option>}
           </select>
-        </label>
+        </label>}
         <label className="s-search">
           <Icon name="search" size={14} />
-          <input type="search" placeholder="Search users" aria-label="Search users" value={term} onChange={(e) => setTerm(e.target.value)} />
+          <input type="search" placeholder={other ? 'Search other contacts' : 'Search users'} aria-label={other ? 'Search other contacts' : 'Search users'} value={term} onChange={(e) => setTerm(e.target.value)} />
         </label>
         <button className="btn btn-sm" onClick={() => void exportCsv()} disabled={exporting || !total}>
           {exporting ? <span className="spinner" /> : <Icon name="download" size={14} />}Export
         </button>
         {/* Anyone can add their own contacts; adding website leads needs the manage permission. */}
-        <button className="btn btn-sm btn-primary" onClick={onAdd}><Icon name="user-plus" size={14} />Add user</button>
+        {!other && <button className="btn btn-sm btn-primary" onClick={onAdd}><Icon name="user-plus" size={14} />Add user</button>}
       </div>
 
       <div className="s-scroll">
@@ -272,6 +296,12 @@ function PeopleList({
           <Setup orgId={orgId} canManage={canManage} />
         ) : (
           <div className="s-table" role="table" aria-label={title}>
+            {other && (
+              <p className="u-other-note muted small">
+                Addresses Gmail saved when you emailed someone, copied from Google. Only you see them; they're suggested when you write an address.
+                Open one to move it to your contacts.
+              </p>
+            )}
             <div className="s-row u-row s-row-head" role="row">
               <span role="columnheader">User</span>
               <span role="columnheader">Type</span>
@@ -280,7 +310,7 @@ function PeopleList({
               <span role="columnheader" className="num">Last seen</span>
             </div>
             {people.length === 0 ? (
-              <div className="s-empty">{search.q ? `No one matches “${search.q}”.` : 'No one matches yet.'}</div>
+              <div className="s-empty">{search.q ? `No one matches “${search.q}”.` : other ? 'No other contacts.' : 'No one matches yet.'}</div>
             ) : (
               people.map((p) => <PersonRow key={p.id} person={p} selected={search.person === p.id} onOpen={() => go({ ...search, person: p.id })} />)
             )}

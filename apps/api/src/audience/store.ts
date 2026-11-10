@@ -136,7 +136,8 @@ type PersonRow = {
 type SegmentRow = { id: string; name: string; icon: SegmentIcon; filter: string; created_at: string; updated_at: string }
 type Binding = string | number | null
 
-export type ListQuery = { segmentId?: string; filter?: Filter; domain?: string; q?: string; cursor?: string; limit: number; viewer: Viewer }
+/** `other`: list the viewer's own auto-saved "Other contacts" instead of the people and contacts lists show. */
+export type ListQuery = { segmentId?: string; filter?: Filter; domain?: string; q?: string; other?: boolean; cursor?: string; limit: number; viewer: Viewer }
 
 const toPerson = (r: PersonRow): Person => ({
   id: r.id,
@@ -447,8 +448,11 @@ export class AudienceStore extends DurableObject<Env> {
       `SELECT count(*) AS n FROM people p WHERE p.kind = 'contact' AND ${all.sql}`,
       ...all.args,
     )!.n
+    const none = { match: 'all', conditions: [] } satisfies Filter
+    const other = this.where(none, viewer, undefined, undefined, true)
+    const otherContacts = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${other.sql}`, ...other.args)!.n
     const segments = this.listSegments().map((s) => ({ ...s, count: this.count(s.filter, viewer) }))
-    return { total, domains, contacts, segments }
+    return { total, domains, contacts, otherContacts, segments }
   }
 
   private listSegments(): Segment[] {
@@ -474,7 +478,7 @@ export class AudienceStore extends DurableObject<Env> {
     const segment = query.segmentId ? this.one<SegmentRow>('SELECT * FROM segments WHERE id = ?', query.segmentId) : null
     if (query.segmentId && !segment) return null
     const filter = segment ? toSegment(segment).filter : (query.filter ?? { match: 'all', conditions: [] })
-    const base = this.where(filter, query.viewer, query.domain, query.q)
+    const base = this.where(filter, query.viewer, query.domain, query.q, query.other)
     const total = this.one<{ n: number }>(`SELECT count(*) AS n FROM people p WHERE ${base.sql}`, ...base.args)!.n
     let sql = base.sql
     const args = [...base.args]
@@ -663,10 +667,13 @@ export class AudienceStore extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------------------------
   // Filters → SQL. Every value is a bound parameter; attribute keys go into a JSON path that is itself bound.
 
-  private where(filter: Filter, viewer: Viewer, domain?: string, q?: string): { sql: string; args: Binding[] } {
-    // Other members' contacts are never shown, and auto-saved "Other contacts" stay out of lists and counts.
+  private where(filter: Filter, viewer: Viewer, domain?: string, q?: string, other = false): { sql: string; args: Binding[] } {
+    // Other members' contacts are never shown, and auto-saved "Other contacts" stay out of lists and counts unless
+    // asked for: then only the viewer's own (they're never shared).
     const parts: string[] = [
-      "(p.kind <> 'contact' OR ((p.owner_member_id IS NULL OR p.owner_member_id = ?) AND coalesce(json_extract(p.attributes, '$.other'), 0) = 0))",
+      other
+        ? "(p.kind = 'contact' AND p.owner_member_id = ? AND coalesce(json_extract(p.attributes, '$.other'), 0) = 1)"
+        : "(p.kind <> 'contact' OR ((p.owner_member_id IS NULL OR p.owner_member_id = ?) AND coalesce(json_extract(p.attributes, '$.other'), 0) = 0))",
     ]
     const args: Binding[] = [viewer.memberId]
     if (filter.conditions.length) {

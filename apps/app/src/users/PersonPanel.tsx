@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
+import { toast } from '../components/Toast'
 import { useAccount } from '../lib/account'
 import { errorMessage, initials } from '../lib/core'
 import type { MessageSummary } from '../lib/types'
@@ -16,6 +17,7 @@ import {
   audienceApi,
   audienceKeys,
   canEditPerson,
+  isOtherContact,
   displayName,
   isAnonymous,
   kindLabel,
@@ -50,6 +52,21 @@ export function PersonPanel({
   const data = query.data
   const p = data?.person
   const canEdit = p ? canEditPerson(p, memberId, canManage) : false
+  const [moving, setMoving] = useState(false)
+  // An auto-saved address becomes a real contact: shown in All users, still yours only.
+  const moveToContacts = async () => {
+    if (!p) return
+    setMoving(true)
+    try {
+      await audienceApi.updatePerson(orgId, p.id, { attributes: { other: null } })
+      toast(`${displayName(p)} moved to your contacts`)
+      onSaved()
+    } catch (e) {
+      toast(errorMessage(e))
+    } finally {
+      setMoving(false)
+    }
+  }
 
   return (
     <aside className="u-panel" aria-label="Profile">
@@ -123,7 +140,12 @@ export function PersonPanel({
 
             {canEdit && (
               <div className="u-panel-foot">
-                <button className="btn btn-sm" onClick={() => setDialog('delete')}><Icon name="trash" size={13} />Delete user</button>
+                {isOtherContact(p) && (
+                  <button className="btn btn-sm" disabled={moving} aria-busy={moving} onClick={() => void moveToContacts()}>
+                    <Icon name="user-plus" size={13} />Move to contacts
+                  </button>
+                )}
+                <button className="btn btn-sm" onClick={() => setDialog('delete')}><Icon name="trash" size={13} />{p.kind === 'contact' ? 'Delete contact' : 'Delete user'}</button>
               </div>
             )}
           </div>
@@ -136,7 +158,6 @@ export function PersonPanel({
           onClose={() => setDialog(null)}
           onSubmit={async (fields: PersonFields) => {
             await audienceApi.updatePerson(orgId, p.id, fields)
-            void query.refetch()
             onSaved()
           }}
         />

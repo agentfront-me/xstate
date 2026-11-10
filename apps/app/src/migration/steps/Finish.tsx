@@ -275,6 +275,7 @@ export function DoneStep({ ctx }: { ctx: Ctx }) {
       <h1>{ctx.org.name} is on xstate</h1>
       <p>
         {num(totals.users)} users, {num(totals.messages)} messages, {num(totals.contacts)} contacts{totals.events ? `, ${num(totals.events)} calendar events` : ''} and {num(totals.files)} files moved.
+        {totals.contacts > 0 && ' Addresses Gmail saved on its own are under Users → Other contacts.'}
         <br />
         {status?.accessRemoved ? `Google access was removed on ${status.accessRemovedAt ? day(status.accessRemovedAt) : finished}.` : 'Google access is still on; Settings will remind you to remove it.'}{' '}
         {status && `Invites went out to ${plural(status.newMembers.length, 'member')}.`}

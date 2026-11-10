@@ -42,7 +42,7 @@ export type Filter = { match: 'all' | 'any'; conditions: Condition[] }
 export type SegmentIcon = 'layers' | 'user' | 'users' | 'target' | 'mail' | 'circle-check' | 'hourglass' | 'user-minus' | 'clock' | 'star'
 export type Segment = { id: string; name: string; icon: SegmentIcon; filter: Filter; count: number }
 
-export type Overview = { total: number; domains: { domain: string; count: number }[]; contacts?: number; segments: Segment[] }
+export type Overview = { total: number; domains: { domain: string; count: number }[]; contacts?: number; otherContacts?: number; segments: Segment[] }
 export type Schema = { attributes: { key: string; type: string }[]; events: { name: string; total: number }[] }
 export type PersonDetail = {
   person: Person
@@ -53,16 +53,17 @@ export type PersonDetail = {
 }
 export type PersonFields = { name?: string | null; email?: string | null; phone?: string | null; attributes?: Record<string, string | number | boolean | null> }
 
-export type ListParams = { segmentId?: string; domain?: string; q?: string }
+/** other: your own auto-saved "Other contacts" (from a Google import) instead of the people list. */
+export type ListParams = { segmentId?: string; domain?: string; q?: string; other?: boolean }
 
 export type ApiKeys = {
   publishable: { key: string; createdAt: string }
   secret: { masked: string; createdAt: string; lastUsedAt: string | null }
 }
 
-const qs = (params: Record<string, string | number | undefined>) => {
+const qs = (params: Record<string, string | number | boolean | undefined>) => {
   const s = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') s.set(k, String(v))
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== false) s.set(k, String(v))
   const out = s.toString()
   return out ? `?${out}` : ''
 }
@@ -100,7 +101,10 @@ export const keysApi = {
 // ---------------------------------------------------------------------------------------------------------------
 // Display helpers
 
-export const kindLabel = (p: Person) => (p.kind === 'user' ? 'User' : p.kind === 'lead' ? 'Lead' : 'Contact')
+/** Auto-saved by Gmail (imported from Google's "Other contacts"): kept out of lists, used for suggestions. */
+export const isOtherContact = (p: Person) => p.kind === 'contact' && p.attributes.other === true
+
+export const kindLabel = (p: Person) => (p.kind === 'user' ? 'User' : p.kind === 'lead' ? 'Lead' : isOtherContact(p) ? 'Other contact' : 'Contact')
 
 /** Website people and shared contacts need the manage permission; your own contacts are yours to change. */
 export const canEditPerson = (p: Person, memberId: string | undefined, canManage: boolean) =>
