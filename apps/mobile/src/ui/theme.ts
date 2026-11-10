@@ -14,6 +14,10 @@ export const c = {
   faint: '#52525b',
   danger: '#f87171',
   dangerBg: 'rgba(248,113,113,0.12)',
+  blue: '#3b82f6',
+  blueStrong: '#2563eb',
+  orange: '#f59e0b',
+  purple: '#a78bfa',
   warn: '#fbbf24',
   warnBg: 'rgba(251,191,36,0.12)',
 } as const

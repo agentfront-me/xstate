@@ -4,7 +4,7 @@ export function formatTime(iso: string): string {
   const d = new Date(iso)
   const now = new Date()
   const days = Math.round((Date.parse(now.toDateString()) - Date.parse(d.toDateString())) / 86_400_000)
-  if (days === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (days === 0) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   if (days === 1) return 'Yesterday'
   if (days < 7) return d.toLocaleDateString([], { weekday: 'short' })
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() && { year: 'numeric' }) })
