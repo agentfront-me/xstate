@@ -9,14 +9,14 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#09090b",
     "ios": {
-      "bundleIdentifier": "com.xstate.app",
+      "bundleIdentifier": "com.xstate.app.dev",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.xstate.app",
+      "package": "com.xstate.app.dev",
       "adaptiveIcon": {
         "backgroundColor": "#09090b",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -47,6 +47,9 @@
       "eas": {
         "projectId": "6f6d0098-0e39-4d1c-8c34-cb6cdfe64d07"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6f6d0098-0e39-4d1c-8c34-cb6cdfe64d07"
     }
   }
 }

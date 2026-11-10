@@ -1,13 +1,13 @@
 // The inbox. The title is a menu of views (Inbox, Pinned, Unread, Archived, Spam) with the picked domain under it;
-// conversations are grouped by day, with pinned ones first in the Inbox. Pull down to refresh, swipe a row right to
-// pin it or left to archive it. Search opens from the icon or the box at the bottom.
+// conversations are grouped by day, with pinned ones first in the Inbox. Pull down to refresh. Swipe a row right to
+// pin it or left to archive it: the row follows the finger, and let go past halfway it slides off and the list closes
+// up. Search opens from the icon or the box at the bottom.
 
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { Archive, ArchiveRestore, Check, ChevronDown, Menu, PenLine, Pin, PinOff, Search, Sparkles, X } from 'lucide-react-native'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native'
-import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAccount } from '@/lib/account'
 import { api, errorMessage, qs } from '@/lib/api'
@@ -15,6 +15,7 @@ import { formatTime, sender } from '@/lib/format'
 import { usePickedDomain } from '@/lib/prefs'
 import type { FolderRole, FolderView, MessageSummary } from '@/lib/types'
 import { Empty, Failed, IconButton, Loading, useToast } from '@/ui/kit'
+import { SwipeRow } from '@/ui/SwipeRow'
 import { c, pad } from '@/ui/theme'
 
 type ViewId = 'inbox' | 'pinned' | 'unread' | 'archived' | 'spam'
@@ -62,6 +63,8 @@ export function Email({ onMenu }: { onMenu: () => void }) {
   const [searching, setSearching] = useState(false)
   const [text, setText] = useState('')
   const [query, setQuery] = useState('')
+  // Bumped when a swipe's change fails, so the rows it hid are drawn again.
+  const [generation, setGeneration] = useState(0)
   const view = VIEWS.find((v) => v.id === viewId)!
 
   // Search as you type, a moment after the last key.
@@ -100,7 +103,10 @@ export function Email({ onMenu }: { onMenu: () => void }) {
       void client.invalidateQueries({ queryKey: ['mail', 'list'] })
       void client.invalidateQueries({ queryKey: ['mail', 'folders'] })
     },
-    onError: (err) => toast(errorMessage(err)),
+    onError: (err) => {
+      toast(errorMessage(err))
+      setGeneration((g) => g + 1)
+    },
   })
   const pin = (m: MessageSummary) => update.mutate({ m, patch: { pinned: !m.pinned }, done: m.pinned ? 'Unpinned' : 'Pinned' })
   const archive = (m: MessageSummary) =>
@@ -156,7 +162,8 @@ export function Email({ onMenu }: { onMenu: () => void }) {
       ) : (
         <SectionList
           sections={sections}
-          keyExtractor={(m) => `${m.mailboxId}:${m.id}`}
+          // A row that slid away stays hidden until the list comes back with it changed (or gone), which gives it a new key.
+          keyExtractor={(m) => `${m.mailboxId}:${m.id}:${m.pinned}:${m.folder}:${generation}`}
           renderItem={({ item }) => <MessageRow message={item} restore={viewId === 'archived' || viewId === 'spam'} onPin={pin} onArchive={archive} />}
           renderSectionHeader={({ section }) => <Text style={s.group}>{section.title}</Text>}
           stickySectionHeadersEnabled={false}
@@ -208,34 +215,11 @@ export function Email({ onMenu }: { onMenu: () => void }) {
 type RowProps = { message: MessageSummary; restore: boolean; onPin: (m: MessageSummary) => void; onArchive: (m: MessageSummary) => void }
 
 function MessageRow({ message: m, restore, onPin, onArchive }: RowProps) {
-  const swipe = useRef<SwipeableMethods>(null)
   const open = () => router.push({ pathname: '/thread', params: { mailboxId: m.mailboxId, threadId: m.threadId, id: m.id, subject: m.subject } })
-  const PinIcon = m.pinned ? PinOff : Pin
-  const ArchiveIcon = restore ? ArchiveRestore : Archive
   return (
-    <ReanimatedSwipeable
-      ref={swipe}
-      // The coloured side fills the row, so "open" is a set distance, not half its width.
-      leftThreshold={90}
-      rightThreshold={90}
-      overshootLeft={false}
-      overshootRight={false}
-      // Swiping right uncovers the left side (pin); swiping left uncovers the right side (archive).
-      renderLeftActions={() => (
-        <View style={[s.action, { backgroundColor: c.orange, alignItems: 'flex-start' }]}>
-          <PinIcon color={c.bg} size={22} strokeWidth={2} />
-        </View>
-      )}
-      renderRightActions={() => (
-        <View style={[s.action, { backgroundColor: c.borderStrong, alignItems: 'flex-end' }]}>
-          <ArchiveIcon color={c.text} size={22} strokeWidth={2} />
-        </View>
-      )}
-      onSwipeableOpen={(direction) => {
-        swipe.current?.close()
-        if (direction === 'right') onPin(m)
-        else onArchive(m)
-      }}
+    <SwipeRow
+      right={{ icon: m.pinned ? PinOff : Pin, label: m.pinned ? 'Unpin' : 'Pin', color: c.pinSwipe, ink: c.bg, onDone: () => onPin(m) }}
+      left={{ icon: restore ? ArchiveRestore : Archive, label: restore ? 'Move to Inbox' : 'Archive', color: c.archiveSwipe, onDone: () => onArchive(m) }}
     >
       <Pressable onPress={open} style={({ pressed }) => [s.row, pressed && { backgroundColor: c.card }]}>
         <View style={s.dotColumn}>{m.seen ? null : <View style={s.dot} />}</View>
@@ -258,7 +242,7 @@ function MessageRow({ message: m, restore, onPin, onArchive }: RowProps) {
           </View>
         </View>
       </Pressable>
-    </ReanimatedSwipeable>
+    </SwipeRow>
   )
 }
 
@@ -276,7 +260,6 @@ const s = StyleSheet.create({
   subject: { color: c.text, fontSize: 16, marginTop: 2 },
   preview: { flex: 1, color: c.dim, fontSize: 15, marginTop: 2 },
   time: { color: c.muted, fontSize: 13, fontWeight: '600' },
-  action: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
   bottom: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: pad, paddingTop: 8, backgroundColor: c.bg },
   ask: { flex: 1, height: 52, borderRadius: 26, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, backgroundColor: c.card, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border },
   compose: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: c.blueStrong },

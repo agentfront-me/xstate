@@ -14,6 +14,9 @@ export const c = {
   faint: '#52525b',
   danger: '#f87171',
   dangerBg: 'rgba(248,113,113,0.12)',
+  // The inbox's swipe actions, sampled from the prototype: pin is green, archive grey.
+  pinSwipe: '#4ddf94',
+  archiveSwipe: '#52525b',
   blue: '#3b82f6',
   blueStrong: '#2563eb',
   orange: '#f59e0b',

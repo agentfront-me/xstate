@@ -1,15 +1,17 @@
-// One conversation: every message in it, oldest first, with pin, archive and reply.
+// One conversation: every message in it, oldest first (HTML mail drawn as designed, ui/MessageBody.tsx), with pin,
+// archive and reply.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Archive, Paperclip, Pin, PinOff } from 'lucide-react-native'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useAccount } from '@/lib/account'
 import { api, errorMessage } from '@/lib/api'
 import { formatTime, initial, sender } from '@/lib/format'
 import type { FolderRole, Message } from '@/lib/types'
 import { Avatar, BackButton, Failed, Header, IconButton, Loading, Screen, useToast } from '@/ui/kit'
+import { hasRemoteImages, MessageBody } from '@/ui/MessageBody'
 import { c, pad } from '@/ui/theme'
 
 type Patch = { seen?: boolean; pinned?: boolean; folder?: FolderRole }
@@ -20,6 +22,8 @@ export default function Thread() {
   const client = useQueryClient()
   const toast = useToast()
   const mine = new Set(mailboxes.map((m) => m.address.toLowerCase()))
+  // Remote images (and the tracking pixels among them) stay hidden until asked for, for the whole conversation.
+  const [showImages, setShowImages] = useState(false)
 
   const key = ['mail', 'thread', params.mailboxId, params.threadId]
   const thread = useQuery({
@@ -118,9 +122,12 @@ export default function Thread() {
                   </View>
                   <Text style={s.time}>{formatTime(m.receivedAt)}</Text>
                 </View>
-                <Text selectable style={s.body}>
-                  {m.text.trim() || m.preview}
-                </Text>
+                {hasRemoteImages(m.html) && !showImages ? (
+                  <Pressable onPress={() => setShowImages(true)} hitSlop={6} style={{ alignSelf: 'flex-start', marginBottom: 10 }}>
+                    <Text style={{ color: c.muted, fontSize: 14, textDecorationLine: 'underline' }}>Show images</Text>
+                  </Pressable>
+                ) : null}
+                <MessageBody html={m.html} text={m.text.trim() || m.preview} showImages={showImages} />
                 {m.attachments.filter((a) => !a.inline).length ? (
                   <View style={s.attachments}>
                     {m.attachments
