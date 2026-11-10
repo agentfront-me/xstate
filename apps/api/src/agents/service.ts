@@ -13,8 +13,10 @@ import type { AgentRow } from '../db/agents'
 import { ApiError } from '../errors'
 import { isAdmin, loadMember } from '../mailserver/access'
 import { agentConfig, defaultConfig, parseConfig, type AgentConfig } from './config'
+import { formatUsd } from './prices'
 import { label } from './providers'
-import type { AgentStore, RunRow, StepRow } from './store'
+import type { RunTrigger } from './run'
+import type { AgentStore, FactRow, RunRow, StepRow } from './store'
 import { pendingCounts } from './approvals'
 import { builtinCatalog } from './tools'
 
@@ -30,7 +32,21 @@ export type AgentSummary = {
   updatedAt: string
   /** Tool calls waiting for a person (list only). */
   pendingApprovals?: number
+  /** The most pressing problem, if any (list only). */
+  issue?: Issue | null
+  /** Estimated AI spend this month, USD (list only). */
+  monthSpend?: number
 }
+
+/**
+ * Something that stops or hurts the agent, with what fixes it: shown in the list and as a banner on its page.
+ * Worst first: key problems stop every run; connectors stop some tools; the cap skips runs; failures are past runs.
+ */
+export type Issue =
+  | { kind: 'key'; message: string; action: 'fix_key' }
+  | { kind: 'connector'; message: string; action: 'sign_in'; connectorId: string }
+  | { kind: 'spend'; message: string; action: 'raise_cap'; blocking: boolean }
+  | { kind: 'failures'; message: string; action: 'retry'; count: number }
 
 export type AgentDetail = AgentSummary & { draft: AgentConfig; published: AgentConfig | null }
 
@@ -104,8 +120,92 @@ export const store = (env: Env, agentId: string) => getAgentByName<Env, AgentSto
 
 export async function list(env: Env, actor: Actor, organizationId: string): Promise<AgentSummary[]> {
   await requireManager(env, actor, organizationId)
-  const [agents, pending] = await Promise.all([db.listAgents(env.DB, organizationId), pendingCounts(env, organizationId)])
-  return Promise.all(agents.map(async (a) => ({ ...summary(a, (await publishedConfig(env, a))?.raw), pendingApprovals: pending.get(a.id) ?? 0 })))
+  const [agents, pending, providers, connectors] = await Promise.all([
+    db.listAgents(env.DB, organizationId),
+    pendingCounts(env, organizationId),
+    db.listProviders(env.DB, organizationId),
+    connectorStatuses(env, organizationId),
+  ])
+  return Promise.all(
+    agents.map(async (a) => {
+      const published = await publishedConfig(env, a)
+      // Agents that never ran have nothing in their store worth waking it for.
+      const h = published ? await (await store(env, a.id)).health() : { monthSpend: 0, failed24h: 0, lastError: null }
+      const found = findIssues(published?.config ?? parseConfig(a.draft), providers, connectors, h)
+      return { ...summary(a, published?.raw), pendingApprovals: pending.get(a.id) ?? 0, issue: found[0] ?? null, monthSpend: h.monthSpend }
+    }),
+  )
+}
+
+type ConnectorStatus = { id: string; name: string; status: string }
+
+const connectorStatuses = async (env: Env, organizationId: string) =>
+  (await env.DB.prepare('SELECT id, name, status FROM connectors WHERE organization_id = ?').bind(organizationId).all<ConnectorStatus>()).results
+
+function findIssues(
+  config: AgentConfig,
+  providers: db.ProviderRow[],
+  connectors: ConnectorStatus[],
+  h: { monthSpend: number; failed24h: number; lastError: string | null },
+): Issue[] {
+  const issues: Issue[] = []
+  if (config.model) {
+    const name = label(config.model.provider)
+    const p = providers.find((x) => x.provider === config.model!.provider)
+    if (!p) issues.push({ kind: 'key', message: `No ${name} key: add one in Settings → AI providers.`, action: 'fix_key' })
+    else if (p.status === 'invalid') issues.push({ kind: 'key', message: `${name} rejected the organization’s key.`, action: 'fix_key' })
+    else if (p.status === 'no_credit') issues.push({ kind: 'key', message: `The ${name} account is out of credit.`, action: 'fix_key' })
+  }
+  for (const [id, tools] of Object.entries(config.tools.connectors)) {
+    const c = connectors.find((x) => x.id === id)
+    if (!tools.length || !c || c.status === 'connected') continue
+    issues.push({
+      kind: 'connector',
+      message: c.status === 'needs_auth' ? `${c.name} needs someone to sign in again.` : `${c.name} isn’t working.`,
+      action: 'sign_in',
+      connectorId: c.id,
+    })
+  }
+  const cap = config.spend.monthlyCapUsd
+  if (cap !== null && h.monthSpend >= cap) {
+    const blocking = config.spend.whenReached === 'pause'
+    issues.push({
+      kind: 'spend',
+      message: blocking
+        ? `Reached this month’s spend cap of ${formatUsd(cap)}: new runs are skipped until next month.`
+        : `Over this month’s spend cap of ${formatUsd(cap)} (${formatUsd(h.monthSpend)} so far).`,
+      action: 'raise_cap',
+      blocking,
+    })
+  }
+  if (h.failed24h) {
+    issues.push({
+      kind: 'failures',
+      message: `${h.failed24h} run${h.failed24h === 1 ? '' : 's'} failed in the last day${h.lastError ? `: ${h.lastError.slice(0, 200)}` : '.'}`,
+      action: 'retry',
+      count: h.failed24h,
+    })
+  }
+  return issues
+}
+
+/** The agent's problems (worst first), this month's spend against its cap, and how many facts it remembers. */
+export async function health(env: Env, actor: Actor, agentId: string) {
+  const agent = await agentContext(env, actor, agentId)
+  const [published, providers, connectors, s] = await Promise.all([
+    publishedConfig(env, agent),
+    db.listProviders(env.DB, agent.organization_id),
+    connectorStatuses(env, agent.organization_id),
+    store(env, agent.id),
+  ])
+  const config = published?.config ?? parseConfig(agent.draft)
+  const h = await s.health()
+  return {
+    issues: findIssues(config, providers, connectors, h),
+    monthSpend: h.monthSpend,
+    cap: config.spend.monthlyCapUsd,
+    memoryFacts: await s.memoryCount(),
+  }
 }
 
 const name = (s: string) => {
@@ -258,8 +358,12 @@ export type Run = {
   finishedAt: string | null
   steps: number
   tokens: { input: number; output: number }
+  /** Estimated USD. */
+  cost: number
   summary: string | null
   error: string | null
+  /** The run that retried this failed one. */
+  retriedAs: string | null
 }
 
 const presentRun = (r: RunRow): Run => ({
@@ -274,8 +378,10 @@ const presentRun = (r: RunRow): Run => ({
   finishedAt: r.finished_at,
   steps: r.steps,
   tokens: { input: r.input_tokens, output: r.output_tokens },
+  cost: r.cost_usd ?? 0,
   summary: r.summary,
   error: r.error,
+  retriedAs: r.retried_as ?? null,
 })
 
 /**
@@ -313,7 +419,6 @@ export async function startRun(env: Env, actor: Actor, agentId: string, input: {
       trigger: input.draft ? { kind: 'test', label: 'Test' } : { kind: 'manual', label: 'Run now' },
       mailboxes: await agentMailboxes(env, agent.id, config),
     },
-    config.limits,
   )
   if ('skipped' in result) throw new ApiError('limit_reached', result.skipped, 429)
   return { runId: result.runId }
@@ -343,6 +448,91 @@ export async function stats(env: Env, actor: Actor, agentId: string) {
     runs7d: s.week.runs,
     successRate: s.week.finished ? s.week.ok / s.week.finished : null,
     tokens7d: s.week.tokens,
+    cost7d: s.week.cost,
+    avgCost: s.week.runs ? s.week.cost / s.week.runs : null,
+    monthSpend: s.monthSpend,
     month: s.month,
   }
+}
+
+/** Runs failed runs from the last day again (up to 20, oldest first) with the published version, once each. */
+export async function retryFailed(env: Env, actor: Actor, agentId: string) {
+  const agent = await agentContext(env, actor, agentId)
+  const published = await publishedConfig(env, agent)
+  if (!published) throw new ApiError('not_ready', 'Publish the agent first.', 409)
+  if (!published.publishedBy) throw new ApiError('not_ready', 'The person who published this version left. Publish it again.', 409)
+  const problem = await blocker(env, agent.organization_id, published.config)
+  if (problem) throw new ApiError('not_ready', problem, 409)
+  const s = await store(env, agent.id)
+  const mailboxes = await agentMailboxes(env, agent.id, published.config)
+  let started = 0
+  let skipped = 0
+  let reason: string | null = null
+  for (const run of await s.failedRuns(20)) {
+    // An email trigger's AI filter applies again: the run may have failed before it was checked.
+    const trigger = run.trigger_id ? await db.findTrigger(env.DB, run.trigger_id) : null
+    const filter = trigger?.kind === 'email' ? ((JSON.parse(trigger.config) as { aiFilter?: string }).aiFilter || undefined) : undefined
+    const result = await s.startRun({
+      organizationId: agent.organization_id,
+      agentId: agent.id,
+      version: agent.published_version,
+      actorUserId: published.publishedBy,
+      config: published.config,
+      task: run.task,
+      dryRun: false,
+      trigger: { kind: run.trigger_kind as RunTrigger['kind'], label: `${run.trigger_label} (retry)`.slice(0, 200), triggerId: run.trigger_id ?? undefined, sender: run.sender ?? undefined },
+      filter,
+      mailboxes,
+    })
+    await s.markRetried(run.id, result.runId)
+    if ('skipped' in result) {
+      skipped++
+      reason = result.skipped
+    } else started++
+  }
+  return { started, skipped, reason }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory
+
+export type Fact = { id: string; subject: string; fact: string; sourceRun: string | null; createdAt: string; updatedAt: string }
+
+const presentFact = (f: FactRow): Fact => ({ id: f.id, subject: f.subject, fact: f.fact, sourceRun: f.source_run, createdAt: f.created_at, updatedAt: f.updated_at })
+
+export async function listMemory(env: Env, actor: Actor, agentId: string, q: { query?: string; subject?: string }) {
+  const agent = await agentContext(env, actor, agentId)
+  const s = await store(env, agent.id)
+  const facts = await s.recall({ query: q.query, subject: q.subject, limit: 500 })
+  return { facts: facts.map(presentFact), total: await s.memoryCount() }
+}
+
+const factText = (v: string | undefined, what: string, max: number) => {
+  if (v === undefined) return undefined
+  const t = v.trim()
+  if (!t || t.length > max) throw new ApiError('invalid_input', `Give the ${what} in up to ${max} characters`)
+  return t
+}
+
+export async function addFact(env: Env, actor: Actor, agentId: string, input: { subject: string; fact: string }) {
+  const agent = await agentContext(env, actor, agentId)
+  const row = await (await store(env, agent.id)).remember(factText(input.subject, 'subject', 200)!, factText(input.fact, 'fact', 1000)!, null)
+  return presentFact(row)
+}
+
+export async function updateFact(env: Env, actor: Actor, agentId: string, factId: string, input: { subject?: string; fact?: string }) {
+  const agent = await agentContext(env, actor, agentId)
+  const row = await (await store(env, agent.id)).updateFact(factId, { subject: factText(input.subject, 'subject', 200), fact: factText(input.fact, 'fact', 1000) })
+  if (!row) throw new ApiError('not_found', 'No such fact', 404)
+  return presentFact(row)
+}
+
+export async function deleteFact(env: Env, actor: Actor, agentId: string, factId: string) {
+  const agent = await agentContext(env, actor, agentId)
+  if (!(await (await store(env, agent.id)).forget(factId))) throw new ApiError('not_found', 'No such fact', 404)
+}
+
+export async function clearMemory(env: Env, actor: Actor, agentId: string) {
+  const agent = await agentContext(env, actor, agentId)
+  return { deleted: await (await store(env, agent.id)).clearMemory() }
 }

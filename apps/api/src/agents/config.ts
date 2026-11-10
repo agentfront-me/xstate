@@ -11,6 +11,8 @@ export const LIMITS = {
   maxSteps: { min: 1, max: 30, default: 12 },
   maxRunsPerDay: { min: 1, max: 10_000, default: 500 },
   perSenderPerHour: { min: 1, max: 1000, default: 10 },
+  monthlyCapUsd: { min: 1, max: 100_000 },
+  retentionDays: { min: 1, max: 3650, default: 90 },
 }
 
 export const agentConfig = z.object({
@@ -28,9 +30,21 @@ export const agentConfig = z.object({
        * Per tool: does a call wait for a person? Tools not listed use their default (agents/tools.ts: sending and
        * invitations ask, drafts and moving mail don't). Read-only tools never ask.
        */
-      approval: z.record(z.string().max(64), z.enum(['always', 'never'])).default({}),
+      approval: z.record(z.string().max(200), z.enum(['always', 'never', 'when'])).default({}),
+      /** Connector tools the agent may use: connector id → tool names (agents/connectors.ts). */
+      connectors: z.record(z.string().max(64), z.array(z.string().max(128)).max(200)).default({}),
+      /**
+       * For tools set to "when": the call needs approval only if its input matches, e.g. amount > 100. Keys are the
+       * same as in `approval` (built-in tool name, or "<connector id>/<tool>").
+       */
+      conditions: z
+        .record(
+          z.string().max(200),
+          z.object({ field: z.string().min(1).max(100), op: z.enum(['gt', 'lt', 'eq', 'contains']), value: z.union([z.string().max(200), z.number()]) }),
+        )
+        .default({}),
     })
-    .default({ builtin: [], approval: {} }),
+    .default({ builtin: [], approval: {}, connectors: {}, conditions: {} }),
   /**
    * Mailboxes the agent may read and act in (mailbox ids). The mailboxes its email triggers watch are added at run
    * time. Every tool call that names a mailbox must name one of these.
@@ -61,6 +75,26 @@ export const agentConfig = z.object({
         .default(LIMITS.perSenderPerHour.default),
     })
     .default({ maxSteps: LIMITS.maxSteps.default, maxRunsPerDay: LIMITS.maxRunsPerDay.default, perSenderPerHour: LIMITS.perSenderPerHour.default }),
+  /**
+   * Estimated AI spend per calendar month (UTC), from token counts and our price table (agents/prices.ts). Null: no
+   * cap. pause: runs are skipped until next month or a higher cap. notify: keep running, tell the admins once.
+   */
+  spend: z
+    .object({
+      monthlyCapUsd: z.number().min(LIMITS.monthlyCapUsd.min).max(LIMITS.monthlyCapUsd.max).nullable().default(null),
+      whenReached: z.enum(['pause', 'notify']).default('pause'),
+    })
+    .default({ monthlyCapUsd: null, whenReached: 'pause' }),
+  /**
+   * Facts the agent keeps between runs (remember / recall tools), stored in its Durable Object. Off by default.
+   * retentionDays: facts not updated for this long are deleted; null keeps them until someone deletes them.
+   */
+  memory: z
+    .object({
+      enabled: z.boolean().default(false),
+      retentionDays: z.number().int().min(LIMITS.retentionDays.min).max(LIMITS.retentionDays.max).nullable().default(LIMITS.retentionDays.default),
+    })
+    .default({ enabled: false, retentionDays: LIMITS.retentionDays.default }),
 })
 
 export type AgentConfig = z.output<typeof agentConfig>

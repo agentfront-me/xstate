@@ -14,13 +14,17 @@ const MAX_VALUE = 8_000
 
 export async function list(env: Env, actor: Actor, organizationId: string): Promise<Secret[]> {
   await requireAdmin(env, actor, organizationId)
-  // Where each one is used comes with connectors (Phase 4); nothing refers to secrets yet.
+  // Where each one is used: the connectors whose headers refer to it.
+  const { results } = await env.DB.prepare('SELECT name, secret_refs FROM connectors WHERE organization_id = ?')
+    .bind(organizationId)
+    .all<{ name: string; secret_refs: string }>()
+  const usedBy = (secret: string) => results.filter((c) => (JSON.parse(c.secret_refs) as string[]).includes(secret)).map((c) => c.name)
   return (await db.listSecrets(env.DB, organizationId)).map((s) => ({
     name: s.name,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
     lastUsedAt: s.last_used_at,
-    usedBy: [],
+    usedBy: usedBy(s.name),
   }))
 }
 

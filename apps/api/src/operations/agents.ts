@@ -6,6 +6,7 @@ import { PROVIDERS } from '../agents/config'
 import * as providers from '../agents/providers'
 import * as secrets from '../agents/secrets'
 import * as approvals from '../agents/approvals'
+import * as connectors from '../agents/connectors'
 import * as agents from '../agents/service'
 import * as triggers from '../agents/triggers'
 import { defineOperation } from './define'
@@ -238,6 +239,75 @@ export const agentsStats = defineOperation({
   run: ({ env, actor }, input) => agents.stats(env, actor, input.agentId),
 })
 
+export const agentsHealth = defineOperation({
+  name: 'agents_health',
+  description: "What's wrong with an agent (key, connectors, spend cap, failed runs) and how to fix it, plus this month's spend.",
+  input: z.object({ agentId: id }),
+  http: { method: 'GET', path: '/agents/:agentId/health' },
+  mcp: false,
+  run: ({ env, actor }, input) => agents.health(env, actor, input.agentId),
+})
+
+export const agentsRetryFailed = defineOperation({
+  name: 'agents_retry_failed',
+  description: 'Run the failed runs of the last day again with the published version, once each.',
+  input: z.object({ agentId: id }),
+  http: { method: 'POST', path: '/agents/:agentId/runs/retry-failed' },
+  mcp: false,
+  run: ({ env, actor }, input) => agents.retryFailed(env, actor, input.agentId),
+})
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory (same people as the agent)
+
+export const memoryList = defineOperation({
+  name: 'agents_memory_list',
+  description: 'Facts the agent remembers, newest first. query searches subjects and facts.',
+  input: z.object({ agentId: id, query: z.string().max(200).optional(), subject: z.string().max(200).optional() }),
+  http: { method: 'GET', path: '/agents/:agentId/memory' },
+  mcp: false,
+  run: ({ env, actor }, { agentId, ...q }) => agents.listMemory(env, actor, agentId, q),
+})
+
+export const memoryAdd = defineOperation({
+  name: 'agents_memory_add',
+  description: 'Add a fact to the agent’s memory.',
+  input: z.object({ agentId: id, subject: z.string().max(200), fact: z.string().max(1000) }),
+  http: { method: 'POST', path: '/agents/:agentId/memory', status: 201 },
+  mcp: false,
+  run: async ({ env, actor }, { agentId, ...input }) => ({ fact: await agents.addFact(env, actor, agentId, input) }),
+})
+
+export const memoryUpdate = defineOperation({
+  name: 'agents_memory_update',
+  description: 'Change a remembered fact.',
+  input: z.object({ agentId: id, factId: id, subject: z.string().max(200).optional(), fact: z.string().max(1000).optional() }),
+  http: { method: 'PATCH', path: '/agents/:agentId/memory/:factId' },
+  mcp: false,
+  run: async ({ env, actor }, { agentId, factId, ...input }) => ({ fact: await agents.updateFact(env, actor, agentId, factId, input) }),
+})
+
+export const memoryDelete = defineOperation({
+  name: 'agents_memory_delete',
+  description: 'Delete a remembered fact.',
+  input: z.object({ agentId: id, factId: id }),
+  http: { method: 'DELETE', path: '/agents/:agentId/memory/:factId' },
+  mcp: false,
+  run: async ({ env, actor }, input) => {
+    await agents.deleteFact(env, actor, input.agentId, input.factId)
+    return { ok: true }
+  },
+})
+
+export const memoryClear = defineOperation({
+  name: 'agents_memory_clear',
+  description: 'Delete everything the agent remembers.',
+  input: z.object({ agentId: id }),
+  http: { method: 'DELETE', path: '/agents/:agentId/memory' },
+  mcp: false,
+  run: ({ env, actor }, input) => agents.clearMemory(env, actor, input.agentId),
+})
+
 // ---------------------------------------------------------------------------------------------------------------
 // Triggers (same people as the agent)
 
@@ -327,6 +397,15 @@ export const approvalsList = defineOperation({
   run: ({ env, actor }, input) => approvals.list(env, actor, input.agentId, input.status),
 })
 
+export const approvalsPending = defineOperation({
+  name: 'agents_approvals_pending',
+  description: 'How many tool calls in the organization wait for a person: 0 for people who don’t manage agents.',
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/agents/orgs/:organizationId/approvals/pending' },
+  mcp: false,
+  run: ({ env, actor }, input) => approvals.pendingTotal(env, actor, input.organizationId),
+})
+
 export const approvalsDecide = defineOperation({
   name: 'agents_approvals_decide',
   description: 'Approve (optionally with changed input) or reject a waiting tool call. A rejection note goes back to the agent.',
@@ -342,9 +421,88 @@ export const approvalsDecide = defineOperation({
   run: async ({ env, actor }, { agentId, approvalId, ...input }) => ({ approval: await approvals.decide(env, actor, agentId, approvalId, input) }),
 })
 
+// ---------------------------------------------------------------------------------------------------------------
+// Connectors (owners and admins change them; people who manage agents can see and refresh them)
+
+const header = z.object({ name: z.string().max(64), value: z.string().max(4000) })
+
+export const connectorsList = defineOperation({
+  name: 'connectors_list',
+  description: "The organization's MCP connectors: URL, sign-in method, status and the tools each offers.",
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/orgs/:organizationId/connectors' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ connectors: await connectors.list(env, actor, input.organizationId) }),
+})
+
+export const connectorsCreate = defineOperation({
+  name: 'connectors_create',
+  description: 'Add an MCP server by URL. With OAuth, the result has authUrl to sign in at.',
+  input: z.object({
+    organizationId: id,
+    name: z.string().max(200),
+    url: z.string().max(2000),
+    auth: z.enum(['none', 'headers', 'oauth']),
+    headers: z.array(header).max(20).optional(),
+  }),
+  http: { method: 'POST', path: '/orgs/:organizationId/connectors', status: 201 },
+  mcp: false,
+  run: ({ env, actor }, { organizationId, ...input }) => connectors.create(env, actor, organizationId, input),
+})
+
+export const connectorsUpdate = defineOperation({
+  name: 'connectors_update',
+  description: "Rename a connector, change its URL or headers. Its tools are discovered again.",
+  input: z.object({ organizationId: id, connectorId: id, name: z.string().max(200).optional(), url: z.string().max(2000).optional(), headers: z.array(header).max(20).optional() }),
+  http: { method: 'PATCH', path: '/orgs/:organizationId/connectors/:connectorId' },
+  mcp: false,
+  run: async ({ env, actor }, { organizationId, connectorId, ...input }) => ({ connector: await connectors.update(env, actor, organizationId, connectorId, input) }),
+})
+
+export const connectorsDelete = defineOperation({
+  name: 'connectors_delete',
+  description: 'Remove a connector. Agents lose its tools.',
+  input: z.object({ organizationId: id, connectorId: id }),
+  http: { method: 'DELETE', path: '/orgs/:organizationId/connectors/:connectorId' },
+  mcp: false,
+  run: ({ env, actor }, input) => connectors.remove(env, actor, input.organizationId, input.connectorId),
+})
+
+export const connectorsRefresh = defineOperation({
+  name: 'connectors_refresh',
+  description: 'Connect again and refresh the list of tools.',
+  input: z.object({ organizationId: id, connectorId: id }),
+  http: { method: 'POST', path: '/orgs/:organizationId/connectors/:connectorId/refresh' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ connector: await connectors.refresh(env, actor, input.organizationId, input.connectorId) }),
+})
+
+export const connectorsAuthorize = defineOperation({
+  name: 'connectors_authorize',
+  description: 'Start signing in to an OAuth connector again. Returns authUrl to open (null when still signed in).',
+  input: z.object({ organizationId: id, connectorId: id }),
+  http: { method: 'POST', path: '/orgs/:organizationId/connectors/:connectorId/authorize' },
+  mcp: false,
+  run: ({ env, actor }, input) => connectors.authorize(env, actor, input.organizationId, input.connectorId),
+})
+
 export const agentOperations = [
+  connectorsList,
+  connectorsCreate,
+  connectorsUpdate,
+  connectorsDelete,
+  connectorsRefresh,
+  connectorsAuthorize,
   approvalsList,
   approvalsDecide,
+  approvalsPending,
+  agentsHealth,
+  agentsRetryFailed,
+  memoryList,
+  memoryAdd,
+  memoryUpdate,
+  memoryDelete,
+  memoryClear,
   triggersList,
   triggersCreate,
   triggersUpdate,

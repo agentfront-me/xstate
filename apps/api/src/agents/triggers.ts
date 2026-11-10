@@ -296,7 +296,6 @@ export async function test(env: Env, actor: Actor, agentId: string, triggerId: s
       filter,
       mailboxes: await agentMailboxes(env, agent.id, draft),
     },
-    draft.limits,
   )
   await s.logTriggerEvent(trigger.id, 'test', result.runId, { task: task.slice(0, 2000) })
   return { runId: result.runId }
@@ -344,7 +343,7 @@ export async function fire(env: Env, trigger: TriggerRow, s: Store, input: FireI
     filter: input.filter,
     mailboxes: await agentMailboxes(env, agent.id, published.config),
   }
-  const result: StartResult = await s.startRun(params, published.config.limits)
+  const result: StartResult = await s.startRun(params)
   await db.touchTrigger(env.DB, trigger.id, { last_fired_at: new Date().toISOString() })
   if ('skipped' in result) {
     await s.logTriggerEvent(trigger.id, 'skipped', result.runId, { reason: result.skipped, ...(input.detail as object) })

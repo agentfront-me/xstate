@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { handleOAuthCallback } from './agents/connectors'
 import { handleWebhook } from './agents/triggers'
 import { handleCollect } from './audience/collect'
 import { snippet } from './audience/snippet'
@@ -61,6 +62,8 @@ app.post('/webhooks/ses', handleSesWebhook)
 // Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
 app.post('/hooks/:triggerId', handleWebhook)
 app.post('/hooks/:triggerId/:token', handleWebhook)
+// Connectors' OAuth sign-in comes back here, then on to Settings → Connectors (agents/connectors.ts).
+app.get('/connectors/oauth/callback', handleOAuthCallback)
 
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))

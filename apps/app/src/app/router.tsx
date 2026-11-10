@@ -79,7 +79,7 @@ const agents = createRoute({
   path: '/agents',
   validateSearch: (raw: Record<string, unknown>): AgentsSearch => ({
     agent: str(raw.agent),
-    tab: raw.tab === 'runs' || raw.tab === 'setup' || raw.tab === 'approvals' || raw.tab === 'settings' ? raw.tab : undefined,
+    tab: raw.tab === 'runs' || raw.tab === 'setup' || raw.tab === 'approvals' || raw.tab === 'memory' || raw.tab === 'settings' ? raw.tab : undefined,
     run: str(raw.run),
   }),
   component: function Agents() {

@@ -34,10 +34,11 @@ import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
 import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
 import { AiProvidersSection, LiveSecretsSection } from './AiSections'
+import { ConnectorsSection } from './Connectors'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'migration' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
+  id: 'account' | 'members' | 'domains' | 'migration' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
   label: string
   icon: IconName
   sample?: boolean
@@ -79,11 +80,10 @@ const SECTIONS: Section[] = [
   { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
   { id: 'billing', label: 'Billing', icon: 'credit-card', sample: true, sub: (_a, d) => `${d.billing.plan} · renews ${d.billing.renewsShort}` },
   {
-    id: 'integrations',
-    label: 'Integrations',
-    icon: 'blocks',
-    sample: true,
-    sub: (_a, d) => `${d.integrations.filter((i) => i.connected).length} connected`,
+    id: 'connectors',
+    label: 'Connectors',
+    icon: 'plug',
+    sub: (a, d) => (a.mode === 'live' ? 'MCP servers for agents' : `${d.integrations.filter((i) => i.connected).length} connected`),
   },
 ]
 
@@ -141,7 +141,7 @@ export function SettingsPage({ section }: { section: string }) {
             {s.id === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
             {s.id === 'api-keys' && <ApiKeysSection account={account} />}
             {s.id === 'billing' && <BillingSection data={data} />}
-            {s.id === 'integrations' && <IntegrationsSection data={data} />}
+            {s.id === 'connectors' && (account.mode === 'live' ? <ConnectorsSection account={account} /> : <IntegrationsSection data={data} />)}
           </div>
         </div>
       </div>

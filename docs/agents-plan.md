@@ -1,7 +1,8 @@
 # Plan: Agents
 
-Status: Phase 0 (spike) done; Phases 1 (foundations), 2 (triggers) and 3 (actions and approvals) built 2026-11-10,
-uncommitted. Migrations 0023–0025 must be applied before the API is deployed. Phases 4–6 not started.
+Status: Phase 0 (spike) done; Phases 1–5 (foundations, triggers, actions and approvals, connectors, spend/memory/
+errors) built 2026-11-10, uncommitted. Migrations 0023–0026 must be applied before the API is deployed. Phase 6 not
+started.
 
 The design ("xstate App.dc.html", Agents page and Settings → AI providers / Secrets) adds AI agents that customers
 set up in the app, with no code: **triggers** (webhook, schedule, email; events later) start a run, the agent
@@ -250,7 +251,7 @@ Decisions made while building (not in the design):
 - **Who a run acts as:** the agent actor described above was too large a change for Phase 1 (every service takes
   `{ userId }`). A test runs as the person testing; a published run acts as the person who published that version,
   with their access checked again on every tool call. Revisit with the agent actor before Phase 3 (actions).
-- **Cost:** the Runs tab shows tokens, not dollars. Prices per model come with spend caps in Phase 5.
+- **Cost:** the Runs tab showed tokens, not dollars, until Phase 5 added the price table and spend caps.
 - **No live WebSocket yet:** the run drawer and Test drawer poll every 1.5 s while a run is going.
 - Approvals and Memory tabs are hidden until their phases.
 
@@ -366,15 +367,111 @@ Not verified locally: the approval emails (no system mailbox in local dev).
 
 To ship (with Phases 1 and 2): apply migrations 0023–0025 remotely, then deploy the API and the app.
 
-### 4. Connectors
+### 4. Connectors (built 2026-11-10, uncommitted)
 
-Generic MCP connectors: add by URL, OAuth or header auth with secrets, tool discovery, status, per-agent tool
-switches and approval rules.
+What's there:
 
-### 5. Settings, memory and errors
+- **Migration `0026_connectors.sql`:** `connectors` per organization: name, URL, auth (none / headers / OAuth),
+  headers encrypted (values may hold `{{secret.NAME}}`), header names and referenced secret names in plain text (for
+  the UI and Secrets "used by"), OAuth state encrypted (client registration, tokens, PKCE verifier, pending nonce),
+  status (connected / needs_auth / error) with the reason, and the tool list from the last discovery.
+- **No credentials in agents.** Instead of the SDK's per-agent MCP connections (which store headers and tokens in
+  each agent's Durable Object, as the spike found), `agents/connectors.ts` opens a short Streamable HTTP connection
+  with `@modelcontextprotocol/client` for each discovery or tool call and closes it. Secrets are decrypted and filled
+  into headers only for that request, and their `last_used_at` is updated. The model never sees them.
+- **OAuth:** a D1-backed `OAuthClientProvider` for the SDK's `auth()` (discovery, dynamic client registration, PKCE,
+  token refresh on 401). State is `<connector id>.<nonce>`; the nonce is checked and cleared in
+  `GET /connectors/oauth/callback`, which then discovers tools and sends the person back to Settings → Connectors.
+  Owners and admins only.
+- **Checks:** https only (http to localhost outside production), reserved headers refused, unknown secrets refused,
+  30-second timeout, 200 tools at most. A 401 sets "Needs sign-in"; other failures set "Not reachable" with the error.
+- **Runs:** the agent's config lists connector tools (`tools.connectors`: connector id → tool names). At run start a
+  step loads those connectors' tool lists (not their credentials); tools are named `<connector>__<tool>` for the
+  model. Connector tools with `readOnlyHint` never ask; others default to "Always ask".
+- **Conditional approval** (`tools.approval[key] = 'when'` with `tools.conditions[key]`): needs approval when a field
+  of the call is more than / less than / is / contains a value (`agents/rules.ts`, unit tested). A field that's
+  missing or not a number asks, so a call the rule can't judge never slips through. Works for built-in tools too.
+- **Operations:** `connectors_list` (and agent managers), `connectors_create`, `_update`, `_delete`,
+  `_refresh`, `_authorize`; Settings → Secrets now shows which connectors use each secret.
+- **App:** Settings → Connectors (replaces the sample Integrations for signed-in people): list with status, auth,
+  secrets used, tool list, refresh, sign in / sign in again, edit, remove; add/edit dialog with header rows and an
+  "Insert secret" picker. Setup → Tools: each connector with its tools (on/off), "Always ask / Ask when… / Never
+  ask", and the rule editor (field from the tool's input schema, comparison, value).
 
-Spend cap and "when reached" behavior, memory facts (`remember` / `recall` tools, Memory tab, add/edit/delete,
-retention sweep via the Durable Object's alarm), agent error states and banner ("Fix key", "Retry failed runs").
+Verified locally against a small MCP test server with bearer auth (in the session scratchpad, not the repo): adding
+it with `Authorization: Bearer {{secret.SHOP_TOKEN}}` discovered both tools (read-only flag right); without the
+token it showed "Needs sign-in (401)"; unknown secret, bad URL and reserved header were refused; Secrets showed
+"used by Fake shop" and a last-used time. An email agent with the shop's tools and "create_refund: ask when amount >
+100": a wrong-colour email got a 30 goodwill refund straight away; a broken-item email's 240 refund waited for
+approval, went to the shop server after approval, and the agent replied. In the app: adding a connector with a
+secret, the tool list, and the agent's connector tools with the rule.
+
+Not verified: a real OAuth sign-in (it registers a client with the provider, so it needs a server you choose and
+your sign-in). The OAuth error paths were checked: a server without OAuth saves the connector with the reason, and a
+callback with a wrong state is refused. Only Streamable HTTP servers are supported (no legacy SSE).
+
+To ship (with Phases 1–3): apply migrations 0023–0026 remotely, deploy the API and the app. The OAuth callback URL is
+`https://api.xstate.com/connectors/oauth/callback`.
+
+### 5. Settings, memory and errors (built 2026-11-10, uncommitted)
+
+What's there (no new migration: everything new lives in the agent's Durable Object or its config):
+
+- **Prices** (`agents/prices.ts`, unit tested): USD per million input and output tokens for every Anthropic and
+  OpenAI model we know, standard tier, from Anthropic's model table (2026-10-06) and OpenAI's pricing page
+  (2026-11-10). Dated snapshot ids cost the same as their base id. A model not in the table is priced at its
+  provider's most expensive rate, so a cap is never under-counted. Cache discounts and long-context surcharges are
+  ignored, so the figure is an estimate; the UI says so. Update the table when prices change.
+- **Cost per run:** each model call's cost is added to the run as it goes (`runs.cost_usd`, plus tokens and steps,
+  so a long run's cost shows while it runs) and shown per step, per run, in the Runs table, and as "Spend · this
+  month" (with the cap, or the average per run) in the stats. Tests count: they use the same key.
+- **Spend cap** (config `spend`: `monthlyCapUsd` from $1, or none; `whenReached` "pause" or "notify"): checked in
+  `AgentStore.startRun` against this calendar month's (UTC) spend. Pause records real runs as Skipped ("Reached this
+  month's spend cap of $25") until next month or a higher cap; tests still run. Notify keeps running. Either way,
+  owners/admins/agent managers get one email a month. The cap is part of the config, so raising it takes effect on
+  publish, like every other setting.
+- **Memory** (config `memory`: off by default; `retentionDays` 30/90/180/365 or until deleted): a `memory` table in
+  the agent's Durable Object (subject, fact, source run, dates). With memory on, the agent gets three tools that never
+  ask for approval: `memory_remember` (same subject and fact just refreshes the date), `memory_recall` (by subject
+  and/or words) and `memory_forget`. For runs with a sender (email), what it knows about the sender is put in its
+  instructions and shown as a "Remembered N facts about …" step. Dry runs don't save or delete. A daily SDK
+  schedule deletes facts not updated within the retention period. Memory tab: grouped by subject, search, add,
+  edit, delete, clear all, link to the run that saved a fact.
+- **Error states** (`agents_health`, and the first one on each agent in the list): no key / key rejected / out of
+  credit ("Fix key" → Settings → AI providers), a connector the agent uses needs sign-in or is broken ("Sign in" →
+  Settings → Connectors), spend cap reached ("Raise cap" → Settings), and real runs that failed in the last day
+  ("Retry failed runs"). Shown as a banner above the tabs and a short line in the agent list ("Error · AI key",
+  "Paused · spend cap", "2 failed runs").
+- **Retry failed runs** (`POST /agents/:id/runs/retry-failed`): re-runs up to 20 real runs that failed in the last
+  day, with the published version as its publisher, same task, trigger and sender (an email trigger's AI filter
+  applies again); each is retried once (`runs.retried_as`). Limits and the cap apply.
+- **Approval reminders:** with "When nobody decides: keep waiting", a call waits `timeoutHours`, then the approvers get
+  a "Still waiting" email and it waits the rest of 7 days in all. Approval emails now go through a shared helper
+  (`agents/notices.ts`) used by the cap notice too.
+- **Approvals everywhere:** `agents_approvals_pending` (0 for people who don't manage agents) drives a count on the
+  rail's Agents item, polled every minute, and a desktop-app notification when it goes up (same rules as new mail:
+  notifications on and the window not focused; clicking opens Agents).
+
+Verified locally with real Claude (Sonnet 5.5 and Haiku 5.5) on the local Stalwart: a run saved a fact with
+`memory_remember` and the next run found it with `memory_recall`; run costs match the table ($0.0077 for 2,961 in /
+176 out on Sonnet 5.5); add/edit/search/delete facts through the API (a `%` search matches nothing, as it should);
+two runs failing on an unknown model → banner and list line → fixed the model, published, "Retry failed runs" in
+the app → both re-ran and finished, banner gone, retrying again found nothing; spend cap (with the minimum lowered
+for the test, then restored): pause skipped the real run with the reason while a test still ran, notify kept running
+and showed a warning; a customer email from someone the agent had a fact about showed "Remembered 1 fact" and the
+reply followed it (copied sales@ as the fact said); the rail badge, "1 need approval" and the spend card with its
+cap. In the app: Settings → Spend and Memory, the Memory tab (add a fact), the banner and retry. 139 API unit tests
+(4 new) and both typechecks pass.
+
+Not verified: the approval reminder (the shortest wait is an hour), the cap and reminder emails (no system mailbox in
+local dev), the desktop notification (needs the desktop app), and the daily memory sweep firing.
+
+Known limits: the agent list wakes each published agent's Durable Object for its spend and failures (fine for a
+handful of agents per organization; cache in D1 if lists get long). Spend and memory settings are versioned with the
+config, so they change on publish.
+
+To ship (with Phases 1–4): apply migrations 0023–0026 remotely, deploy the API and the app. The new runs columns
+and the memory table are created by the agent's store when it wakes.
 
 ### 6. New agent flow and mobile
 

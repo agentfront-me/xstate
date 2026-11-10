@@ -8,11 +8,28 @@ export type ProviderStatus = 'valid' | 'invalid' | 'no_credit' | 'rate_limited'
 export type AgentConfig = {
   instructions: string
   model: { provider: ProviderId; id: string } | null
-  tools: { builtin: string[]; approval: Record<string, 'always' | 'never'> }
+  tools: {
+    builtin: string[]
+    approval: Record<string, 'always' | 'never' | 'when'>
+    connectors: Record<string, string[]>
+    conditions: Record<string, Condition>
+  }
   mailboxes: string[]
   approvals: { timeoutHours: number; onTimeout: 'reject' | 'wait'; approvers: string[]; notifyEmail: boolean }
   limits: { maxSteps: number; maxRunsPerDay: number; perSenderPerHour: number }
+  spend: { monthlyCapUsd: number | null; whenReached: 'pause' | 'notify' }
+  memory: { enabled: boolean; retentionDays: number | null }
 }
+
+/** What's wrong with an agent and what fixes it (worst first). */
+export type Issue =
+  | { kind: 'key'; message: string; action: 'fix_key' }
+  | { kind: 'connector'; message: string; action: 'sign_in'; connectorId: string }
+  | { kind: 'spend'; message: string; action: 'raise_cap'; blocking: boolean }
+  | { kind: 'failures'; message: string; action: 'retry'; count: number }
+
+export type Health = { issues: Issue[]; monthSpend: number; cap: number | null; memoryFacts: number }
+export type Fact = { id: string; subject: string; fact: string; sourceRun: string | null; createdAt: string; updatedAt: string }
 
 export type AgentSummary = {
   id: string
@@ -25,6 +42,8 @@ export type AgentSummary = {
   createdAt: string
   updatedAt: string
   pendingApprovals?: number
+  issue?: Issue | null
+  monthSpend?: number
 }
 
 export type Agent = AgentSummary & { draft: AgentConfig; published: AgentConfig | null }
@@ -45,8 +64,10 @@ export type Run = {
   finishedAt: string | null
   steps: number
   tokens: { input: number; output: number }
+  cost: number
   summary: string | null
   error: string | null
+  retriedAs: string | null
 }
 
 export type RunStep =
@@ -54,7 +75,15 @@ export type RunStep =
   | { seq: number; at: string; kind: 'tool'; detail: { tool: string; input: unknown; output: unknown } }
   | { seq: number; at: string; kind: string; detail: Record<string, unknown> }
 
-export type Stats = { runs7d: number; successRate: number | null; tokens7d: number; month: { model: string; input: number; output: number; runs: number }[] }
+export type Stats = {
+  runs7d: number
+  successRate: number | null
+  tokens7d: number
+  cost7d: number
+  avgCost: number | null
+  monthSpend: number
+  month: { model: string; input: number; output: number; runs: number; cost: number }[]
+}
 export type Version = { version: number; publishedAt: string; publishedBy: string | null; config: AgentConfig }
 
 export type Provider = {
@@ -79,6 +108,9 @@ export const agentKeys = {
   runs: (id: string) => ['agents', 'runs', id] as const,
   run: (id: string, runId: string) => ['agents', 'run', id, runId] as const,
   stats: (id: string) => ['agents', 'stats', id] as const,
+  health: (id: string) => ['agents', 'health', id] as const,
+  memory: (id: string, query: string) => ['agents', 'memory', id, query] as const,
+  pending: (orgId: string) => ['agents', 'pending', orgId] as const,
   tools: (orgId: string) => ['agents', 'tools', orgId] as const,
   models: (orgId: string) => ['agents', 'models', orgId] as const,
   providers: (orgId: string) => ['ai-providers', orgId] as const,
@@ -105,6 +137,26 @@ export const agentsApi = {
   },
   run: (id: string, runId: string) => api<{ run: Run; steps: RunStep[] }>('GET', `/agents/${id}/runs/${runId}`),
   stats: (id: string) => api<Stats>('GET', `/agents/${id}/stats`),
+  health: (id: string) => api<Health>('GET', `/agents/${id}/health`),
+  retryFailed: (id: string) => api<{ started: number; skipped: number; reason: string | null }>('POST', `/agents/${id}/runs/retry-failed`),
+  pending: (orgId: string) => api<{ count: number }>('GET', `/agents/orgs/${orgId}/approvals/pending`),
+}
+
+export const memoryApi = {
+  list: (id: string, query = '') => api<{ facts: Fact[]; total: number }>('GET', `/agents/${id}/memory${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+  add: (id: string, input: { subject: string; fact: string }) => api<{ fact: Fact }>('POST', `/agents/${id}/memory`, input),
+  update: (id: string, factId: string, input: { subject?: string; fact?: string }) => api<{ fact: Fact }>('PATCH', `/agents/${id}/memory/${factId}`, input),
+  remove: (id: string, factId: string) => api<void>('DELETE', `/agents/${id}/memory/${factId}`),
+  clear: (id: string) => api<{ deleted: number }>('DELETE', `/agents/${id}/memory`),
+}
+
+/** "$0.0017", "$0.013", "$18.40", "$250" (same as the API's formatUsd). */
+export function formatUsd(usd: number): string {
+  if (usd === 0) return '$0'
+  if (usd < 0.01) return `$${usd.toFixed(4)}`
+  if (usd < 1) return `$${usd.toFixed(3)}`
+  if (usd < 100) return `$${usd.toFixed(2)}`
+  return `$${Math.round(usd)}`
 }
 
 export const providersApi = {
@@ -226,3 +278,45 @@ export const approvalKeys = {
   all: (agentId: string) => ['agents', 'approvals', agentId] as const,
   list: (agentId: string, status: 'pending' | 'decided') => ['agents', 'approvals', agentId, status] as const,
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Connectors
+
+export type Condition = { field: string; op: 'gt' | 'lt' | 'eq' | 'contains'; value: string | number }
+export type ConnectorAuth = 'none' | 'headers' | 'oauth'
+export type ConnectorTool = { name: string; title?: string; description: string; inputSchema: Record<string, unknown>; readOnly: boolean }
+export type Connector = {
+  id: string
+  name: string
+  url: string
+  auth: ConnectorAuth
+  headerNames: string[]
+  secretRefs: string[]
+  status: 'connected' | 'needs_auth' | 'error'
+  statusDetail: string | null
+  tools: ConnectorTool[]
+  createdAt: string
+  checkedAt: string | null
+  usedBy: number
+}
+export type HeaderInput = { name: string; value: string }
+
+export const connectorsApi = {
+  list: (orgId: string) => api<{ connectors: Connector[] }>('GET', `/orgs/${orgId}/connectors`),
+  create: (orgId: string, input: { name: string; url: string; auth: ConnectorAuth; headers?: HeaderInput[] }) =>
+    api<{ connector: Connector; authUrl?: string }>('POST', `/orgs/${orgId}/connectors`, input),
+  update: (orgId: string, id: string, input: { name?: string; url?: string; headers?: HeaderInput[] }) =>
+    api<{ connector: Connector }>('PATCH', `/orgs/${orgId}/connectors/${id}`, input),
+  remove: (orgId: string, id: string) => api<void>('DELETE', `/orgs/${orgId}/connectors/${id}`),
+  refresh: (orgId: string, id: string) => api<{ connector: Connector }>('POST', `/orgs/${orgId}/connectors/${id}/refresh`),
+  authorize: (orgId: string, id: string) => api<{ connector: Connector; authUrl: string | null }>('POST', `/orgs/${orgId}/connectors/${id}/authorize`),
+}
+
+export const connectorKeys = { list: (orgId: string) => ['connectors', orgId] as const }
+
+export const CONDITION_OPS: { op: Condition['op']; label: string }[] = [
+  { op: 'gt', label: 'is more than' },
+  { op: 'lt', label: 'is less than' },
+  { op: 'eq', label: 'is' },
+  { op: 'contains', label: 'contains' },
+]

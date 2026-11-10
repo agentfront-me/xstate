@@ -9,9 +9,8 @@ import type { Actor } from '../auth/types'
 import * as db from '../db/agents'
 import { ApiError } from '../errors'
 import { isAdmin, loadMember } from '../mailserver/access'
-import { paragraph, systemMailHtml } from '../mailserver/mail-html'
-import { sendSystemEmail } from '../mailserver/system-mail'
 import { parseConfig, type AgentConfig } from './config'
+import { emailManagers } from './notices'
 import { agentContext, publishedConfig } from './service'
 import { toolLabel } from './tools'
 
@@ -95,31 +94,32 @@ export async function expire(env: Env, id: string) {
   await env.DB.prepare("UPDATE agent_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'").bind(new Date().toISOString(), id).run()
 }
 
-/** Emails the people who can decide. Best effort: a failure here never stops the run. */
-export async function notify(env: Env, agentId: string, approval: { tool: string; input: unknown; reason: string }, config: AgentConfig) {
+/**
+ * Emails the people who can decide. `reminder`: the call is still waiting after the agent's timeout and the agent
+ * keeps waiting (onTimeout "wait"). Best effort: a failure here never stops the run.
+ */
+export async function notify(
+  env: Env,
+  agentId: string,
+  approval: { tool: string; input: unknown; reason: string },
+  config: AgentConfig,
+  reminder?: { waitedHours: number; leftHours: number },
+) {
   if (!config.approvals.notifyEmail) return
-  const agent = await db.findAgent(env.DB, agentId)
-  if (!agent) return
-  const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.name, m.role, json(m.permissions) AS permissions FROM members m JOIN users u ON u.id = m.user_id
-     WHERE m.organization_id = ? AND m.status = 'active'`,
-  )
-    .bind(agent.organization_id)
-    .all<{ id: string; email: string; name: string | null; role: string; permissions: string }>()
-  const listed = config.approvals.approvers
-  const people = results.filter((p) =>
-    listed.length ? listed.includes(p.id) : p.role === 'owner' || p.role === 'admin' || (JSON.parse(p.permissions || '{}') as { org?: string[] }).org?.includes('agents.manage'),
-  )
-  const url = `${env.APP_URL.replace(/\/+$/, '')}/app/#/agents?agent=${agent.id}&tab=approvals`
   const what = describe(approval.tool, approval.input)
-  const subject = `${agent.name} needs your approval: ${what}`
-  const lines = [`${agent.name} wants to ${what.charAt(0).toLowerCase()}${what.slice(1)}.`, approval.reason ? `It said: “${approval.reason.slice(0, 400)}”` : '']
-  const footnote = `It waits ${config.approvals.onTimeout === 'wait' ? 'up to 7 days' : `${config.approvals.timeoutHours} hours, then the request is refused`}.`
-  for (const p of people.slice(0, 20)) {
-    const text = `${lines.filter(Boolean).join('\n\n')}\n\nReview it:\n${url}\n\n${footnote}\n`
-    const html = systemMailHtml({ paragraphs: lines.filter(Boolean).map((l) => paragraph(l)), button: { text: 'Review', url }, footnote })
-    await sendSystemEmail(env, { to: { name: p.name, email: p.email }, subject, text, html }).catch((err) => console.error('approval email failed', err))
-  }
+  const lower = `${what.charAt(0).toLowerCase()}${what.slice(1)}`
+  await emailManagers(env, agentId, {
+    to: config.approvals.approvers,
+    subject: (name) => (reminder ? `Still waiting: ${name} needs your approval to ${lower}` : `${name} needs your approval: ${what}`),
+    lines: (name) => [
+      reminder ? `${name} has been waiting ${reminder.waitedHours} hours for someone to approve this: ${lower}.` : `${name} wants to ${lower}.`,
+      approval.reason ? `It said: “${approval.reason.slice(0, 400)}”` : '',
+    ],
+    button: { text: 'Review', tab: 'approvals' },
+    footnote: reminder
+      ? `It waits ${reminder.leftHours} more hours, then the request is refused.`
+      : `It waits ${config.approvals.onTimeout === 'wait' ? `${config.approvals.timeoutHours} hours, then reminds you and waits up to 7 days in all` : `${config.approvals.timeoutHours} hours, then the request is refused`}.`,
+  })
 }
 
 /** "Send an email to a@b.com: Subject" and the like, for notifications and lists. */
@@ -163,6 +163,22 @@ export async function pendingCounts(env: Env, organizationId: string): Promise<M
     .bind(organizationId)
     .all<{ agent_id: string; n: number }>()
   return new Map(results.map((r) => [r.agent_id, r.n]))
+}
+
+/**
+ * Pending approvals across the organization, for the rail badge and desktop notifications. People who don't manage
+ * agents get 0 rather than an error, so every page can ask.
+ */
+export async function pendingTotal(env: Env, actor: Actor, organizationId: string): Promise<{ count: number }> {
+  try {
+    const member = await loadMember(env, organizationId, actor.userId)
+    if (!isAdmin(member) && !member.permissions.org.includes('agents.manage')) return { count: 0 }
+  } catch {
+    return { count: 0 }
+  }
+  let count = 0
+  for (const n of (await pendingCounts(env, organizationId)).values()) count += n
+  return { count }
 }
 
 /**

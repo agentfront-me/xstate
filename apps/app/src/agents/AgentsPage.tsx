@@ -1,6 +1,6 @@
-// Agents (design: "xstate App", Agents page). Phase 1 of docs/agents-plan.md: agents are set up here with no code,
-// tested on a task, published as versions, and their runs are inspected step by step. Triggers, actions with
-// approvals, memory and connectors come in later phases, so those parts of the design aren't shown yet.
+// Agents (design: "xstate App", Agents page; docs/agents-plan.md): agents are set up here with no code, tested on a
+// task, published as versions, and their runs are inspected step by step. Tabs: Runs, Setup (triggers, instructions,
+// tools), Approvals, Memory and Settings. A banner on top says what's wrong with the agent and how to fix it.
 //
 // Edits go to the agent's draft (saved as you type) and only take effect when published. Tests run the draft as you;
 // "Run now" runs the published version as the person who published it.
@@ -20,6 +20,7 @@ import '../styles/agents.css'
 import {
   agentKeys,
   agentsApi,
+  formatUsd,
   PROVIDER_LABEL,
   RUN_STATUS,
   type Agent,
@@ -31,9 +32,12 @@ import {
   type ToolInfo,
 } from './api'
 import { ApprovalsTab } from './Approvals'
+import { ConnectorTools } from './ConnectorTools'
+import { IssueBanner, issueShort } from './Health'
+import { MemoryTab } from './Memory'
 import { TriggersSection } from './Triggers'
 
-export type AgentsTab = 'runs' | 'setup' | 'approvals' | 'settings'
+export type AgentsTab = 'runs' | 'setup' | 'approvals' | 'memory' | 'settings'
 export type AgentsSearch = { agent?: string; tab?: AgentsTab; run?: string }
 
 export function AgentsPage({ search }: { search: AgentsSearch }) {
@@ -111,6 +115,7 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
 
 function AgentLine({ agent }: { agent: AgentSummary }) {
   if (agent.pendingApprovals) return <span className="a-item-sub a-need">{agent.pendingApprovals} need approval</span>
+  if (agent.issue) return <span className={`a-item-sub ${agent.issue.kind === 'failures' ? 'a-need' : 'a-err'}`}>{issueShort(agent.issue)}</span>
   const text = agent.status === 'active' ? 'Active' : agent.publishedVersion ? 'Paused' : 'Draft · not published'
   return <span className={`a-item-sub ${agent.status}`}>{agent.hasDraftChanges && agent.publishedVersion ? `${text} · draft changes` : text}</span>
 }
@@ -215,10 +220,11 @@ function AgentView({
           <button className="ghost" aria-label="More" onClick={openMenu}><Icon name="ellipsis" size={16} /></button>
         </div>
       </header>
+      <IssueBanner orgId={orgId} agent={agent} admin={admin} onOpenSettings={() => go({ agent: agent.id, tab: 'settings' })} />
       <nav className="tabs a-tabs" role="tablist">
-        {(['runs', 'setup', 'approvals', 'settings'] as const).map((t) => (
+        {(['runs', 'setup', 'approvals', 'memory', 'settings'] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => go({ agent: agent.id, tab: t })}>
-            {t === 'runs' ? 'Runs' : t === 'setup' ? 'Setup' : t === 'approvals' ? 'Approvals' : 'Settings'}
+            {TAB_LABEL[t]}
             {t === 'approvals' && !!summary.pendingApprovals && <span className="a-count">{summary.pendingApprovals}</span>}
           </button>
         ))}
@@ -228,6 +234,7 @@ function AgentView({
         {tab === 'setup' && (
           <SetupTab
             orgId={orgId}
+            admin={admin}
             agent={agent}
             mailboxes={mailboxes}
             onSaved={setAgent}
@@ -236,6 +243,9 @@ function AgentView({
           />
         )}
         {tab === 'approvals' && <ApprovalsTab agent={agent} onOpenRun={(runId) => go({ agent: agent.id, tab: 'approvals', run: runId })} />}
+        {tab === 'memory' && (
+          <MemoryTab agent={agent} onOpenRun={(runId) => go({ agent: agent.id, tab: 'memory', run: runId })} onOpenSettings={() => go({ agent: agent.id, tab: 'settings' })} />
+        )}
         {tab === 'settings' && (
           <SettingsTab orgId={orgId} admin={admin} agent={agent} mailboxes={mailboxes} onSaved={setAgent} onDelete={() => setDialog('delete')} />
         )}
@@ -267,6 +277,8 @@ function AgentView({
     </>
   )
 }
+
+const TAB_LABEL: Record<AgentsTab, string> = { runs: 'Runs', setup: 'Setup', approvals: 'Approvals', memory: 'Memory', settings: 'Settings' }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Runs tab
@@ -300,7 +312,17 @@ function RunsTab({ agent, search, go, onTest }: { agent: Agent; search: AgentsSe
       <div className="a-stats">
         <Stat label="Runs · 7d" value={s ? s.runs7d.toLocaleString() : '–'} sub="Published runs" />
         <Stat label="Success rate" value={s?.successRate == null ? '–' : `${Math.round(s.successRate * 1000) / 10}%`} sub="Finished without errors" />
-        <Stat label="Tokens · 7d" value={s ? tokens(s.tokens7d) : '–'} sub="Input and output" />
+        <Stat
+          label="Spend · this month"
+          value={s ? formatUsd(s.monthSpend) : '–'}
+          sub={
+            agent.published?.spend.monthlyCapUsd
+              ? `of ${formatUsd(agent.published.spend.monthlyCapUsd)} cap · estimated`
+              : s?.avgCost
+                ? `${formatUsd(s.avgCost)} per run · estimated`
+                : 'Estimated from tokens'
+          }
+        />
         <Stat label="Model" value={agent.published?.model?.id ?? agent.draft.model?.id ?? 'None'} sub={agent.published?.model ? PROVIDER_LABEL[agent.published.model.provider] : 'Pick one in Settings'} />
       </div>
       <div className="a-filters">
@@ -336,7 +358,7 @@ function RunsTab({ agent, search, go, onTest }: { agent: Agent; search: AgentsSe
         <div className="card a-table" role="table">
           <div className="a-tr a-th" role="row">
             <span role="columnheader">Time</span><span role="columnheader">Trigger</span><span role="columnheader">Outcome</span>
-            <span role="columnheader" className="num">Steps</span><span role="columnheader" className="num">Tokens</span>
+            <span role="columnheader" className="num">Steps</span><span role="columnheader" className="num">Tokens</span><span role="columnheader" className="num">Cost</span>
           </div>
           {runs.data?.runs.map((r) => (
             <button key={r.id} className="a-tr" role="row" aria-current={search.run === r.id ? 'true' : undefined} onClick={() => go({ agent: agent.id, tab: 'runs', run: r.id })}>
@@ -348,6 +370,7 @@ function RunsTab({ agent, search, go, onTest }: { agent: Agent; search: AgentsSe
               <span role="cell"><Outcome run={r} /></span>
               <span role="cell" className="num">{r.steps}</span>
               <span role="cell" className="num">{tokens(r.tokens.input + r.tokens.output)}</span>
+              <span role="cell" className="num">{r.status === 'skipped' && !r.cost ? '–' : formatUsd(r.cost)}</span>
             </button>
           ))}
         </div>
@@ -413,7 +436,7 @@ function RunDrawer({ agent, runId, onClose }: { agent: Agent; runId: string; onC
         run ? (
           <>
             <Outcome run={run} />
-            <span className="dim small ellipsis">{when(run.startedAt)} · {run.model.split(':')[1] ?? run.model} · {run.steps} steps · {tokens(run.tokens.input + run.tokens.output)} tokens</span>
+            <span className="dim small ellipsis">{when(run.startedAt)} · {run.model.split(':')[1] ?? run.model} · {run.steps} steps · {tokens(run.tokens.input + run.tokens.output)} tokens · {formatUsd(run.cost)}</span>
           </>
         ) : (
           <span className="spinner" />
@@ -443,6 +466,7 @@ function Timeline({ run, steps }: { run: Run; steps: RunStep[] }) {
       {run.finishedAt && (
         <TimelineItem icon={RUN_STATUS[run.status].icon} title={RUN_STATUS[run.status].label} at={run.finishedAt}>
           {run.error && <p className="a-error">{run.error}</p>}
+          {run.retriedAs && <p className="muted small">Retried as another run.</p>}
           {run.status === 'max_steps' && <p className="muted small">The agent used all its steps. Raise the limit in Settings or simplify the task.</p>}
         </TimelineItem>
       )}
@@ -453,10 +477,10 @@ function Timeline({ run, steps }: { run: Run; steps: RunStep[] }) {
 function StepItem({ step }: { step: RunStep }) {
   const [open, setOpen] = useState(false)
   if (step.kind === 'model') {
-    const d = step.detail as Extract<RunStep, { kind: 'model' }>['detail']
+    const d = step.detail as Extract<RunStep, { kind: 'model' }>['detail'] & { cost?: number }
     const title = d.calls.length ? `Decided to use ${d.calls.map((c) => c.toolName).join(', ')}` : 'Answered'
     return (
-      <TimelineItem icon="sparkles" title={title} at={step.at} meta={`${tokens(d.tokens.input + d.tokens.output)} tokens`}>
+      <TimelineItem icon="sparkles" title={title} at={step.at} meta={`${tokens(d.tokens.input + d.tokens.output)} tokens${d.cost ? ` · ${formatUsd(d.cost)}` : ''}`}>
         {d.text && <div className="a-answer">{d.text}</div>}
       </TimelineItem>
     )
@@ -485,6 +509,18 @@ function StepItem({ step }: { step: RunStep }) {
         <pre className="a-pre">{JSON.stringify(d.input, null, 2)}</pre>
       </TimelineItem>
     )
+  }
+  if (step.kind === 'memory') {
+    const d = step.detail as { subject?: string; facts?: string[] }
+    return (
+      <TimelineItem icon="sparkles" title={`Remembered ${d.facts?.length ?? 0} fact${d.facts?.length === 1 ? '' : 's'} about ${d.subject ?? 'the sender'}`} at={step.at}>
+        <ul className="a-facts">{d.facts?.map((f, i) => <li key={i}>{f}</li>)}</ul>
+      </TimelineItem>
+    )
+  }
+  if (step.kind === 'approval_reminder') {
+    const d = step.detail as { waitedHours?: number; leftHours?: number }
+    return <TimelineItem icon="clock" title="Reminded the approvers" at={step.at} meta={d.leftHours ? `waits ${d.leftHours}h more` : undefined} />
   }
   if (step.kind === 'approved' || step.kind === 'rejected') {
     const d = step.detail as { note?: string | null; edited?: boolean }
@@ -631,7 +667,7 @@ function TestDrawer({ agent, onClose, onOpenRun }: { agent: Agent; onClose: () =
           <label className="a-check">
             <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
             <span>
-              Dry run<span className="dim small"> · tools that change anything are skipped (today's tools only read)</span>
+              Dry run<span className="dim small"> · tools that change anything, or save to memory, are skipped</span>
             </span>
           </label>
         </div>
@@ -681,6 +717,7 @@ function useDraftSaver(agent: Agent, onSaved: (a: Agent) => void) {
 
 function SetupTab({
   orgId,
+  admin,
   agent,
   mailboxes,
   onSaved,
@@ -688,6 +725,7 @@ function SetupTab({
   onOpenRun,
 }: {
   orgId: string
+  admin: boolean
   agent: Agent
   mailboxes: Mailbox[]
   onSaved: (a: Agent) => void
@@ -775,10 +813,7 @@ function SetupTab({
             }),
           )}
         </div>
-        <div className="card a-note">
-          <Icon name="plug" size={15} />
-          <span>Connectors (any MCP server, like Shopify or Stripe) come in a later update.</span>
-        </div>
+        <ConnectorTools orgId={orgId} admin={admin} config={config} update={update} />
       </section>
     </div>
   )
@@ -816,7 +851,12 @@ function SettingsTab({
 }) {
   const navigate = useNavigate()
   const members = useMembers(orgId, true).data ?? []
-  const [config, setConfig] = useState(agent.draft)
+  // A config saved before Phase 5 has no spend or memory settings yet.
+  const [config, setConfig] = useState<AgentConfig>(() => ({
+    ...agent.draft,
+    spend: agent.draft.spend ?? { monthlyCapUsd: null, whenReached: 'pause' },
+    memory: agent.draft.memory ?? { enabled: false, retentionDays: 90 },
+  }))
   const { save, state } = useDraftSaver(agent, onSaved)
   const models = useQuery({ queryKey: agentKeys.models(orgId), queryFn: () => agentsApi.models(orgId) })
   const update = (next: AgentConfig, delay?: number) => {
@@ -903,7 +943,7 @@ function SettingsTab({
           <div className="card-row a-field-row">
             <div className="text">
               <span className="name">When nobody decides</span>
-              <span className="sub">Refuse the call, or keep waiting (up to 7 days).</span>
+              <span className="sub">Refuse the call, or remind the approvers and keep waiting (up to 7 days in all).</span>
             </div>
             <div className="seg">
               {(['reject', 'wait'] as const).map((v) => (
@@ -991,6 +1031,72 @@ function SettingsTab({
         </div>
       </section>
       <section className="a-section">
+        <SectionHead title="Spend" sub="Estimated from token counts and list prices. Your AI provider’s bill is the final word." />
+        <div className="card">
+          <div className="card-row a-field-row">
+            <div className="text">
+              <span className="name">Monthly cap</span>
+              <span className="sub">{config.spend.monthlyCapUsd === null ? 'No cap: the runs-per-day limit still applies.' : 'Per calendar month (UTC), tests included.'}</span>
+            </div>
+            <span className="a-money">
+              <span className="dim">$</span>
+              <MoneyInput
+                value={config.spend.monthlyCapUsd}
+                onChange={(n) => update({ ...config, spend: { ...config.spend, monthlyCapUsd: n } })}
+              />
+            </span>
+          </div>
+          <div className="card-row a-field-row">
+            <div className="text">
+              <span className="name">When the cap is reached</span>
+              <span className="sub">Owners and admins get an email either way, once a month.</span>
+            </div>
+            <div className="seg">
+              {(['pause', 'notify'] as const).map((v) => (
+                <button
+                  key={v}
+                  aria-pressed={config.spend.whenReached === v}
+                  disabled={config.spend.monthlyCapUsd === null}
+                  onClick={() => update({ ...config, spend: { ...config.spend, whenReached: v } }, 0)}
+                >
+                  {v === 'pause' ? 'Skip runs' : 'Only notify'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="a-section">
+        <SectionHead title="Memory" sub="Facts the agent saves between runs. See and edit them in the Memory tab." />
+        <div className="card">
+          <label className="card-row a-check-row">
+            <input type="checkbox" checked={config.memory.enabled} onChange={(e) => update({ ...config, memory: { ...config.memory, enabled: e.target.checked } }, 0)} />
+            <div className="text">
+              <span className="name">Remember between runs</span>
+              <span className="sub">Gives the agent tools to save, look up and delete facts, and shows it what it knows about the sender of an email.</span>
+            </div>
+          </label>
+          <div className="card-row a-field-row">
+            <div className="text">
+              <span className="name">Keep facts for</span>
+              <span className="sub">A fact not updated for this long is deleted.</span>
+            </div>
+            <select
+              className="select sm"
+              value={config.memory.retentionDays ?? 'never'}
+              disabled={!config.memory.enabled}
+              onChange={(e) => update({ ...config, memory: { ...config.memory, retentionDays: e.target.value === 'never' ? null : Number(e.target.value) } }, 0)}
+            >
+              {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+              {config.memory.retentionDays !== null && ![30, 90, 180, 365].includes(config.memory.retentionDays) && (
+                <option value={config.memory.retentionDays}>{config.memory.retentionDays} days</option>
+              )}
+              <option value="never">Until deleted</option>
+            </select>
+          </div>
+        </div>
+      </section>
+      <section className="a-section">
         <SectionHead title="Developer" />
         <div className="card">
           <div className="card-row">
@@ -1039,6 +1145,28 @@ function NumberRow({ label, sub, value, min, max, onChange }: { label: string; s
         onBlur={() => setText(String(value))}
       />
     </div>
+  )
+}
+
+/** A dollar amount, or empty for none. Applies once the text is a valid amount (1 to 100,000). */
+function MoneyInput({ value, onChange }: { value: number | null; onChange: (n: number | null) => void }) {
+  const [text, setText] = useState(value === null ? '' : String(value))
+  return (
+    <input
+      className="text-input a-number"
+      inputMode="decimal"
+      placeholder="No cap"
+      aria-label="Monthly cap in US dollars"
+      value={text}
+      onChange={(e) => {
+        const t = e.target.value.replace(/[^\d.]/g, '')
+        setText(t)
+        if (t === '') return onChange(null)
+        const n = Number(t)
+        if (Number.isFinite(n) && n >= 1 && n <= 100_000) onChange(Math.round(n * 100) / 100)
+      }}
+      onBlur={() => setText(value === null ? '' : String(value))}
+    />
   )
 }
 

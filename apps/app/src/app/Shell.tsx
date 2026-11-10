@@ -1,8 +1,9 @@
 // Dashboard shell: the rail on the left and the current page. Also wires ⌘K, the desktop app's menu commands
-// and the unread badge.
+// and the unread and approval badges.
 
 import { Outlet, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { ApprovalAlerts, usePendingApprovals } from '../agents/alerts'
 import { Icon } from '../components/Icon'
 import { useAccount } from '../lib/account'
 import { applyTheme, desktop, initials, isMac } from '../lib/core'
@@ -46,6 +47,7 @@ export function Shell() {
   return (
     <div className="app">
       <MailSync />
+      <ApprovalAlerts />
       <Rail />
       <main className="main">
         <Outlet />
@@ -77,6 +79,7 @@ function Rail() {
   const page = path.split('/')[1] || 'mail'
   const dark = useIsDark()
   const unread = useUnreadCount()
+  const approvals = usePendingApprovals()
   const history = useHistoryButtons()
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -154,6 +157,7 @@ function Rail() {
             <Icon name={p.icon} size={16} />
             <span className="label">{p.label}</span>
             {p.id === 'mail' && unread > 0 && <span className="count">{unread}</span>}
+            {p.id === 'agents' && approvals > 0 && <span className="count" title={`${approvals} waiting for approval`}>{approvals}</span>}
           </button>
         ))}
       </nav>
