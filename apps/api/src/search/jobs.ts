@@ -16,6 +16,12 @@ const BACKFILL_PER_HOUR = 500
 const RETRY_PER_HOUR = 100
 const SWEEP_PER_HOUR = 200
 const RETRY_AFTER_HOURS = 24
+/**
+ * Emails that failed for a passing reason (Vectorize refusing writes for rate) are retried after an hour, this many
+ * an hour: a big import can leave thousands of them, and a daily 100 would take weeks.
+ */
+const TRANSIENT_RETRY_PER_HOUR = 2000
+const TRANSIENT_RETRY_AFTER_HOURS = 1
 /** Messages per index-emails job: one Email/get and one embedding pass each. */
 export const EMAILS_PER_JOB = 50
 
@@ -43,6 +49,9 @@ export function enqueueEmails(env: Pick<Env, 'SEARCH_INDEX'>, mailboxId: string,
   return send(env, jobs)
 }
 
+/** A minute more per attempt, up to ten, with jitter so a burst of failed jobs doesn't come back all at once. */
+const retryDelay = (attempts: number) => Math.min(60 * attempts, 600) + Math.floor(Math.random() * 60)
+
 /** Queue consumer. The same file queued twice in one batch is indexed once. */
 export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv): Promise<void> {
   const byFile = new Map<string, Message<SearchJob>[]>()
@@ -59,18 +68,18 @@ export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv
       for (const m of messages) m.ack()
     } catch (err) {
       console.error(`search-index: file ${fileId} failed`, err)
-      for (const m of messages) m.retry({ delaySeconds: 60 * m.attempts })
+      for (const m of messages) m.retry({ delaySeconds: retryDelay(m.attempts) })
     }
   }
   for (const message of batch.messages) {
     if (message.body.kind !== 'index-emails') continue
     try {
       const outcome = await indexEmails(env, message.body.mailboxId, message.body.emailIds)
-      if (outcome.indexed || outcome.empty) console.log('search-index-emails', JSON.stringify(outcome))
+      if (outcome.indexed || outcome.empty || outcome.failed) console.log('search-index-emails', JSON.stringify(outcome))
       message.ack()
     } catch (err) {
       console.error(`search-index-emails: mailbox ${message.body.mailboxId} failed`, err)
-      message.retry({ delaySeconds: 60 * message.attempts })
+      message.retry({ delaySeconds: retryDelay(message.attempts) })
     }
   }
 }
@@ -89,7 +98,12 @@ export async function hourly(env: EmailIndexEnv & Pick<Env, 'SEARCH_INDEX'>, now
   const failed = await searchDb.failedFileIds(env.DB, before, RETRY_PER_HOUR)
   await enqueueIndex(env, failed)
   const failedEmails = new Map<string, string[]>()
-  for (const row of await searchDb.failedEmailDocs(env.DB, before, RETRY_PER_HOUR)) {
+  const soon = new Date(now.getTime() - TRANSIENT_RETRY_AFTER_HOURS * 3_600_000).toISOString()
+  const emailRows = [
+    ...(await searchDb.failedEmailDocs(env.DB, before, RETRY_PER_HOUR)),
+    ...(await searchDb.rateLimitedEmailDocs(env.DB, soon, TRANSIENT_RETRY_PER_HOUR)),
+  ]
+  for (const row of new Map(emailRows.map((r) => [r.doc_id, r])).values()) {
     const doc = searchDb.parseDoc(row.doc_id)
     if (doc?.kind === 'email') failedEmails.set(doc.mailboxId, [...(failedEmails.get(doc.mailboxId) ?? []), doc.emailId])
   }

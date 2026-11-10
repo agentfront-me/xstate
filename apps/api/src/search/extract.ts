@@ -53,7 +53,26 @@ export function stripConversionHeader(markdown: string): string {
  */
 export function chunkText(text: string, kind: TextKind): { chunks: string[]; truncated: boolean } {
   const chunks = kind === 'csv' ? chunkRows(text) : chunkProse(text)
-  return { chunks: chunks.slice(0, MAX_CHUNKS), truncated: chunks.length > MAX_CHUNKS }
+  return { chunks: chunks.slice(0, MAX_CHUNKS).map(wellFormed), truncated: chunks.length > MAX_CHUNKS }
+}
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+
+/**
+ * The text with any half of a character pair (emoji and other characters outside the basic plane take two UTF-16
+ * code units) replaced by U+FFFD. Workers AI refuses a body holding one ("8006: must be valid JSON"), and some
+ * emails carry them already broken.
+ */
+export function wellFormed(text: string): string {
+  return text.replace(LONE_SURROGATE, '\uFFFD')
+}
+
+/** `i`, moved back by one when it would split a character pair. */
+function cutAt(text: string, i: number): number {
+  if (i <= 0 || i >= text.length) return i
+  const before = text.charCodeAt(i - 1)
+  const after = text.charCodeAt(i)
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff ? i - 1 : i
 }
 
 function chunkRows(text: string): string[] {
@@ -82,15 +101,16 @@ function chunkProse(text: string): string[] {
   let current = ''
   const push = () => {
     out.push(current)
-    current = current.slice(-OVERLAP)
+    current = current.slice(cutAt(current, Math.max(0, current.length - OVERLAP)))
   }
   for (const paragraph of paragraphs) {
     if (current && current.length + paragraph.length + 2 > CHUNK_CHARS) push()
     current = current ? `${current}\n\n${paragraph}` : paragraph
     // One paragraph longer than a chunk (a PDF page comes as one) is cut hard.
     while (current.length > CHUNK_CHARS * 1.5) {
-      out.push(current.slice(0, CHUNK_CHARS))
-      current = current.slice(CHUNK_CHARS - OVERLAP)
+      const end = cutAt(current, CHUNK_CHARS)
+      out.push(current.slice(0, end))
+      current = current.slice(cutAt(current, end - OVERLAP))
     }
   }
   if (current.trim()) out.push(current)

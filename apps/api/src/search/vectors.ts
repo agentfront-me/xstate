@@ -59,6 +59,23 @@ export async function query(
     .map((m) => ({ id: m.id, score: m.score, metadata: m.metadata as ChunkMetadata }))
 }
 
+/** A document's passages as Vectorize rows. */
+export function documentRows(
+  organizationId: string,
+  doc: string,
+  scope: Scope,
+  chunks: string[],
+  vectors: number[][],
+  extra: DocMetadata = {},
+): VectorizeVector[] {
+  return vectors.map((values, i) => ({
+    id: `${doc}:${i}`,
+    values,
+    namespace: organizationId,
+    metadata: { ...scope, ...extra, doc, text: chunks[i]!, pos: String(i) } satisfies ChunkMetadata,
+  }))
+}
+
 /** Writes a document's passages, replacing vectors with the same ids. */
 export async function upsertDocument(
   env: VectorEnv,
@@ -69,14 +86,35 @@ export async function upsertDocument(
   vectors: number[][],
   extra: DocMetadata = {},
 ): Promise<void> {
-  const rows: VectorizeVector[] = vectors.map((values, i) => ({
-    id: `${doc}:${i}`,
-    values,
-    namespace: organizationId,
-    metadata: { ...scope, ...extra, doc, text: chunks[i]!, pos: String(i) } satisfies ChunkMetadata,
-  }))
-  for (let i = 0; i < rows.length; i += UPSERT_BATCH) await index(env).upsert(rows.slice(i, i + UPSERT_BATCH))
+  await upsertRows(env, documentRows(organizationId, doc, scope, chunks, vectors, extra))
 }
+
+/** Waits before each retry of a write Vectorize refused for rate, in ms (plus up to a second of jitter). */
+const RATE_RETRY_MS = [2_000, 5_000, 10_000, 20_000]
+
+/** Vectorize refusing a write because too many are arriving ("VECTOR_UPSERT_ERROR (code = 40041)"). */
+export const isRateLimited = (err: unknown) => /40041|Too Many Requests/i.test(String(err))
+
+/**
+ * Writes rows in as few calls as Vectorize allows (UPSERT_BATCH each). A call refused for rate is retried after a
+ * pause with the same vectors, so nothing is embedded twice; it throws only once the retries run out.
+ */
+export async function upsertRows(env: VectorEnv, rows: VectorizeVector[], wait: (ms: number) => Promise<unknown> = sleep): Promise<void> {
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH) {
+    const batch = rows.slice(i, i + UPSERT_BATCH)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await index(env).upsert(batch)
+        break
+      } catch (err) {
+        if (!isRateLimited(err) || attempt >= RATE_RETRY_MS.length) throw err
+        await wait(RATE_RETRY_MS[attempt]! + Math.random() * 1000)
+      }
+    }
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Deletes a document's vectors by id. Deleting an id that is already gone succeeds, so this is safe to repeat. */
 export async function deleteDocument(env: VectorEnv, doc: string, chunks: number): Promise<void> {

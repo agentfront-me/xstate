@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { CHUNK_CHARS, MAX_CHUNKS, chunkText, stripConversionHeader, textKind } from './extract.ts'
+import { CHUNK_CHARS, MAX_CHUNKS, chunkText, stripConversionHeader, textKind, wellFormed } from './extract.ts'
 
 describe('textKind', () => {
   it('reads PDFs, CSVs and text-like types, and nothing else', () => {
@@ -68,5 +68,29 @@ describe('chunkText', () => {
     const { chunks, truncated } = chunkText(text, 'text')
     assert.equal(chunks.length, MAX_CHUNKS)
     assert.equal(truncated, true)
+  })
+
+  it('never cuts an emoji in half, wherever the cuts fall', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    // One long paragraph of emoji (two code units each), shifted so cuts land on every offset.
+    for (const pad of ['', 'a', 'ab']) {
+      const { chunks } = chunkText(pad + '😀'.repeat(CHUNK_CHARS * 2), 'text')
+      assert.ok(chunks.length > 1)
+      for (const c of chunks) assert.doesNotMatch(c, lone)
+    }
+    // And the overlap carried between paragraphs.
+    const paragraphs = Array.from({ length: 20 }, (_, i) => `${'x'.repeat(i % 3)}${'🎉'.repeat(400)}`).join('\n\n')
+    for (const c of chunkText(paragraphs, 'text').chunks) assert.doesNotMatch(c, lone)
+  })
+})
+
+describe('wellFormed', () => {
+  it('replaces halves of character pairs and keeps whole ones', () => {
+    assert.equal(wellFormed('ok 😀'), 'ok 😀')
+    assert.equal(wellFormed('a\uD83Db'), 'a\uFFFDb')
+    assert.equal(wellFormed('\uDE00 end'), '\uFFFD end')
+    // JSON.stringify of the result must parse back to itself, which is what Workers AI checks.
+    const s = wellFormed('x\uD83D')
+    assert.equal(JSON.parse(JSON.stringify(s)), s)
   })
 })

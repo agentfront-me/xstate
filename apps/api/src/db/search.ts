@@ -110,6 +110,17 @@ export async function failedEmailDocs(db: D1Database, before: string, limit: num
   return results
 }
 
+/** Email documents that failed because Vectorize refused writes for rate, before `before`: retried within hours. */
+export async function rateLimitedEmailDocs(db: D1Database, before: string, limit: number): Promise<DocRow[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM search_docs WHERE status = 'failed' AND file_id IS NULL AND error LIKE '%Too Many Requests%' AND indexed_at < ? ORDER BY indexed_at LIMIT ?",
+    )
+    .bind(before, limit)
+    .all<DocRow>()
+  return results
+}
+
 /**
  * Rows whose file or mailbox is gone: purged versions, deleted items, deleted mailboxes or organizations (files
  * cascade away with them). Their vectors are the only thing left to delete. Deleted messages are removed by mail

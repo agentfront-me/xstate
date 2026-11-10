@@ -19,7 +19,7 @@ import type { JmapEmailText } from '../mailserver/stalwart/mail'
 import { organizationBucket, type BucketEnv } from '../storage/buckets'
 import { getObject } from '../storage/r2'
 import { MAX_INDEX_BYTES, chunkText, extractText, textKind } from './extract'
-import { deleteDocument, embed, upsertDocument, type Scope, type VectorEnv } from './vectors'
+import { deleteDocument, documentRows, embed, upsertDocument, upsertRows, type Scope, type VectorEnv } from './vectors'
 
 export type IndexEnv = BucketEnv & VectorEnv
 
@@ -85,6 +85,11 @@ export async function indexFile(env: IndexEnv, fileId: string): Promise<Outcome>
     await searchDb.upsert(env.DB, row('indexed', chunks.length, truncated ? 'cut at the chunk limit' : null)).run()
     return done({ doc, status: 'indexed', chunks: chunks.length, truncated })
   } catch (err) {
+    // A password-protected PDF has no text to give: skipped for good rather than retried every day.
+    if (kind === 'pdf' && /password/i.test(String(err))) {
+      await searchDb.upsert(env.DB, row('skipped', 0, 'password-protected')).run()
+      return done({ doc, status: 'skipped', chunks: 0 })
+    }
     await searchDb.upsert(env.DB, row('failed', 0, String(err).slice(0, 500))).run()
     throw err
   }
@@ -119,7 +124,7 @@ async function removeOtherVersions(env: IndexEnv, itemId: string, keepDoc: strin
 
 export type EmailIndexEnv = IndexEnv & StalwartEnv
 
-export type EmailsOutcome = { mailboxId: string; indexed: number; empty: number; missing: number }
+export type EmailsOutcome = { mailboxId: string; indexed: number; empty: number; missing: number; failed: number }
 
 /**
  * Indexes a batch of messages of one mailbox (one Email/get, one embedding pass) and records a row per message.
@@ -127,7 +132,7 @@ export type EmailsOutcome = { mailboxId: string; indexed: number; empty: number;
  * Throws after writing `failed` rows when the mail server or the model fails, so the job is retried.
  */
 export async function indexEmails(env: EmailIndexEnv, mailboxId: string, emailIds: string[]): Promise<EmailsOutcome> {
-  const outcome: EmailsOutcome = { mailboxId, indexed: 0, empty: 0, missing: emailIds.length }
+  const outcome: EmailsOutcome = { mailboxId, indexed: 0, empty: 0, missing: emailIds.length, failed: 0 }
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
   if (!mailbox || !emailIds.length) return outcome
   const scope: Scope = { top: `mb:${mailbox.id}`, space: 'mail', owner: '' }
@@ -151,28 +156,61 @@ export async function indexEmails(env: EmailIndexEnv, mailboxId: string, emailId
     ])
     outcome.missing = emailIds.length - messages.length
     const docs = messages.map((m) => ({ message: m, chunks: chunkText(emailText(m), 'text').chunks }))
-    const vectors = await embed(env, docs.flatMap((d) => d.chunks))
+    const vectors = await embedEach(env, docs.map((d) => d.chunks))
     const rows: D1PreparedStatement[] = []
-    let offset = 0
-    for (const { message, chunks } of docs) {
+    const upserts: VectorizeVector[] = []
+    docs.forEach(({ message, chunks }, k) => {
       const doc = searchDb.emailDoc(mailbox.id, message.id)
-      if (chunks.length) {
+      const folder = folderRole(message.mailboxIds, folders)
+      const v = vectors[k]!
+      if ('error' in v) {
+        rows.push(searchDb.upsert(env.DB, row(message.id, 'failed', 0, v.error, folder)))
+        outcome.failed++
+      } else if (chunks.length) {
         const extra = { title: message.subject ?? '', from: message.from?.[0]?.email ?? '', at: message.receivedAt, thread: message.threadId }
-        await upsertDocument(env, mailbox.organization_id, doc, scope, chunks, vectors.slice(offset, offset + chunks.length), extra)
+        upserts.push(...documentRows(mailbox.organization_id, doc, scope, chunks, v.vectors, extra))
+        rows.push(searchDb.upsert(env.DB, row(message.id, 'indexed', chunks.length, null, folder)))
         outcome.indexed++
       } else {
+        rows.push(searchDb.upsert(env.DB, row(message.id, 'skipped', 0, 'no text', folder)))
         outcome.empty++
       }
-      offset += chunks.length
-      const folder = folderRole(message.mailboxIds, folders)
-      rows.push(searchDb.upsert(env.DB, row(message.id, chunks.length ? 'indexed' : 'skipped', chunks.length, chunks.length ? null : 'no text', folder)))
-    }
+    })
+    // Every message's vectors in one write (or a few, for long ones), not one write per message.
+    await upsertRows(env, upserts)
     if (rows.length) await env.DB.batch(rows)
     return outcome
   } catch (err) {
     await env.DB.batch(emailIds.map((id) => searchDb.upsert(env.DB, row(id, 'failed', 0, String(err).slice(0, 500)))))
     throw err
   }
+}
+
+/** Workers AI refusing the request body itself ("8006: Invalid data for body"): retrying the same text won't help. */
+const isBadInput = (err: unknown) => /\b8006\b|Invalid data for body/.test(String(err))
+
+/**
+ * Vectors for each message's passages: one embedding pass for all of them, or, when the model refuses that body,
+ * one pass per message, so a message it won't take fails alone and the rest are still indexed.
+ */
+async function embedEach(env: Pick<Env, 'AI'>, texts: string[][]): Promise<({ vectors: number[][] } | { error: string })[]> {
+  try {
+    const all = await embed(env, texts.flat())
+    let offset = 0
+    return texts.map((t) => ({ vectors: all.slice(offset, (offset += t.length)) }))
+  } catch (err) {
+    if (!isBadInput(err)) throw err
+  }
+  const out: ({ vectors: number[][] } | { error: string })[] = []
+  for (const t of texts) {
+    try {
+      out.push({ vectors: t.length ? await embed(env, t) : [] })
+    } catch (err) {
+      if (!isBadInput(err)) throw err
+      out.push({ error: String(err).slice(0, 500) })
+    }
+  }
+  return out
 }
 
 /** What gets embedded for a message: the headline a reader sees, then the body. */
