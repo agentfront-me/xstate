@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { PROVIDERS } from '../agents/config'
 import * as providers from '../agents/providers'
 import * as secrets from '../agents/secrets'
+import * as approvals from '../agents/approvals'
 import * as agents from '../agents/service'
 import * as triggers from '../agents/triggers'
 import { defineOperation } from './define'
@@ -314,7 +315,36 @@ export const triggersTest = defineOperation({
   run: ({ env, actor }, { agentId, triggerId, ...input }) => triggers.test(env, actor, agentId, triggerId, input),
 })
 
+// ---------------------------------------------------------------------------------------------------------------
+// Approvals
+
+export const approvalsList = defineOperation({
+  name: 'agents_approvals_list',
+  description: "An agent's tool calls waiting for a person (pending), or the latest decided ones.",
+  input: z.object({ agentId: id, status: z.enum(['pending', 'decided']).default('pending') }),
+  http: { method: 'GET', path: '/agents/:agentId/approvals' },
+  mcp: false,
+  run: ({ env, actor }, input) => approvals.list(env, actor, input.agentId, input.status),
+})
+
+export const approvalsDecide = defineOperation({
+  name: 'agents_approvals_decide',
+  description: 'Approve (optionally with changed input) or reject a waiting tool call. A rejection note goes back to the agent.',
+  input: z.object({
+    agentId: id,
+    approvalId: z.string().min(1).max(120),
+    decision: z.enum(['approve', 'reject']),
+    note: z.string().max(2000).optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+  }),
+  http: { method: 'POST', path: '/agents/:agentId/approvals/:approvalId' },
+  mcp: false,
+  run: async ({ env, actor }, { agentId, approvalId, ...input }) => ({ approval: await approvals.decide(env, actor, agentId, approvalId, input) }),
+})
+
 export const agentOperations = [
+  approvalsList,
+  approvalsDecide,
   triggersList,
   triggersCreate,
   triggersUpdate,

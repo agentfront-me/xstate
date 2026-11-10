@@ -24,8 +24,30 @@ export const agentConfig = z.object({
     .object({
       /** Built-in tool names (agents/tools.ts) the agent may use. Unknown names are ignored. */
       builtin: z.array(z.string().max(64)).max(50).default([]),
+      /**
+       * Per tool: does a call wait for a person? Tools not listed use their default (agents/tools.ts: sending and
+       * invitations ask, drafts and moving mail don't). Read-only tools never ask.
+       */
+      approval: z.record(z.string().max(64), z.enum(['always', 'never'])).default({}),
     })
-    .default({ builtin: [] }),
+    .default({ builtin: [], approval: {} }),
+  /**
+   * Mailboxes the agent may read and act in (mailbox ids). The mailboxes its email triggers watch are added at run
+   * time. Every tool call that names a mailbox must name one of these.
+   */
+  mailboxes: z.array(z.string().max(64)).max(50).default([]),
+  approvals: z
+    .object({
+      /** Hours a call waits for a decision. */
+      timeoutHours: z.number().int().min(1).max(168).default(24),
+      /** reject: the call is refused after timeoutHours. wait: keep waiting, up to 7 days. */
+      onTimeout: z.enum(['reject', 'wait']).default('reject'),
+      /** User ids who can decide. Empty: anyone who can manage agents. Owners and admins always can. */
+      approvers: z.array(z.string().max(64)).max(50).default([]),
+      /** Email the approvers when a call is waiting. */
+      notifyEmail: z.boolean().default(true),
+    })
+    .default({ timeoutHours: 24, onTimeout: 'reject', approvers: [], notifyEmail: true }),
   limits: z
     .object({
       maxSteps: z.number().int().min(LIMITS.maxSteps.min).max(LIMITS.maxSteps.max).default(LIMITS.maxSteps.default),

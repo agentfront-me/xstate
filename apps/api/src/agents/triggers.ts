@@ -20,7 +20,7 @@ import type { RunParams } from './run'
 import { describe as describeSchedule, nextRun, validate, type ScheduleSpec } from './schedule'
 import { seal, unseal } from './seal'
 import { webhookTask } from './trigger-text'
-import { agentContext, blocker, publishedConfig, store } from './service'
+import { agentContext, agentMailboxes, blocker, publishedConfig, store } from './service'
 import type { AgentStore, StartResult } from './store'
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -294,6 +294,7 @@ export async function test(env: Env, actor: Actor, agentId: string, triggerId: s
       dryRun: true,
       trigger: { kind: trigger.kind, label: `${LABEL[trigger.kind]} test`, triggerId: trigger.id, sender },
       filter,
+      mailboxes: await agentMailboxes(env, agent.id, draft),
     },
     draft.limits,
   )
@@ -341,6 +342,7 @@ export async function fire(env: Env, trigger: TriggerRow, s: Store, input: FireI
     dryRun: false,
     trigger: { kind: trigger.kind, label: input.label, triggerId: trigger.id, sender: input.sender },
     filter: input.filter,
+    mailboxes: await agentMailboxes(env, agent.id, published.config),
   }
   const result: StartResult = await s.startRun(params, published.config.limits)
   await db.touchTrigger(env.DB, trigger.id, { last_fired_at: new Date().toISOString() })

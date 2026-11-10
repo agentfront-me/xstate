@@ -441,6 +441,16 @@ export async function submitEmail(
   return { id: created.id, threadId: created.threadId }
 }
 
+/** Creates a message in Drafts (marked $draft) without submitting it. */
+export async function createDraft(env: StalwartEnv, accountId: string, draftsId: string, email: JmapArgs): Promise<{ id: string; threadId: string }> {
+  const [result] = await mail(env, [
+    ['Email/set', { accountId, create: { d: { ...email, mailboxIds: { [draftsId]: true }, keywords: { $draft: true, $seen: true } } } }],
+  ])
+  const created = (result!.created as Record<string, { id: string; threadId: string }> | undefined)?.d
+  if (!created) throw setFailure('draft', (result!.notCreated as Record<string, SetError> | undefined)?.d)
+  return { id: created.id, threadId: created.threadId }
+}
+
 /** Adds a keyword ($answered, $forwarded) to a message; a missing message is ignored. */
 export async function addKeyword(env: StalwartEnv, accountId: string, emailId: string, keyword: string): Promise<void> {
   await mail(env, [['Email/set', { accountId, update: { [emailId]: { [`keywords/${keyword}`]: true } } }]])

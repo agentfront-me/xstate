@@ -361,11 +361,43 @@ export async function sendMessage(
   mailboxId: string,
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
+  const { mailbox, accountId, identityId, draftsId, sentId, email, original, recipients } = await compose(env, actor, mailboxId, input, true)
+
+  // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
+  const reservation = await reserveSend(env, mailbox, recipients.map((r) => r.email))
+  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email }).catch(async (err) => {
+    await reservation.release()
+    throw err
+  })
+  if (original) {
+    await jmap
+      .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')
+      .catch((err) => console.error('send: marking original failed', err))
+  }
+  return sent
+}
+
+/**
+ * Saves a message to the mailbox's Drafts without sending it (agents use this so a person can review and send).
+ * Same addressing, threading and attachments as sendMessage; no sending caps, since nothing leaves.
+ */
+export async function saveDraft(
+  env: EmailEnv,
+  actor: Actor,
+  mailboxId: string,
+  input: SendInput,
+): Promise<{ id: string; threadId: string }> {
+  const { accountId, draftsId, email } = await compose(env, actor, mailboxId, input, false)
+  return jmap.createDraft(env, accountId, draftsId, email)
+}
+
+/** The JMAP email for sendMessage and saveDraft, after the access, recipient and folder checks. */
+async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: SendInput, sending: boolean) {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
   const accountId = mailbox.stalwart_id
 
   const recipients = [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])]
-  if (!recipients.length) throw new EmailError('no_recipients', 'Add at least one recipient')
+  if (sending && !recipients.length) throw new EmailError('no_recipients', 'Add at least one recipient')
   if (recipients.length > MAX_RECIPIENTS) {
     throw new EmailError('too_many_recipients', `A message can have at most ${MAX_RECIPIENTS} recipients`)
   }
@@ -435,18 +467,7 @@ export async function sendMessage(
       }
     : body
 
-  // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
-  const reservation = await reserveSend(env, mailbox, recipients.map((r) => r.email))
-  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email }).catch(async (err) => {
-    await reservation.release()
-    throw err
-  })
-  if (original) {
-    await jmap
-      .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')
-      .catch((err) => console.error('send: marking original failed', err))
-  }
-  return sent
+  return { mailbox, accountId, identityId, draftsId, sentId, email, original, recipients }
 }
 
 /** Stores an attachment for a message about to be sent. Returns the blob id to pass to sendMessage. */

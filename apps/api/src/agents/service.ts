@@ -8,12 +8,14 @@
 import { getAgentByName } from 'agents'
 import type { Actor } from '../auth/types'
 import * as db from '../db/agents'
+import * as mailboxesDb from '../db/mailboxes'
 import type { AgentRow } from '../db/agents'
 import { ApiError } from '../errors'
 import { isAdmin, loadMember } from '../mailserver/access'
 import { agentConfig, defaultConfig, parseConfig, type AgentConfig } from './config'
 import { label } from './providers'
 import type { AgentStore, RunRow, StepRow } from './store'
+import { pendingCounts } from './approvals'
 import { builtinCatalog } from './tools'
 
 export type AgentSummary = {
@@ -26,6 +28,8 @@ export type AgentSummary = {
   model: AgentConfig['model']
   createdAt: string
   updatedAt: string
+  /** Tool calls waiting for a person (list only). */
+  pendingApprovals?: number
 }
 
 export type AgentDetail = AgentSummary & { draft: AgentConfig; published: AgentConfig | null }
@@ -85,6 +89,14 @@ function summary(agent: AgentRow, publishedRaw: string | undefined): AgentSummar
   }
 }
 
+/** Mailbox ids the agent may use in a run: its Settings → Mailboxes plus the mailboxes its email triggers watch. */
+export async function agentMailboxes(env: Env, agentId: string, config: AgentConfig): Promise<string[]> {
+  const { results } = await env.DB.prepare("SELECT DISTINCT mailbox_id FROM agent_triggers WHERE agent_id = ? AND kind = 'email' AND mailbox_id IS NOT NULL")
+    .bind(agentId)
+    .all<{ mailbox_id: string }>()
+  return [...new Set([...config.mailboxes, ...results.map((r) => r.mailbox_id)])]
+}
+
 export const store = (env: Env, agentId: string) => getAgentByName<Env, AgentStore>(env.AGENT_STORE, agentId)
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -92,8 +104,8 @@ export const store = (env: Env, agentId: string) => getAgentByName<Env, AgentSto
 
 export async function list(env: Env, actor: Actor, organizationId: string): Promise<AgentSummary[]> {
   await requireManager(env, actor, organizationId)
-  const agents = await db.listAgents(env.DB, organizationId)
-  return Promise.all(agents.map(async (a) => summary(a, (await publishedConfig(env, a))?.raw)))
+  const [agents, pending] = await Promise.all([db.listAgents(env.DB, organizationId), pendingCounts(env, organizationId)])
+  return Promise.all(agents.map(async (a) => ({ ...summary(a, (await publishedConfig(env, a))?.raw), pendingApprovals: pending.get(a.id) ?? 0 })))
 }
 
 const name = (s: string) => {
@@ -131,10 +143,21 @@ export async function update(env: Env, actor: Actor, agentId: string, input: { n
     .updateAgent(env.DB, agent.id, {
       name: input.name === undefined ? undefined : name(input.name),
       description: input.description === undefined ? undefined : input.description.trim().slice(0, 300),
-      draft: input.config === undefined ? undefined : JSON.stringify(agentConfig.parse(input.config)),
+      draft: input.config === undefined ? undefined : JSON.stringify(await scopedConfig(env, agent.organization_id, agentConfig.parse(input.config))),
     })
     .run()
   return detail(env, (await db.findAgent(env.DB, agent.id))!)
+}
+
+/** Drops mailboxes that aren't in the agent's organization (deleted, or a forged id). */
+async function scopedConfig(env: Env, organizationId: string, config: AgentConfig): Promise<AgentConfig> {
+  if (!config.mailboxes.length) return config
+  const kept: string[] = []
+  for (const id of new Set(config.mailboxes)) {
+    const mailbox = await mailboxesDb.find(env.DB, id)
+    if (mailbox?.organization_id === organizationId) kept.push(id)
+  }
+  return { ...config, mailboxes: kept }
 }
 
 /** Why a config can't run yet, or null. */
@@ -288,6 +311,7 @@ export async function startRun(env: Env, actor: Actor, agentId: string, input: {
       task,
       dryRun: input.dryRun,
       trigger: input.draft ? { kind: 'test', label: 'Test' } : { kind: 'manual', label: 'Run now' },
+      mailboxes: await agentMailboxes(env, agent.id, config),
     },
     config.limits,
   )

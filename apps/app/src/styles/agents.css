@@ -154,6 +154,32 @@ button.a-tl-head .icon { color: var(--text-dim); }
 .a-days { align-self: flex-start; }
 .a-days button { width: 38px; }
 
+/* Approvals */
+.a-need { color: #b45309; }
+:root.dark .a-need { color: #fbbf24; }
+.a-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 99px; background: #f59e0b; color: #1c1917; font-size: 11px; font-weight: 500; }
+.a-needs { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-toned); white-space: nowrap; cursor: pointer; }
+.a-needs.off { opacity: 0.45; cursor: default; }
+.a-check-row { cursor: pointer; }
+.a-check-row input { flex-shrink: 0; }
+.a-approvers { align-items: flex-start; }
+.a-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 60%; }
+.a-chip { height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--border); font-size: 12px; color: var(--text-toned); }
+.a-chip[aria-pressed="true"] { border-color: var(--border-hi); color: var(--text-hi); background: var(--s-selected); }
+.a-approval { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.a-approval-head { display: flex; align-items: center; gap: 12px; }
+.a-approval-head .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.a-approval-head .name { color: var(--text-hi); }
+.a-approval-head .sub { font-size: 12px; color: var(--text-muted); }
+.a-approval-reason { font-size: 13px; color: var(--text-toned); font-style: italic; }
+.a-mail-preview { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-hi); }
+.a-mail-preview .dim { display: inline-block; width: 56px; }
+.a-mail-edit { display: flex; flex-direction: column; }
+.a-approval-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.a-approval-foot .text-input { flex: 1; min-width: 200px; height: 30px; font-size: 13px; }
+.a-decision { font-size: 12px; white-space: nowrap; color: var(--text-hi); }
+.a-decision.rejected, .a-decision.expired { color: var(--text-muted); }
+
 /* The page sits beside the rail and the agent list, so it narrows by its own width, not the window's. */
 .agents .a-main { container-type: inline-size; }
 @container (max-width: 680px) {

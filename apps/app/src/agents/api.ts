@@ -8,7 +8,9 @@ export type ProviderStatus = 'valid' | 'invalid' | 'no_credit' | 'rate_limited'
 export type AgentConfig = {
   instructions: string
   model: { provider: ProviderId; id: string } | null
-  tools: { builtin: string[] }
+  tools: { builtin: string[]; approval: Record<string, 'always' | 'never'> }
+  mailboxes: string[]
+  approvals: { timeoutHours: number; onTimeout: 'reject' | 'wait'; approvers: string[]; notifyEmail: boolean }
   limits: { maxSteps: number; maxRunsPerDay: number; perSenderPerHour: number }
 }
 
@@ -22,11 +24,12 @@ export type AgentSummary = {
   model: AgentConfig['model']
   createdAt: string
   updatedAt: string
+  pendingApprovals?: number
 }
 
 export type Agent = AgentSummary & { draft: AgentConfig; published: AgentConfig | null }
 
-export type ToolInfo = { name: string; label: string; group: string; description: string; readOnly: boolean }
+export type ToolInfo = { name: string; label: string; group: string; description: string; readOnly: boolean; defaultApproval: 'always' | 'never' }
 export type ModelChoice = { provider: ProviderId; status: ProviderStatus; statusDetail: string | null; models: string[] }
 
 export type RunStatus = 'running' | 'waiting_for_approval' | 'done' | 'failed' | 'max_steps' | 'skipped'
@@ -189,4 +192,37 @@ export const triggersApi = {
 export const triggerKeys = {
   list: (agentId: string) => ['agents', 'triggers', agentId] as const,
   events: (agentId: string, id: string) => ['agents', 'trigger-events', agentId, id] as const,
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Approvals
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
+export type Approval = {
+  id: string
+  agentId: string
+  runId: string
+  tool: string
+  toolLabel: string
+  input: Record<string, unknown>
+  editedInput: Record<string, unknown> | null
+  reason: string
+  status: ApprovalStatus
+  note: string | null
+  decidedBy: string | null
+  decidedAt: string | null
+  createdAt: string
+  expiresAt: string
+}
+
+export const approvalsApi = {
+  list: (agentId: string, status: 'pending' | 'decided' = 'pending') =>
+    api<{ approvals: Approval[]; canDecide: boolean }>('GET', `/agents/${agentId}/approvals?status=${status}`),
+  decide: (agentId: string, id: string, input: { decision: 'approve' | 'reject'; note?: string; input?: Record<string, unknown> }) =>
+    api<{ approval: Approval }>('POST', `/agents/${agentId}/approvals/${encodeURIComponent(id)}`, input),
+}
+
+export const approvalKeys = {
+  all: (agentId: string) => ['agents', 'approvals', agentId] as const,
+  list: (agentId: string, status: 'pending' | 'decided') => ['agents', 'approvals', agentId, status] as const,
 }

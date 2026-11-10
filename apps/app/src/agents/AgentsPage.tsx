@@ -13,6 +13,7 @@ import { toast } from '../components/Toast'
 import { isDemo, isOrgAdmin, useAccount } from '../lib/account'
 import { copyText, errorMessage, initials } from '../lib/core'
 import type { Mailbox } from '../lib/types'
+import { useMembers } from '../settings/members'
 import { ConfirmDialog, Menu, Modal, type MenuItem } from '../storage/dialogs'
 import '../styles/storage.css'
 import '../styles/agents.css'
@@ -29,9 +30,10 @@ import {
   type RunStep,
   type ToolInfo,
 } from './api'
+import { ApprovalsTab } from './Approvals'
 import { TriggersSection } from './Triggers'
 
-export type AgentsTab = 'runs' | 'setup' | 'settings'
+export type AgentsTab = 'runs' | 'setup' | 'approvals' | 'settings'
 export type AgentsSearch = { agent?: string; tab?: AgentsTab; run?: string }
 
 export function AgentsPage({ search }: { search: AgentsSearch }) {
@@ -58,7 +60,8 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
   const navigate = useNavigate()
   const go = (next: AgentsSearch, replace = false) => void navigate({ to: '/agents', search: next, replace })
   const [creating, setCreating] = useState(false)
-  const list = useQuery({ queryKey: agentKeys.list(orgId), queryFn: () => agentsApi.list(orgId) })
+  // Refreshed every 30 s so "needs approval" badges appear without a reload.
+  const list = useQuery({ queryKey: agentKeys.list(orgId), queryFn: () => agentsApi.list(orgId), refetchInterval: 30_000 })
   const agents = list.data?.agents ?? []
   const selected = agents.find((a) => a.id === search.agent) ?? agents[0]
 
@@ -107,6 +110,7 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
 }
 
 function AgentLine({ agent }: { agent: AgentSummary }) {
+  if (agent.pendingApprovals) return <span className="a-item-sub a-need">{agent.pendingApprovals} need approval</span>
   const text = agent.status === 'active' ? 'Active' : agent.publishedVersion ? 'Paused' : 'Draft · not published'
   return <span className={`a-item-sub ${agent.status}`}>{agent.hasDraftChanges && agent.publishedVersion ? `${text} · draft changes` : text}</span>
 }
@@ -212,9 +216,10 @@ function AgentView({
         </div>
       </header>
       <nav className="tabs a-tabs" role="tablist">
-        {(['runs', 'setup', 'settings'] as const).map((t) => (
+        {(['runs', 'setup', 'approvals', 'settings'] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => go({ agent: agent.id, tab: t })}>
-            {t === 'runs' ? 'Runs' : t === 'setup' ? 'Setup' : 'Settings'}
+            {t === 'runs' ? 'Runs' : t === 'setup' ? 'Setup' : t === 'approvals' ? 'Approvals' : 'Settings'}
+            {t === 'approvals' && !!summary.pendingApprovals && <span className="a-count">{summary.pendingApprovals}</span>}
           </button>
         ))}
       </nav>
@@ -230,7 +235,10 @@ function AgentView({
             onOpenRun={(runId) => go({ agent: agent.id, tab: 'setup', run: runId })}
           />
         )}
-        {tab === 'settings' && <SettingsTab orgId={orgId} admin={admin} agent={agent} onSaved={setAgent} onDelete={() => setDialog('delete')} />}
+        {tab === 'approvals' && <ApprovalsTab agent={agent} onOpenRun={(runId) => go({ agent: agent.id, tab: 'approvals', run: runId })} />}
+        {tab === 'settings' && (
+          <SettingsTab orgId={orgId} admin={admin} agent={agent} mailboxes={mailboxes} onSaved={setAgent} onDelete={() => setDialog('delete')} />
+        )}
       </div>
       {testing && <TestDrawer agent={agent} onClose={() => setTesting(false)} onOpenRun={(runId) => go({ agent: agent.id, tab: 'runs', run: runId })} />}
       {search.run && <RunDrawer agent={agent} runId={search.run} onClose={() => go({ agent: agent.id, tab })} />}
@@ -470,6 +478,30 @@ function StepItem({ step }: { step: RunStep }) {
       </TimelineItem>
     )
   }
+  if (step.kind === 'approval_requested') {
+    const d = step.detail as { label?: string; input?: unknown; waitHours?: number }
+    return (
+      <TimelineItem icon="clock" title={`Waiting for approval: ${d.label ?? ''}`} at={step.at} meta={d.waitHours ? `up to ${d.waitHours}h` : undefined}>
+        <pre className="a-pre">{JSON.stringify(d.input, null, 2)}</pre>
+      </TimelineItem>
+    )
+  }
+  if (step.kind === 'approved' || step.kind === 'rejected') {
+    const d = step.detail as { note?: string | null; edited?: boolean }
+    return (
+      <TimelineItem icon={step.kind === 'approved' ? 'circle-check' : 'circle-x'} title={step.kind === 'approved' ? (d.edited ? 'Approved with edits' : 'Approved') : 'Not approved'} at={step.at}>
+        {d.note && <div className="a-sub">“{d.note}”</div>}
+      </TimelineItem>
+    )
+  }
+  if (step.kind === 'filter') {
+    const d = step.detail as { condition?: string; answer?: string; pass?: boolean }
+    return (
+      <TimelineItem icon="sparkles" title={d.pass ? 'AI filter: matches' : 'AI filter: no match'} at={step.at}>
+        <div className="a-sub">{d.answer}</div>
+      </TimelineItem>
+    )
+  }
   return <TimelineItem icon="info" title={step.kind} at={step.at}><pre className="a-pre">{JSON.stringify(step.detail, null, 2)}</pre></TimelineItem>
 }
 
@@ -705,25 +737,37 @@ function SetupTab({
             <span className="s-tile a-avatar">x</span>
             <div className="text">
               <span className="name">xstate</span>
-              <span className="sub">Built in. Works on this organization's mail, contacts, storage and calendar. Read only for now.</span>
+              <span className="sub">Built in. Works on this organization's mail, contacts, storage and calendar, in the mailboxes set in Settings.</span>
             </div>
           </div>
           {groups.map(([group, tools]) =>
             tools.map((t) => {
               const on = config.tools.builtin.includes(t.name)
+              const asks = !t.readOnly && (config.tools.approval[t.name] ?? t.defaultApproval) === 'always'
               return (
                 <div className="card-row a-tool-row" key={t.name}>
                   <div className="text">
-                    <span className="name">{t.label} <span className="dim small">· {group}</span></span>
+                    <span className="name">{t.label} <span className="dim small">· {group}{t.readOnly ? '' : ' · changes things'}</span></span>
                     <span className="sub ellipsis" title={t.description}>{t.description}</span>
                   </div>
+                  {!t.readOnly && (
+                    <label className={`a-needs${on ? '' : ' off'}`} title={on ? undefined : 'Turn the tool on first'}>
+                      <input
+                        type="checkbox"
+                        checked={asks}
+                        disabled={!on}
+                        onChange={(e) => update({ ...config, tools: { ...config.tools, approval: { ...config.tools.approval, [t.name]: e.target.checked ? 'always' : 'never' } } }, 0)}
+                      />
+                      Needs approval
+                    </label>
+                  )}
                   <button
                     className="switch"
                     role="switch"
                     aria-checked={on}
                     aria-label={`${on ? 'Turn off' : 'Turn on'} ${t.label}`}
                     onClick={() =>
-                      update({ ...config, tools: { builtin: on ? config.tools.builtin.filter((n) => n !== t.name) : [...config.tools.builtin, t.name] } }, 0)
+                      update({ ...config, tools: { ...config.tools, builtin: on ? config.tools.builtin.filter((n) => n !== t.name) : [...config.tools.builtin, t.name] } }, 0)
                     }
                   />
                 </div>
@@ -733,7 +777,7 @@ function SetupTab({
         </div>
         <div className="card a-note">
           <Icon name="plug" size={15} />
-          <span>Connectors (any MCP server, like Shopify or Stripe) and tools that send or change things come in later updates.</span>
+          <span>Connectors (any MCP server, like Shopify or Stripe) come in a later update.</span>
         </div>
       </section>
     </div>
@@ -755,8 +799,23 @@ function SectionHead({ title, sub, aside }: { title: string; sub?: string; aside
 // ---------------------------------------------------------------------------------------------------------------
 // Settings tab: model, limits, developer, danger zone
 
-function SettingsTab({ orgId, admin, agent, onSaved, onDelete }: { orgId: string; admin: boolean; agent: Agent; onSaved: (a: Agent) => void; onDelete: () => void }) {
+function SettingsTab({
+  orgId,
+  admin,
+  agent,
+  mailboxes,
+  onSaved,
+  onDelete,
+}: {
+  orgId: string
+  admin: boolean
+  agent: Agent
+  mailboxes: Mailbox[]
+  onSaved: (a: Agent) => void
+  onDelete: () => void
+}) {
   const navigate = useNavigate()
+  const members = useMembers(orgId, true).data ?? []
   const [config, setConfig] = useState(agent.draft)
   const { save, state } = useDraftSaver(agent, onSaved)
   const models = useQuery({ queryKey: agentKeys.models(orgId), queryFn: () => agentsApi.models(orgId) })
@@ -803,6 +862,103 @@ function SettingsTab({ orgId, admin, agent, onSaved, onDelete }: { orgId: string
               </button>
             )}
           </div>
+        </div>
+      </section>
+      <section className="a-section">
+        <SectionHead title="Mailboxes" sub="Where the agent may read and act. Mailboxes its email triggers watch are always included." />
+        <div className="card">
+          {mailboxes.length ? (
+            mailboxes.map((m) => {
+              const on = config.mailboxes.includes(m.id)
+              return (
+                <label className="card-row a-check-row" key={m.id}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => update({ ...config, mailboxes: on ? config.mailboxes.filter((x) => x !== m.id) : [...config.mailboxes, m.id] }, 0)}
+                  />
+                  <div className="text">
+                    <span className="name">{m.address}</span>
+                    <span className="sub">{m.kind === 'personal' ? 'Personal mailbox' : m.kind === 'shared' ? 'Shared mailbox' : 'Agent mailbox'}</span>
+                  </div>
+                </label>
+              )
+            })
+          ) : (
+            <div className="card-row"><div className="text"><span className="sub">You don't have access to any mailboxes yet.</span></div></div>
+          )}
+        </div>
+      </section>
+      <section className="a-section">
+        <SectionHead title="Approvals" sub="For tools set to “Needs approval” in Setup." />
+        <div className="card">
+          <NumberRow
+            label="Wait for a decision"
+            sub="Hours before the request runs out (1 to 168)."
+            value={config.approvals.timeoutHours}
+            min={1}
+            max={168}
+            onChange={(n) => update({ ...config, approvals: { ...config.approvals, timeoutHours: n } })}
+          />
+          <div className="card-row a-field-row">
+            <div className="text">
+              <span className="name">When nobody decides</span>
+              <span className="sub">Refuse the call, or keep waiting (up to 7 days).</span>
+            </div>
+            <div className="seg">
+              {(['reject', 'wait'] as const).map((v) => (
+                <button key={v} aria-pressed={config.approvals.onTimeout === v} onClick={() => update({ ...config, approvals: { ...config.approvals, onTimeout: v } }, 0)}>
+                  {v === 'reject' ? 'Refuse it' : 'Keep waiting'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="card-row a-field-row a-approvers">
+            <div className="text">
+              <span className="name">Approvers</span>
+              <span className="sub">{config.approvals.approvers.length ? 'Only these people (and owners and admins).' : 'Anyone who can manage agents.'}</span>
+            </div>
+            <div className="a-chips">
+              {members
+                .filter((m) => m.status === 'active')
+                .map((m) => {
+                  const on = config.approvals.approvers.includes(m.userId)
+                  return (
+                    <button
+                      key={m.userId}
+                      className="a-chip"
+                      aria-pressed={on}
+                      onClick={() =>
+                        update(
+                          {
+                            ...config,
+                            approvals: {
+                              ...config.approvals,
+                              approvers: on ? config.approvals.approvers.filter((x) => x !== m.userId) : [...config.approvals.approvers, m.userId],
+                            },
+                          },
+                          0,
+                        )
+                      }
+                    >
+                      {on && <Icon name="check" size={12} />}
+                      {m.name || m.email}
+                    </button>
+                  )
+                })}
+            </div>
+          </div>
+          <label className="card-row a-check-row">
+            <input
+              type="checkbox"
+              checked={config.approvals.notifyEmail}
+              onChange={(e) => update({ ...config, approvals: { ...config.approvals, notifyEmail: e.target.checked } }, 0)}
+            />
+            <div className="text">
+              <span className="name">Email approvers</span>
+              <span className="sub">Send each approver an email when something is waiting.</span>
+            </div>
+          </label>
         </div>
       </section>
       <section className="a-section">

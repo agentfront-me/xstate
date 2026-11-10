@@ -39,6 +39,7 @@ export {
   listFolders,
   listMessages,
   messagesWith,
+  saveDraft,
   sendMessage,
   updateMessage,
   uploadAttachment,

@@ -360,6 +360,32 @@ export const emailSend = defineOperation({
   }),
 })
 
+export const emailCreateDraft = defineOperation({
+  name: 'email_create_draft',
+  description:
+    "Save a message to a mailbox's Drafts without sending it, so a person can review and send it. Same fields as " +
+    'email_send: for a reply pass inReplyTo (the message id) so it stays in the conversation. Needs write access to ' +
+    'the mailbox. Recipients are optional.',
+  input: z.object({
+    mailboxId: id,
+    to: addresses.default([]),
+    cc: addresses.optional(),
+    subject: z.string().max(998).default(''),
+    text: z.string().max(1_000_000),
+    html: z.string().max(2_000_000).optional(),
+    inReplyTo: z.string().min(1).max(64).optional(),
+    forwardOf: z.string().min(1).max(64).optional(),
+  }),
+  http: { method: 'POST', path: '/email/mailboxes/:mailboxId/drafts', status: 201 },
+  run: async ({ env, actor }, input) => ({
+    draft: await mailserver.saveDraft(env, actor, input.mailboxId, {
+      ...input,
+      to: input.to.map((a) => ({ email: a.email, name: a.name ?? null })),
+      cc: input.cc?.map((a) => ({ email: a.email, name: a.name ?? null })),
+    }),
+  }),
+})
+
 export const emailGetSendingStatus = defineOperation({
   name: 'email_get_sending_status',
   description:
@@ -400,5 +426,6 @@ export const emailOperations = [
   emailGetMailState,
   emailGetAttachment,
   emailSend,
+  emailCreateDraft,
   emailGetSendingStatus,
 ]
