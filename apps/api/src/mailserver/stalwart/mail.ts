@@ -362,7 +362,7 @@ export async function createIdentity(env: StalwartEnv, accountId: string, identi
 export async function uploadBlob(
   env: StalwartEnv,
   accountId: string,
-  body: ReadableStream | ArrayBuffer,
+  body: ReadableStream | ArrayBuffer | Uint8Array,
   contentType: string,
   size?: number,
 ): Promise<{ blobId: string; type: string; size: number }> {

@@ -3,7 +3,8 @@
 //   watchdog  restarts a part whose job chain was lost. Every hour each part still copying is fingerprinted (its
 //             state, counts and cursor); one whose fingerprint hasn't changed since the hour before is stuck, because
 //             a queue job never runs longer than 15 minutes (and a claim stays live for 20, store.ts). Restarting bumps its chain, so if the old chain was
-//             only slow it stops, and the MigrationStore's claims mean nothing is copied twice.
+//             only slow it stops, and the MigrationStore's claims mean nothing is copied twice. A part restarted twice
+//             without moving is marked as needing attention instead, so it can't go round silently for ever.
 //   ready     emails the admin who started the import once nothing is left to copy. Also checked after every copy
 //             job (jobs.ts), so the email usually goes out within seconds; the hourly run is the backstop.
 //   access    after an import ends, asks Google once a day whether xstate's access was removed. Settings reminds
@@ -85,23 +86,39 @@ async function watchOne(env: Env, m: MigrationRow): Promise<void> {
       const copying = userCopying(u)
       const final = u.final_mail === 'running' || u.final_drive === 'running' || u.final_calendar === 'running'
       const fp = copying || final ? userFingerprint(u) : null
-      if (fp && fp === u.watch) {
-        if (copying) restarts.push(u.google_id)
+      const seen = readWatch(u.watch)
+      let watchNow = fp && writeWatch(fp, 0)
+      if (fp && fp === seen.fp) {
+        if (copying && seen.restarts >= MAX_RESTARTS) {
+          writes.push(...stuckUser(env, m.id, u))
+          watchNow = null
+        } else if (copying) {
+          restarts.push(u.google_id)
+          watchNow = writeWatch(fp, seen.restarts + 1)
+        } else watchNow = u.watch
         if (u.final_mail === 'running') jobs.push({ kind: 'final_mail', migrationId: m.id, owner: u.google_id, run })
         if (u.final_drive === 'running') jobs.push({ kind: 'final_drive', migrationId: m.id, owner: u.google_id, shared: false, run })
         if (u.final_calendar === 'running') jobs.push({ kind: 'final_calendar', migrationId: m.id, owner: u.google_id, run })
       }
-      if (fp !== u.watch) writes.push(env.DB.prepare('UPDATE migration_users SET watch = ? WHERE migration_id = ? AND google_id = ?').bind(fp, m.id, u.google_id))
+      if (watchNow !== u.watch) writes.push(env.DB.prepare('UPDATE migration_users SET watch = ? WHERE migration_id = ? AND google_id = ?').bind(watchNow, m.id, u.google_id))
     }
     for (const d of await migrationsDb.listDrives(env.DB, m.id)) {
       const copying = !d.state || d.state === 'copying'
       const final = d.final_state === 'running'
       const fp = copying || final ? driveFingerprint(d) : null
-      if (fp && fp === d.watch) {
-        if (copying) restarts.push(`drive:${d.drive_id}`)
+      const seen = readWatch(d.watch)
+      let watchNow = fp && writeWatch(fp, 0)
+      if (fp && fp === seen.fp) {
+        if (copying && seen.restarts >= MAX_RESTARTS) {
+          writes.push(env.DB.prepare("UPDATE migration_drives SET state = 'attention', note = ? WHERE migration_id = ? AND drive_id = ?").bind(STUCK_NOTE, m.id, d.drive_id))
+          watchNow = null
+        } else if (copying) {
+          restarts.push(`drive:${d.drive_id}`)
+          watchNow = writeWatch(fp, seen.restarts + 1)
+        } else watchNow = d.watch
         if (final) jobs.push({ kind: 'final_drive', migrationId: m.id, owner: d.drive_id, shared: true, run })
       }
-      if (fp !== d.watch) writes.push(env.DB.prepare('UPDATE migration_drives SET watch = ? WHERE migration_id = ? AND drive_id = ?').bind(fp, m.id, d.drive_id))
+      if (watchNow !== d.watch) writes.push(env.DB.prepare('UPDATE migration_drives SET watch = ? WHERE migration_id = ? AND drive_id = ?').bind(watchNow, m.id, d.drive_id))
     }
   }
 
@@ -111,6 +128,39 @@ async function watchOne(env: Env, m: MigrationRow): Promise<void> {
   if (restarts.length || jobs.length) {
     console.warn(`migration ${m.id}: watchdog restarted ${[...restarts, ...jobs.map((j) => j.kind)].join(', ')} (no progress for an hour)`)
   }
+}
+
+/** Restarts without progress before a part is marked as needing attention. */
+const MAX_RESTARTS = 2
+const STUCK_NOTE = 'Copying stopped making progress, even after restarting twice. Try again, or skip it.'
+
+/**
+ * `watch` holds the fingerprint seen last and how many restarts it has had: {"fp": …, "restarts": n}. Before
+ * restarts were counted it held the fingerprint alone, read here as no restarts yet.
+ */
+function readWatch(watch: string | null): { fp: string | null; restarts: number } {
+  if (!watch) return { fp: null, restarts: 0 }
+  try {
+    const v = JSON.parse(watch) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { fp?: unknown }).fp === 'string') {
+      return { fp: (v as { fp: string }).fp, restarts: Number((v as { restarts?: unknown }).restarts) || 0 }
+    }
+  } catch {
+    // Not JSON: an old plain fingerprint.
+  }
+  return { fp: watch, restarts: 0 }
+}
+const writeWatch = (fp: string, restarts: number) => JSON.stringify({ fp, restarts })
+
+/** Marks each part of a person that's still copying as needing attention. */
+function stuckUser(env: Env, migrationId: string, u: MigrationUserRow): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = []
+  const set = (sql: string) => out.push(env.DB.prepare(`UPDATE migration_users SET ${sql} WHERE migration_id = ? AND google_id = ?`).bind(STUCK_NOTE, migrationId, u.google_id))
+  if (copyPending.mail(u)) set("mail_state = 'attention', mail_issue = 'error', mail_note = ?")
+  if (copyPending.contacts(u)) set("contacts_state = 'attention', contacts_note = ?")
+  if (copyPending.drive(u)) set("drive_state = 'attention', drive_note = ?")
+  if (copyPending.calendar(u)) set("calendar_state = 'attention', calendar_note = ?")
+  return out
 }
 
 /** Whether any of a person's parts still has pages to copy: the same test as startMailCopies. */

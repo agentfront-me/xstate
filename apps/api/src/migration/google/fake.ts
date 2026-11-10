@@ -208,10 +208,23 @@ export const fakeWorkspace: Workspace = {
     }
   },
 
-  async gmailRaw(email, id) {
+  async gmailSizes(email, ids) {
+    const all = new Map([...fakeMailbox(email), newMessage(email)].map((m) => [m.id, m.sizeEstimate]))
+    // The thirteenth message claims to be huge, so the copy skips it as too large without downloading it.
+    const huge = fakeMailbox(email)[12]?.id
+    return new Map(ids.filter((id) => all.has(id)).map((id) => [id, id === huge ? 200_000_000 : all.get(id)!]))
+  },
+
+  async gmailRaw(email, id, options = {}) {
     if (id === newMessage(email).id) return newMessage(email)
     const m = fakeMailbox(email).find((x) => x.id === id)
-    if (!m) throw new Error(`No fake message ${id}`)
+    if (!m) throw new GoogleError('not_found', 'The message is gone from Gmail', 404)
+    // The fourteenth is rate limited the first time it's read in an isolate, like Gmail under load.
+    if (id === fakeMailbox(email)[13]?.id && !throttled.has(id)) {
+      throttled.add(id)
+      throw new GoogleError('rate_limited', 'Google is limiting how fast xstate can read. Try again in a minute.', 429)
+    }
+    if (options.maxBytes !== undefined && m.raw.byteLength > options.maxBytes) throw new GoogleError('too_large', `${m.raw.byteLength} bytes`, 200)
     return m
   },
 
@@ -501,6 +514,9 @@ function refuseSuspended(email: string) {
  *   6 no labels (archived)   7 Spam   8 Trash   9 a draft, or a chat message from i = 20 (chats are skipped)
  * Every seventh has a small attachment. One message a week, the oldest 59 weeks before 2026-11-01.
  */
+/** Fake messages already rate limited once in this isolate. */
+const throttled = new Set<string>()
+
 function fakeMailbox(email: string): GRawMessage[] {
   const local = email.split('@')[0]!
   const n = 30 + ([...local].reduce((s, c) => s + c.charCodeAt(0), 0) % 30)

@@ -78,6 +78,8 @@ export type MigrationUserRow = {
   mail_issue: 'quota' | 'suspended' | 'error' | null
   mail_note: string | null
   mail_updated_at: string | null
+  /** Messages a second, smoothed over recent pages (mail.ts saveProgress). */
+  mail_rate: number | null
   contacts_state: 'copying' | 'done' | 'attention' | null
   contacts_total: number | null
   contacts_done: number

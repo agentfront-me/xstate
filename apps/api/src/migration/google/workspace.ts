@@ -5,6 +5,7 @@
 
 import { accessToken, GoogleError, googleGet, serviceAccount, type GoogleKeyEnv } from './auth'
 import { fakeWorkspace } from './fake'
+import { parseSizeBatch, RawTooLarge, readRawMessage, sizeBatchBody } from './gmail-raw'
 
 export type Permission = 'directory' | 'gmail' | 'contacts' | 'drive' | 'calendar'
 
@@ -144,8 +145,17 @@ export interface Workspace {
   gmailLabels(email: string): Promise<GLabel[]>
   /** One page of message ids, newest first. `q` is a Gmail search (the date range: "after:2021/11/08"). */
   gmailList(email: string, options: { q?: string; pageToken?: string | null; pageSize: number }): Promise<GPage>
-  /** Throws GoogleError('too_large') without reading the body when the message is over `maxBytes`. */
-  gmailRaw(email: string, id: string, maxBytes?: number): Promise<GRawMessage>
+  /**
+   * Message id → size (Gmail's sizeEstimate, about the raw size), asked in batches. Ids Google didn't answer for
+   * (deleted since, or a rate limit) are missing: callers treat their size as unknown.
+   */
+  gmailSizes(email: string, ids: string[]): Promise<Map<string, number>>
+  /**
+   * Streams the message in, decoding as it goes (./gmail-raw.ts). Throws GoogleError('too_large') once it's past
+   * `maxBytes`, and GoogleError('not_found') when it was deleted since it was listed. `sizeHint` (from gmailSizes)
+   * sizes the buffer up front.
+   */
+  gmailRaw(email: string, id: string, options?: { maxBytes?: number; sizeHint?: number }): Promise<GRawMessage>
 
   // Contacts, acting as the user. 'connections' are their contacts; 'other' are Google's auto-saved "Other contacts".
   contactsPage(email: string, which: 'connections' | 'other', pageToken: string | null): Promise<GContactPage>
@@ -433,16 +443,37 @@ function liveWorkspace(env: WorkspaceEnv): Workspace {
       return { ids: (r.messages ?? []).map((m) => m.id), nextPageToken: r.nextPageToken ?? null, resultSizeEstimate: r.resultSizeEstimate ?? 0 }
     },
 
-    async gmailRaw(email, id, maxBytes) {
+    async gmailSizes(email, ids) {
+      const out = new Map<string, number>()
+      if (!ids.length) return out
       const t = await token(email, 'gmail')
-      // Base64 is a third bigger than the message, plus a little JSON around it.
-      const m = await googleGet<{ id: string; labelIds?: string[]; internalDate: string; sizeEstimate?: number; raw: string }>(
-        t,
-        `${GMAIL}/messages/${encodeURIComponent(id)}?format=raw`,
-        maxBytes ? { maxBytes: Math.ceil(maxBytes * 1.37) + 4096 } : {},
-      )
-      const raw = Uint8Array.from(atob(m.raw.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
-      return { id: m.id, labelIds: m.labelIds ?? [], internalDate: Number(m.internalDate), sizeEstimate: m.sizeEstimate ?? raw.byteLength, raw }
+      // Google suggests at most 50 calls per batch; two batches at a time.
+      const chunks: string[][] = []
+      for (let i = 0; i < ids.length; i += SIZE_BATCH) chunks.push(ids.slice(i, i + SIZE_BATCH))
+      for (let i = 0; i < chunks.length; i += 2) {
+        const parts = await Promise.all(chunks.slice(i, i + 2).map((chunk) => sizeBatch(t, chunk)))
+        for (const part of parts) for (const [id, size] of part) out.set(id, size)
+      }
+      return out
+    },
+
+    async gmailRaw(email, id, options = {}) {
+      const t = await token(email, 'gmail')
+      let res: Response
+      try {
+        res = await googleStream(t, `${GMAIL}/messages/${encodeURIComponent(id)}?format=raw&fields=id,labelIds,internalDate,sizeEstimate,raw`)
+      } catch (err) {
+        if (err instanceof GoogleError && err.code === 'not_found') throw new GoogleError('not_found', 'The message is gone from Gmail', 404)
+        throw err
+      }
+      try {
+        const { meta, raw } = await readRawMessage(res.body!, { maxRawBytes: options.maxBytes, sizeHint: options.sizeHint })
+        const m = meta as { id?: string; labelIds?: string[]; internalDate?: string; sizeEstimate?: number }
+        return { id: m.id ?? id, labelIds: m.labelIds ?? [], internalDate: Number(m.internalDate ?? 0), sizeEstimate: m.sizeEstimate ?? raw.byteLength, raw }
+      } catch (err) {
+        if (err instanceof RawTooLarge) throw new GoogleError('too_large', `${err.bytes} bytes`, 200)
+        throw err
+      }
     },
 
     async contactsPage(email, which, pageToken) {
@@ -611,6 +642,29 @@ function liveWorkspace(env: WorkspaceEnv): Workspace {
 }
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me'
+const GMAIL_BATCH = 'https://gmail.googleapis.com/batch/gmail/v1'
+/** Calls per Gmail batch request: Google suggests 50 at most. */
+const SIZE_BATCH = 50
+
+/** Sizes for up to SIZE_BATCH messages in one request. A refused batch leaves them unknown rather than failing. */
+async function sizeBatch(token: string, ids: string[]): Promise<Map<string, number>> {
+  const boundary = `xstate_${crypto.randomUUID()}`
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(GMAIL_BATCH, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/mixed; boundary=${boundary}` },
+      body: sizeBatchBody(ids, boundary),
+    })
+    if (res.ok) return parseSizeBatch(await res.text(), res.headers.get('Content-Type') ?? '')
+    await res.body?.cancel()
+    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 500))
+      continue
+    }
+    // Anything else (a 403 rate limit included): sizes stay unknown. Fetching the messages reports real refusals.
+    return new Map()
+  }
+}
 const DRIVE = 'https://www.googleapis.com/drive/v3'
 const FILE_FIELDS = 'nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,permissions(type,role,emailAddress,domain))'
 

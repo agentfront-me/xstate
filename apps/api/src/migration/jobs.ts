@@ -92,6 +92,43 @@ export async function consumeMigration(batch: MessageBatch<MigrationJob>, env: E
   }
 }
 
+/**
+ * Jobs that used up their retries without our code seeing an error: the Worker was killed (out of memory or CPU)
+ * each time. Marked as needing attention like any job that keeps failing, unless a newer chain has taken over the
+ * part since (a resume or the watchdog), in which case it's left to that chain.
+ */
+export async function consumeMigrationDead(batch: MessageBatch<MigrationJob>, env: Env): Promise<void> {
+  for (const message of batch.messages) {
+    const job = message.body
+    try {
+      if (await superseded(env, job)) {
+        message.ack()
+        continue
+      }
+      console.error(`migration ${job.kind} ${job.migrationId}: dead-lettered after ${message.attempts} attempts`)
+      await fail(env, job, 'This part kept stopping before it could finish (the copy ran out of memory or time). Try again, or skip it.')
+      message.ack()
+    } catch (err) {
+      console.error(`migration ${job.kind} ${job.migrationId}: recording a dead job failed`, err)
+      message.retry({ delaySeconds: 60 })
+    }
+  }
+}
+
+/** Whether a newer chain now copies the part this job was for. */
+async function superseded(env: Env, job: MigrationJob): Promise<boolean> {
+  if (job.kind !== 'mail' && job.kind !== 'contacts' && job.kind !== 'calendar' && job.kind !== 'drive') return false
+  if (job.kind === 'drive' && job.shared) {
+    const d = await env.DB.prepare('SELECT chain FROM migration_drives WHERE migration_id = ? AND drive_id = ?').bind(job.migrationId, job.owner).first<{ chain: number }>()
+    return !d || d.chain !== job.chain
+  }
+  const googleId = job.kind === 'drive' ? job.owner : job.googleId
+  const u = await migrationsDb.findUser(env.DB, job.migrationId, googleId)
+  if (!u) return true
+  const current = job.kind === 'mail' ? u.mail_chain : job.kind === 'contacts' ? u.contacts_chain : job.kind === 'calendar' ? u.calendar_chain : u.drive_chain
+  return current !== job.chain
+}
+
 const isPermanent = (err: unknown) =>
   (err instanceof GoogleError && ['not_configured', 'not_authorized', 'no_such_user', 'forbidden'].includes(err.code)) ||
   (err instanceof ApiError && err.status < 500)

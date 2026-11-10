@@ -7,7 +7,7 @@ import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
 import { consume as consumeSearch, hourly as searchHourly, type SearchJob } from './search/jobs'
 import { finalHourly } from './migration/final'
 import { migrationHourly } from './migration/watchdog'
-import { consumeMigration, type MigrationJob } from './migration/jobs'
+import { consumeMigration, consumeMigrationDead, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { cors } from 'hono/cors'
@@ -86,7 +86,9 @@ export default {
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
       : batch.queue === 'xstate-migration'
         ? consumeMigration(batch as MessageBatch<MigrationJob>, env)
-        : consume(batch as MessageBatch<MailSyncJob>, env),
+        : batch.queue === 'xstate-migration-dlq'
+          ? consumeMigrationDead(batch as MessageBatch<MigrationJob>, env)
+          : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>

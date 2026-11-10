@@ -138,6 +138,8 @@ const REASONS: Record<string, { label: string; reason: string }> = {
   chat: { label: 'Chat messages in mail', reason: 'Google Chat isn’t imported' },
   too_large: { label: 'Messages too large for the mail server', reason: 'over the mail server’s size limit' },
   import_failed: { label: 'Messages the mail server refused', reason: 'see the CSV for each one' },
+  kept_failing: { label: 'Messages that kept stopping the import', reason: 'skipped so the rest could be copied; copy them by hand from Gmail (see the CSV)' },
+  deleted: { label: 'Messages deleted in Gmail during the copy', reason: 'nothing left to copy' },
   empty: { label: 'Empty contacts', reason: 'no name, email or phone' },
   shortcut: { label: 'Drive shortcuts', reason: 'they point at files, the files themselves are copied' },
   google_form: { label: 'Google Forms', reason: 'no file format to export' },

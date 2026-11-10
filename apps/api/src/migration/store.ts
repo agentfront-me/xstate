@@ -8,6 +8,11 @@
 // Copying is claim-then-record. A job claims the ids it's about to copy; ids claimed by another job are skipped, so
 // two overlapping jobs (a retry, a resumed chain) never import the same message twice. A claim that wasn't recorded
 // within CLAIM_STALE_MS (its job died) can be claimed again.
+//
+// Attempts find the item that kills a job. A job counts an attempt on an item just before working on it and takes it
+// back when the job stops normally (an error it caught included). A job the Worker kills (out of memory or time)
+// can't take it back, so the count only grows for items that were in flight when a job died. mail.ts copies those
+// one at a time, and skips one that was in flight alone when a job died.
 
 import { DurableObject } from 'cloudflare:workers'
 
@@ -28,6 +33,13 @@ CREATE TABLE IF NOT EXISTS problems (
   reason      TEXT NOT NULL,                  -- 'too_large', 'chat', 'import_failed', …
   detail      TEXT,
   at          TEXT NOT NULL,
+  PRIMARY KEY (kind, owner, source_id)
+);
+CREATE TABLE IF NOT EXISTS attempts (
+  kind        TEXT NOT NULL,
+  owner       TEXT NOT NULL,
+  source_id   TEXT NOT NULL,
+  n           INTEGER NOT NULL,               -- times a job started on it without finishing (it died with it)
   PRIMARY KEY (kind, owner, source_id)
 );
 `
@@ -97,7 +109,34 @@ export class MigrationStore extends DurableObject<Env> {
         r.sourceId,
         r.targetId,
       )
+      this.sql.exec('DELETE FROM attempts WHERE kind = ? AND owner = ? AND source_id = ?', kind, owner, r.sourceId)
     }
+  }
+
+  /** Unfinished attempts for these ids, for the ones with any. */
+  attempts(kind: string, owner: string, ids: string[]): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const id of ids) {
+      const row = this.sql.exec<{ n: number }>('SELECT n FROM attempts WHERE kind = ? AND owner = ? AND source_id = ?', kind, owner, id).toArray()[0]
+      if (row?.n) out[id] = row.n
+    }
+    return out
+  }
+
+  /** Counts an attempt on each id (`by` 1), or takes one back (`by` -1) when a job stops without dying. */
+  attempt(kind: string, owner: string, ids: string[], by: 1 | -1): void {
+    for (const id of ids) {
+      this.sql.exec(
+        `INSERT INTO attempts (kind, owner, source_id, n) VALUES (?, ?, ?, MAX(?, 0))
+         ON CONFLICT (kind, owner, source_id) DO UPDATE SET n = MAX(n + ?, 0)`,
+        kind,
+        owner,
+        id,
+        by,
+        by,
+      )
+    }
+    this.sql.exec('DELETE FROM attempts WHERE n = 0')
   }
 
   /** Items that won't be copied, with why. Clears their claim. */
@@ -115,6 +154,7 @@ export class MigrationStore extends DurableObject<Env> {
         at,
       )
       this.sql.exec('DELETE FROM items WHERE kind = ? AND owner = ? AND source_id = ? AND target_id IS NULL', kind, owner, r.sourceId)
+      this.sql.exec('DELETE FROM attempts WHERE kind = ? AND owner = ? AND source_id = ?', kind, owner, r.sourceId)
     }
   }
 

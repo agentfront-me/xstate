@@ -72,7 +72,9 @@ export function CopyingStep({ ctx }: { ctx: Ctx }) {
     ? `${status.doneUsers} of ${total} users done · ${status.percent}%. Copying stopped at ${time(status.pausedAt!)} and will resume as soon as access is restored.`
     : status.paused
       ? `${status.doneUsers} of ${total} users done · ${status.percent}%. Nothing is being read from Google until you resume.`
-      : `${status.doneUsers} of ${total} users done · ${status.percent}% · ${duration(status.remaining)} left. Google limits read speed, so large mailboxes take longest.`
+      : `${status.doneUsers} of ${total} users done · ${status.percent}% · ${duration(status.remaining)} left.${
+          status.users.some((u) => u.state === 'slowed') ? ' Google is limiting how fast xstate can read right now, so this may take longer.' : ' Large mailboxes take longest.'
+        }`
 
   return (
     <>

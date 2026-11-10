@@ -393,6 +393,8 @@ export async function start(env: MigrationEnv, actor: Actor, organizationId: str
 
 type Count = { done: number; total: number }
 type UserState = 'waiting' | 'copying' | 'slowed' | 'attention' | 'paused' | 'done'
+/** Migration jobs the queue runs at once (max_concurrency for xstate-migration in wrangler.jsonc). */
+const MIGRATION_PARALLEL = 5
 
 
 export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId: string) {
@@ -408,6 +410,8 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
   let contactsCopied = 0
   let events = 0
   let files = 0
+  let mailMeasured = 0
+  const mailSeconds: number[] = []
   const rows = users.map((u) => {
     const mailTotal = Math.max(u.mail_total ?? u.messages ?? 0, u.mail_done + u.mail_skipped)
     // Planned mail, unless Start couldn't make a mailbox for them.
@@ -417,6 +421,11 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
     if (mail) {
       processed += mail.done
       total += mail.total
+      // Mail still to copy at this person's own recent speed, when there is one.
+      if (u.mail_state === 'copying' && u.mail_rate && u.mail_rate > 0) {
+        mailMeasured += mail.total - mail.done
+        mailSeconds.push((mail.total - mail.done) / u.mail_rate)
+      }
     }
     copied += u.mail_done
     // Contacts belong to a member, so people imported as shared mailboxes have none.
@@ -500,14 +509,18 @@ export async function copyStatus(env: MigrationEnv, actor: Actor, organizationId
 
   const doneUsers = rows.filter((r) => r.state === 'done').length
   const finished = m.apply_state === 'done' && doneUsers === rows.length
-  // Time left from the rate so far; until there is one, a guess from Google's read limit (about 50 messages a second).
+  // Time left. Mail with a measured speed: each person's mail at their own recent speed, people copied a few at a
+  // time (the queue runs MIGRATION_PARALLEL jobs at once). Everything else at the rate so far, or until there is one
+  // a guess of 50 items a second.
   const elapsed = m.started_at ? (Date.now() - Date.parse(m.started_at)) / 1000 : 0
   const rate = elapsed > 60 && processed ? processed / elapsed : 50
+  const mailLeft = mailSeconds.length ? Math.max(...mailSeconds, mailSeconds.reduce((a, b) => a + b, 0) / MIGRATION_PARALLEL) : 0
+  const otherLeft = Math.max(0, total - processed - mailMeasured) / rate
   return {
     users: rows,
     percent: finished ? 100 : total ? Math.min(99, Math.floor((processed / total) * 100)) : 0,
     doneUsers,
-    remaining: Math.max(60, Math.round((total - processed) / rate)),
+    remaining: Math.max(60, Math.round(Math.max(mailLeft, otherLeft))),
     paused: !!m.paused_at,
     accessLost: !!m.access_lost_at,
     ...(stopped && { pausedAt: m.access_lost_at ?? m.paused_at }),

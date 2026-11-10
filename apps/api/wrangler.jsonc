@@ -6,6 +6,9 @@
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // CPU per invocation. Migration jobs decode and upload mail for a few minutes at a time (migration/mail.ts); the
+  // 30-second default is too tight for them. Only what's used is billed.
+  "limits": { "cpu_ms": 300000 },
   // api.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
   "workers_dev": false,
   "routes": [{ "pattern": "api.xstate.com", "custom_domain": true }],
@@ -72,7 +75,11 @@
       { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10 },
       // Imports from Google Workspace (migration/jobs.ts). Few at a time, so a big import can't crowd out mail
       // sync or swamp Stalwart. Create once: wrangler queues create xstate-migration
-      { "queue": "xstate-migration", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 5, "max_concurrency": 5 }
+      { "queue": "xstate-migration", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 5, "max_concurrency": 5, "dead_letter_queue": "xstate-migration-dlq" },
+      // Migration jobs that ran out of retries without our code seeing an error (the Worker was killed for memory or
+      // CPU): marked as needing attention so the copy can't stall silently (migration/jobs.ts consumeMigrationDead).
+      // Create once: wrangler queues create xstate-migration-dlq
+      { "queue": "xstate-migration-dlq", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3 }
     ]
   },
   // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.
