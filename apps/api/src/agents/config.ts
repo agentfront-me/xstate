@@ -10,6 +10,7 @@ export const LIMITS = {
   instructions: 20_000,
   maxSteps: { min: 1, max: 30, default: 12 },
   maxRunsPerDay: { min: 1, max: 10_000, default: 500 },
+  perSenderPerHour: { min: 1, max: 1000, default: 10 },
 }
 
 export const agentConfig = z.object({
@@ -29,8 +30,15 @@ export const agentConfig = z.object({
     .object({
       maxSteps: z.number().int().min(LIMITS.maxSteps.min).max(LIMITS.maxSteps.max).default(LIMITS.maxSteps.default),
       maxRunsPerDay: z.number().int().min(LIMITS.maxRunsPerDay.min).max(LIMITS.maxRunsPerDay.max).default(LIMITS.maxRunsPerDay.default),
+      /** Runs one email sender can start in an hour, so one person can't use up the organization's AI credit. */
+      perSenderPerHour: z
+        .number()
+        .int()
+        .min(LIMITS.perSenderPerHour.min)
+        .max(LIMITS.perSenderPerHour.max)
+        .default(LIMITS.perSenderPerHour.default),
     })
-    .default({ maxSteps: LIMITS.maxSteps.default, maxRunsPerDay: LIMITS.maxRunsPerDay.default }),
+    .default({ maxSteps: LIMITS.maxSteps.default, maxRunsPerDay: LIMITS.maxRunsPerDay.default, perSenderPerHour: LIMITS.perSenderPerHour.default }),
 })
 
 export type AgentConfig = z.output<typeof agentConfig>

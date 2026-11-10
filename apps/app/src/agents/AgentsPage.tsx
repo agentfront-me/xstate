@@ -12,6 +12,7 @@ import { Icon, type IconName } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { isDemo, isOrgAdmin, useAccount } from '../lib/account'
 import { copyText, errorMessage, initials } from '../lib/core'
+import type { Mailbox } from '../lib/types'
 import { ConfirmDialog, Menu, Modal, type MenuItem } from '../storage/dialogs'
 import '../styles/storage.css'
 import '../styles/agents.css'
@@ -28,6 +29,7 @@ import {
   type RunStep,
   type ToolInfo,
 } from './api'
+import { TriggersSection } from './Triggers'
 
 export type AgentsTab = 'runs' | 'setup' | 'settings'
 export type AgentsSearch = { agent?: string; tab?: AgentsTab; run?: string }
@@ -46,13 +48,13 @@ export function AgentsPage({ search }: { search: AgentsSearch }) {
       </section>
     )
   }
-  return <Agents orgId={account.org.id} admin={isOrgAdmin(account.org)} search={search} />
+  return <Agents orgId={account.org.id} admin={isOrgAdmin(account.org)} mailboxes={account.mailboxes} search={search} />
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Page
 
-function Agents({ orgId, admin, search }: { orgId: string; admin: boolean; search: AgentsSearch }) {
+function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boolean; mailboxes: Mailbox[]; search: AgentsSearch }) {
   const navigate = useNavigate()
   const go = (next: AgentsSearch, replace = false) => void navigate({ to: '/agents', search: next, replace })
   const [creating, setCreating] = useState(false)
@@ -87,7 +89,7 @@ function Agents({ orgId, admin, search }: { orgId: string; admin: boolean; searc
       </aside>
       <main className="a-main">
         {selected ? (
-          <AgentView key={selected.id} orgId={orgId} admin={admin} summary={selected} search={search} go={go} />
+          <AgentView key={selected.id} orgId={orgId} admin={admin} mailboxes={mailboxes} summary={selected} search={search} go={go} />
         ) : (
           !list.isLoading && (
             <div className="empty">
@@ -112,7 +114,21 @@ function AgentLine({ agent }: { agent: AgentSummary }) {
 // ---------------------------------------------------------------------------------------------------------------
 // One agent: header and tabs
 
-function AgentView({ orgId, admin, summary, search, go }: { orgId: string; admin: boolean; summary: AgentSummary; search: AgentsSearch; go: (s: AgentsSearch, replace?: boolean) => void }) {
+function AgentView({
+  orgId,
+  admin,
+  mailboxes,
+  summary,
+  search,
+  go,
+}: {
+  orgId: string
+  admin: boolean
+  mailboxes: Mailbox[]
+  summary: AgentSummary
+  search: AgentsSearch
+  go: (s: AgentsSearch, replace?: boolean) => void
+}) {
   const client = useQueryClient()
   const query = useQuery({ queryKey: agentKeys.one(summary.id), queryFn: () => agentsApi.get(summary.id) })
   const [testing, setTesting] = useState(false)
@@ -204,11 +220,20 @@ function AgentView({ orgId, admin, summary, search, go }: { orgId: string; admin
       </nav>
       <div className="a-scroll">
         {tab === 'runs' && <RunsTab agent={agent} search={search} go={go} onTest={() => setTesting(true)} />}
-        {tab === 'setup' && <SetupTab orgId={orgId} agent={agent} onSaved={setAgent} openVersions={() => setDialog('versions')} />}
+        {tab === 'setup' && (
+          <SetupTab
+            orgId={orgId}
+            agent={agent}
+            mailboxes={mailboxes}
+            onSaved={setAgent}
+            openVersions={() => setDialog('versions')}
+            onOpenRun={(runId) => go({ agent: agent.id, tab: 'setup', run: runId })}
+          />
+        )}
         {tab === 'settings' && <SettingsTab orgId={orgId} admin={admin} agent={agent} onSaved={setAgent} onDelete={() => setDialog('delete')} />}
       </div>
       {testing && <TestDrawer agent={agent} onClose={() => setTesting(false)} onOpenRun={(runId) => go({ agent: agent.id, tab: 'runs', run: runId })} />}
-      {search.run && <RunDrawer agent={agent} runId={search.run} onClose={() => go({ agent: agent.id, tab: 'runs' })} />}
+      {search.run && <RunDrawer agent={agent} runId={search.run} onClose={() => go({ agent: agent.id, tab })} />}
       {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
       {dialog === 'versions' && <VersionsDialog agent={agent} onClose={() => setDialog(null)} onRestored={setAgent} />}
       {dialog === 'rename' && <RenameDialog agent={agent} onClose={() => setDialog(null)} onSaved={setAgent} />}
@@ -248,7 +273,7 @@ const when = (iso: string) => {
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
 }
 const tokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
-const TRIGGER_ICON: Record<string, IconName> = { test: 'flask-conical', manual: 'play' }
+const TRIGGER_ICON: Record<string, IconName> = { test: 'flask-conical', manual: 'play', webhook: 'webhook', schedule: 'clock', email: 'mail' }
 
 function RunsTab({ agent, search, go, onTest }: { agent: Agent; search: AgentsSearch; go: (s: AgentsSearch) => void; onTest: () => void }) {
   const [trigger, setTrigger] = useState('')
@@ -275,6 +300,9 @@ function RunsTab({ agent, search, go, onTest }: { agent: Agent; search: AgentsSe
           <option value="">All triggers</option>
           <option value="test">Tests</option>
           <option value="manual">Run now</option>
+          <option value="email">Email</option>
+          <option value="webhook">Webhook</option>
+          <option value="schedule">Schedule</option>
         </select>
         <select className="select sm" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Outcome">
           <option value="">All outcomes</option>
@@ -619,7 +647,21 @@ function useDraftSaver(agent: Agent, onSaved: (a: Agent) => void) {
   return { save, state }
 }
 
-function SetupTab({ orgId, agent, onSaved, openVersions }: { orgId: string; agent: Agent; onSaved: (a: Agent) => void; openVersions: () => void }) {
+function SetupTab({
+  orgId,
+  agent,
+  mailboxes,
+  onSaved,
+  openVersions,
+  onOpenRun,
+}: {
+  orgId: string
+  agent: Agent
+  mailboxes: Mailbox[]
+  onSaved: (a: Agent) => void
+  openVersions: () => void
+  onOpenRun: (runId: string) => void
+}) {
   const [config, setConfig] = useState(agent.draft)
   const { save, state } = useDraftSaver(agent, onSaved)
   const catalog = useQuery({ queryKey: agentKeys.tools(orgId), queryFn: () => agentsApi.tools(orgId), staleTime: Infinity })
@@ -635,13 +677,7 @@ function SetupTab({ orgId, agent, onSaved, openVersions }: { orgId: string; agen
 
   return (
     <div className="a-body">
-      <section className="a-section">
-        <SectionHead title="Triggers" sub="When should this agent run?" />
-        <div className="card a-note">
-          <Icon name="clock" size={15} />
-          <span>Email, webhook and schedule triggers are coming next. Until then, run the agent with <strong>Test</strong> or <strong>Run again</strong> from a run.</span>
-        </div>
-      </section>
+      <TriggersSection agent={agent} mailboxes={mailboxes} onOpenRun={onOpenRun} />
       <section className="a-section">
         <SectionHead title="Instructions" sub="What the agent follows every time it runs." />
         <div className="card a-editor">
@@ -787,6 +823,14 @@ function SettingsTab({ orgId, admin, agent, onSaved, onDelete }: { orgId: string
             min={1}
             max={10000}
             onChange={(n) => update({ ...config, limits: { ...config.limits, maxRunsPerDay: n } })}
+          />
+          <NumberRow
+            label="Max runs per sender per hour"
+            sub="For email triggers. Stops one sender from using up your AI credit."
+            value={config.limits.perSenderPerHour}
+            min={1}
+            max={1000}
+            onChange={(n) => update({ ...config, limits: { ...config.limits, perSenderPerHour: n } })}
           />
         </div>
       </section>

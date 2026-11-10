@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { handleWebhook } from './agents/triggers'
 import { handleCollect } from './audience/collect'
 import { snippet } from './audience/snippet'
 import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
@@ -57,6 +58,9 @@ app.route('/v1', v1)
 app.post('/webhooks/stalwart', handleStalwartWebhook)
 // Amazon SES bounces and complaints, delivered by SNS (signed by SNS; not part of the public /v1 API).
 app.post('/webhooks/ses', handleSesWebhook)
+// Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
+app.post('/hooks/:triggerId', handleWebhook)
+app.post('/hooks/:triggerId/:token', handleWebhook)
 
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))

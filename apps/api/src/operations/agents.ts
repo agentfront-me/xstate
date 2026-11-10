@@ -6,6 +6,7 @@ import { PROVIDERS } from '../agents/config'
 import * as providers from '../agents/providers'
 import * as secrets from '../agents/secrets'
 import * as agents from '../agents/service'
+import * as triggers from '../agents/triggers'
 import { defineOperation } from './define'
 
 const id = z.string().min(1).max(64)
@@ -236,7 +237,92 @@ export const agentsStats = defineOperation({
   run: ({ env, actor }, input) => agents.stats(env, actor, input.agentId),
 })
 
+// ---------------------------------------------------------------------------------------------------------------
+// Triggers (same people as the agent)
+
+const triggerKind = z.enum(['webhook', 'schedule', 'email'])
+
+export const triggersList = defineOperation({
+  name: 'agents_triggers_list',
+  description: "An agent's triggers: webhooks, schedules and email.",
+  input: z.object({ agentId: id }),
+  http: { method: 'GET', path: '/agents/:agentId/triggers' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ triggers: await triggers.list(env, actor, input.agentId) }),
+})
+
+export const triggersCreate = defineOperation({
+  name: 'agents_triggers_create',
+  description: 'Add a trigger. Webhooks get a new secret; email triggers start from the mail that arrives next.',
+  input: z.object({ agentId: id, kind: triggerKind, config: z.unknown() }),
+  http: { method: 'POST', path: '/agents/:agentId/triggers', status: 201 },
+  mcp: false,
+  run: async ({ env, actor }, { agentId, ...input }) => ({ trigger: await triggers.create(env, actor, agentId, input) }),
+})
+
+export const triggersUpdate = defineOperation({
+  name: 'agents_triggers_update',
+  description: 'Turn a trigger on or off, or change its settings.',
+  input: z.object({ agentId: id, triggerId: id, enabled: z.boolean().optional(), config: z.unknown().optional() }),
+  http: { method: 'PATCH', path: '/agents/:agentId/triggers/:triggerId' },
+  mcp: false,
+  run: async ({ env, actor }, { agentId, triggerId, ...input }) => ({ trigger: await triggers.update(env, actor, agentId, triggerId, input) }),
+})
+
+export const triggersDelete = defineOperation({
+  name: 'agents_triggers_delete',
+  description: 'Delete a trigger.',
+  input: z.object({ agentId: id, triggerId: id }),
+  http: { method: 'DELETE', path: '/agents/:agentId/triggers/:triggerId' },
+  mcp: false,
+  run: ({ env, actor }, input) => triggers.remove(env, actor, input.agentId, input.triggerId),
+})
+
+export const triggersRevealSecret = defineOperation({
+  name: 'agents_triggers_reveal_secret',
+  description: "A webhook trigger's secret and full URL.",
+  input: z.object({ agentId: id, triggerId: id }),
+  http: { method: 'POST', path: '/agents/:agentId/triggers/:triggerId/secret/reveal' },
+  mcp: false,
+  run: ({ env, actor }, input) => triggers.revealSecret(env, actor, input.agentId, input.triggerId),
+})
+
+export const triggersRotateSecret = defineOperation({
+  name: 'agents_triggers_rotate_secret',
+  description: 'Replace a webhook trigger’s secret. The old one stops working right away.',
+  input: z.object({ agentId: id, triggerId: id }),
+  http: { method: 'POST', path: '/agents/:agentId/triggers/:triggerId/secret/rotate' },
+  mcp: false,
+  run: ({ env, actor }, input) => triggers.rotateSecret(env, actor, input.agentId, input.triggerId),
+})
+
+export const triggersEvents = defineOperation({
+  name: 'agents_triggers_events',
+  description: 'What a trigger received lately (payloads, emails, schedule times) and whether it started a run.',
+  input: z.object({ agentId: id, triggerId: id }),
+  http: { method: 'GET', path: '/agents/:agentId/triggers/:triggerId/events' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ events: await triggers.events(env, actor, input.agentId, input.triggerId) }),
+})
+
+export const triggersTest = defineOperation({
+  name: 'agents_triggers_test',
+  description: 'Send a test event through a trigger: a dry run of the draft, as you.',
+  input: z.object({ agentId: id, triggerId: id, payload: z.string().max(256 * 1024).optional() }),
+  http: { method: 'POST', path: '/agents/:agentId/triggers/:triggerId/test', status: 201 },
+  mcp: false,
+  run: ({ env, actor }, { agentId, triggerId, ...input }) => triggers.test(env, actor, agentId, triggerId, input),
+})
+
 export const agentOperations = [
+  triggersList,
+  triggersCreate,
+  triggersUpdate,
+  triggersDelete,
+  triggersRevealSecret,
+  triggersRotateSecret,
+  triggersEvents,
+  triggersTest,
   aiProvidersList,
   aiProvidersSave,
   aiProvidersCheck,

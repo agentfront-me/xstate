@@ -104,7 +104,9 @@
         "--inspector-port",
         "9238",
         "--var",
-        "APP_ORIGINS:http://localhost:8799"
+        "APP_ORIGINS:http://localhost:8799",
+        "--var",
+        "API_URL:http://localhost:8798"
       ],
       "port": 8798
     },

@@ -9,7 +9,7 @@ export type AgentConfig = {
   instructions: string
   model: { provider: ProviderId; id: string } | null
   tools: { builtin: string[] }
-  limits: { maxSteps: number; maxRunsPerDay: number }
+  limits: { maxSteps: number; maxRunsPerDay: number; perSenderPerHour: number }
 }
 
 export type AgentSummary = {
@@ -33,7 +33,7 @@ export type RunStatus = 'running' | 'waiting_for_approval' | 'done' | 'failed' |
 export type Run = {
   id: string
   status: RunStatus
-  trigger: { kind: string; label: string }
+  trigger: { kind: string; label: string; triggerId: string | null }
   version: number | null
   dryRun: boolean
   model: string
@@ -137,4 +137,56 @@ export const RUN_STATUS: Record<RunStatus, { label: string; icon: 'circle-check'
   failed: { label: 'Failed', icon: 'circle-x' },
   max_steps: { label: 'Hit step limit', icon: 'circle-alert' },
   skipped: { label: 'Skipped', icon: 'circle-dashed' },
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Triggers
+
+export type TriggerKind = 'webhook' | 'schedule' | 'email'
+export type WebhookConfig = { name: string; auth: 'signature' | 'url'; template: string }
+export type Frequency = 'once' | 'interval' | 'daily' | 'weekly' | 'cron'
+export type ScheduleConfig = {
+  frequency: Frequency
+  timezone: string
+  at?: string
+  everyMinutes?: number
+  time?: string
+  weekdays?: number[]
+  cron?: string
+  task: string
+}
+export type EmailConfig = {
+  mailboxId: string
+  rules: { from: string; subjectContains: string; hasAttachment: boolean | null }
+  aiFilter: string
+  skipAutomated: boolean
+}
+export type Trigger = {
+  id: string
+  kind: TriggerKind
+  enabled: boolean
+  config: WebhookConfig | ScheduleConfig | EmailConfig
+  summary: string
+  lastFiredAt: string | null
+  nextRunAt: string | null
+  createdAt: string
+  webhook?: { url: string; secretHint: string }
+  mailbox?: { id: string; address: string } | null
+}
+export type TriggerEvent = { at: string; outcome: 'started' | 'skipped' | 'test'; runId: string | null; detail: Record<string, unknown> }
+
+export const triggersApi = {
+  list: (agentId: string) => api<{ triggers: Trigger[] }>('GET', `/agents/${agentId}/triggers`),
+  create: (agentId: string, kind: TriggerKind, config: unknown) => api<{ trigger: Trigger }>('POST', `/agents/${agentId}/triggers`, { kind, config }),
+  update: (agentId: string, id: string, input: { enabled?: boolean; config?: unknown }) => api<{ trigger: Trigger }>('PATCH', `/agents/${agentId}/triggers/${id}`, input),
+  remove: (agentId: string, id: string) => api<void>('DELETE', `/agents/${agentId}/triggers/${id}`),
+  reveal: (agentId: string, id: string) => api<{ secret: string; url: string }>('POST', `/agents/${agentId}/triggers/${id}/secret/reveal`),
+  rotate: (agentId: string, id: string) => api<{ secret: string; url: string }>('POST', `/agents/${agentId}/triggers/${id}/secret/rotate`),
+  events: (agentId: string, id: string) => api<{ events: TriggerEvent[] }>('GET', `/agents/${agentId}/triggers/${id}/events`),
+  test: (agentId: string, id: string, payload?: string) => api<{ runId: string }>('POST', `/agents/${agentId}/triggers/${id}/test`, payload === undefined ? {} : { payload }),
+}
+
+export const triggerKeys = {
+  list: (agentId: string) => ['agents', 'triggers', agentId] as const,
+  events: (agentId: string, id: string) => ['agents', 'trigger-events', agentId, id] as const,
 }

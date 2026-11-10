@@ -588,3 +588,57 @@ export async function setEmailPlacements(env: StalwartEnv, accountId: string, pl
   }
   return updated
 }
+
+/** A new message as an email trigger sees it: who and what, the headers that mark automated mail, and its text. */
+export type TriggerEmail = {
+  id: string
+  threadId: string
+  mailboxIds: Record<string, true>
+  keywords: Record<string, true>
+  from: JmapAddress[] | null
+  to: JmapAddress[] | null
+  cc: JmapAddress[] | null
+  subject: string | null
+  receivedAt: string
+  hasAttachment: boolean
+  preview: string
+  textBody: { partId: string | null }[]
+  bodyValues: Record<string, { value: string; isTruncated: boolean }>
+  'header:Auto-Submitted:asText': string | null
+  'header:Precedence:asText': string | null
+  'header:List-Id:asText': string | null
+  'header:List-Unsubscribe:asURLs': string[] | null
+  'header:X-Autoreply:asText': string | null
+}
+
+/** Messages for email triggers (agents/email-trigger.ts), with up to `maxBodyBytes` of plain text. */
+export async function getTriggerEmails(env: StalwartEnv, accountId: string, ids: string[], maxBodyBytes = 16_000): Promise<TriggerEmail[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [
+    [
+      'Email/get',
+      {
+        accountId,
+        ids,
+        properties: [
+          'id', 'threadId', 'mailboxIds', 'keywords', 'from', 'to', 'cc', 'subject', 'receivedAt', 'hasAttachment', 'preview',
+          'textBody', 'bodyValues',
+          'header:Auto-Submitted:asText', 'header:Precedence:asText', 'header:List-Id:asText',
+          'header:List-Unsubscribe:asURLs', 'header:X-Autoreply:asText',
+        ],
+        bodyProperties: ['partId'],
+        fetchTextBodyValues: true,
+        maxBodyValueBytes: maxBodyBytes,
+      },
+    ],
+  ])
+  return (result!.list as TriggerEmail[]) ?? []
+}
+
+/** The newest messages in a folder (ids only), for a trigger's test event. */
+export async function newestIn(env: StalwartEnv, accountId: string, folderId: string, limit = 1): Promise<string[]> {
+  const [result] = await mail(env, [
+    ['Email/query', { accountId, filter: { inMailbox: folderId }, sort: [{ property: 'receivedAt', isAscending: false }], limit }],
+  ])
+  return (result!.ids as string[]) ?? []
+}

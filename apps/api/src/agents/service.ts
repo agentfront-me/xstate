@@ -40,7 +40,7 @@ async function requireManager(env: Env, actor: Actor, organizationId: string) {
   return member
 }
 
-async function agentContext(env: Env, actor: Actor, agentId: string): Promise<AgentRow> {
+export async function agentContext(env: Env, actor: Actor, agentId: string): Promise<AgentRow> {
   const agent = await db.findAgent(env.DB, agentId)
   if (!agent) throw notFound()
   try {
@@ -53,7 +53,7 @@ async function agentContext(env: Env, actor: Actor, agentId: string): Promise<Ag
   return agent
 }
 
-async function publishedConfig(env: Env, agent: AgentRow) {
+export async function publishedConfig(env: Env, agent: AgentRow) {
   if (agent.published_version === null) return null
   const version = await db.findVersion(env.DB, agent.id, agent.published_version)
   return version ? { config: parseConfig(version.config), raw: version.config, publishedBy: version.published_by } : null
@@ -85,7 +85,7 @@ function summary(agent: AgentRow, publishedRaw: string | undefined): AgentSummar
   }
 }
 
-const store = (env: Env, agentId: string) => getAgentByName<Env, AgentStore>(env.AGENT_STORE, agentId)
+export const store = (env: Env, agentId: string) => getAgentByName<Env, AgentStore>(env.AGENT_STORE, agentId)
 
 // ---------------------------------------------------------------------------------------------------------------
 // Agents
@@ -138,7 +138,7 @@ export async function update(env: Env, actor: Actor, agentId: string, input: { n
 }
 
 /** Why a config can't run yet, or null. */
-async function blocker(env: Env, organizationId: string, config: AgentConfig): Promise<string | null> {
+export async function blocker(env: Env, organizationId: string, config: AgentConfig): Promise<string | null> {
   if (!config.model) return 'Pick a model in the agent’s Settings first.'
   const provider = await db.findProvider(env.DB, organizationId, config.model.provider)
   if (!provider) return `Add a ${label(config.model.provider)} key in Settings → AI providers first.`
@@ -226,7 +226,7 @@ export async function models(env: Env, actor: Actor, organizationId: string) {
 export type Run = {
   id: string
   status: RunRow['status']
-  trigger: { kind: string; label: string }
+  trigger: { kind: string; label: string; triggerId: string | null }
   version: number | null
   dryRun: boolean
   model: string
@@ -242,7 +242,7 @@ export type Run = {
 const presentRun = (r: RunRow): Run => ({
   id: r.id,
   status: r.status,
-  trigger: { kind: r.trigger_kind, label: r.trigger_label },
+  trigger: { kind: r.trigger_kind, label: r.trigger_label, triggerId: r.trigger_id ?? null },
   version: r.version,
   dryRun: !!r.dry_run,
   model: r.model,
@@ -289,10 +289,10 @@ export async function startRun(env: Env, actor: Actor, agentId: string, input: {
       dryRun: input.dryRun,
       trigger: input.draft ? { kind: 'test', label: 'Test' } : { kind: 'manual', label: 'Run now' },
     },
-    config.limits.maxRunsPerDay,
+    config.limits,
   )
-  if ('error' in result) throw new ApiError('limit_reached', result.error, 429)
-  return result
+  if ('skipped' in result) throw new ApiError('limit_reached', result.skipped, 429)
+  return { runId: result.runId }
 }
 
 export async function listRuns(env: Env, actor: Actor, agentId: string, q: { limit: number; before?: string; trigger?: string; status?: string; days?: number }) {

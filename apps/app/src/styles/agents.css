@@ -127,6 +127,33 @@ button.a-tl-head .icon { color: var(--text-dim); }
 .key-status.no_credit, .key-status.rate_limited { color: #b45309; }
 .key-detail { color: var(--text-toned); }
 
+/* Triggers (Setup tab) */
+.a-trigger-item + .a-trigger-item { border-top: 1px solid var(--border); }
+.a-trigger-item.off .a-trigger-row .text, .a-trigger-item.off .a-trigger-row .s-tile { opacity: 0.55; }
+.a-trigger-row { gap: 10px; padding-left: 8px; }
+.a-expand { width: 22px; height: 22px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--text-dim); flex-shrink: 0; }
+.a-expand:hover { color: var(--text-hi); background: var(--bg-hover); }
+.a-trigger-meta { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.a-trigger-details { display: flex; flex-direction: column; gap: 14px; padding: 4px 14px 16px 76px; }
+.a-detail-block { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.a-detail-block .key-line { display: flex; gap: 8px; width: 100%; }
+.a-detail-block .key-line .text-input { flex: 1; min-width: 0; height: 32px; font-size: 12px; background: var(--bg); }
+.a-detail-block .icon-only { width: 30px; height: 30px; padding: 0; }
+.a-event { border: 1px solid var(--border); border-radius: 7px; background: var(--bg); }
+.a-event + .a-event { margin-top: 4px; }
+.a-event-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 10px; text-align: left; min-width: 0; }
+.a-event-head .ellipsis { flex: 1; }
+.a-event-outcome { font-size: 12px; color: var(--text-hi); white-space: nowrap; }
+.a-event-outcome.skipped { color: var(--text-muted); }
+.a-event-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; align-items: flex-start; }
+.a-event-body .a-pre { align-self: stretch; }
+.a-form { gap: 14px; }
+.a-form .field { min-width: 0; }
+.a-form .select { width: 100%; }
+.a-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.a-days { align-self: flex-start; }
+.a-days button { width: 38px; }
+
 /* The page sits beside the rail and the agent list, so it narrows by its own width, not the window's. */
 .agents .a-main { container-type: inline-size; }
 @container (max-width: 680px) {
@@ -138,4 +165,6 @@ button.a-tl-head .icon { color: var(--text-dim); }
   .a-tr > :nth-child(n + 4) { display: none; }
   .a-body { padding: 16px; }
   .a-select { width: 200px; }
+  .a-trigger-details { padding-left: 14px; }
+  .a-trigger-meta { display: none; }
 }

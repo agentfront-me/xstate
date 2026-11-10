@@ -1,6 +1,7 @@
 // Background mail sync: Stalwart's webhook and the hourly safety check both put "sync this mailbox" jobs on the
 // MAIL_SYNC queue; the consumer runs storage/mail-sync for each. See docs/message-api-plan.md.
 
+import { processMailbox } from '../agents/email-trigger'
 import * as mailboxesDb from '../db/mailboxes'
 import { syncMailbox } from '../storage/mail-sync'
 import { emptyExpiredTrash } from '../storage/drive'
@@ -24,6 +25,13 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
     byMailbox.set(message.body.mailboxId, list)
   }
   for (const [mailboxId, messages] of byMailbox) {
+    // Agents' email triggers first, on their own: a storage sync failure mustn't hold up replies, nor the other way.
+    try {
+      const agents = await processMailbox(env, mailboxId)
+      if (agents.fired || agents.skipped) console.log('agent-email-triggers', JSON.stringify({ mailboxId, ...agents }))
+    } catch (err) {
+      console.error(`agent-email-triggers: mailbox ${mailboxId} failed`, err)
+    }
     try {
       const result = await syncMailbox(env, mailboxId)
       if (result.stored || result.deleted || result.queued || result.unindexed || result.firstSync) console.log('mail-sync', JSON.stringify(result))

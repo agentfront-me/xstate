@@ -188,3 +188,82 @@ export async function listVersions(db: D1Database, agentId: string): Promise<Ver
   const { results } = await db.prepare(`${VERSION_SELECT} WHERE v.agent_id = ? ORDER BY v.version DESC LIMIT 50`).bind(agentId).all<VersionRow>()
   return results
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Triggers (migrations/0024_agent_triggers.sql)
+
+export type TriggerKind = 'webhook' | 'schedule' | 'email'
+
+export type TriggerRow = {
+  id: string
+  agent_id: string
+  organization_id: string
+  kind: TriggerKind
+  enabled: number
+  config: string
+  secret_encrypted: string | null
+  cursor: string | null
+  mailbox_id: string | null
+  next_run_at: string | null
+  last_fired_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export async function listTriggers(db: D1Database, agentId: string): Promise<TriggerRow[]> {
+  const { results } = await db.prepare('SELECT * FROM agent_triggers WHERE agent_id = ? ORDER BY created_at').bind(agentId).all<TriggerRow>()
+  return results
+}
+
+export function findTrigger(db: D1Database, triggerId: string): Promise<TriggerRow | null> {
+  return db.prepare('SELECT * FROM agent_triggers WHERE id = ?').bind(triggerId).first<TriggerRow>()
+}
+
+export async function emailTriggersFor(db: D1Database, mailboxId: string): Promise<TriggerRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM agent_triggers WHERE mailbox_id = ? AND kind = 'email' AND enabled = 1")
+    .bind(mailboxId)
+    .all<TriggerRow>()
+  return results
+}
+
+export function insertTrigger(
+  db: D1Database,
+  row: { id: string; agentId: string; organizationId: string; kind: TriggerKind; config: string; secretEncrypted: string | null; mailboxId: string | null; cursor: string | null; userId: string; now: string },
+) {
+  return db
+    .prepare(
+      `INSERT INTO agent_triggers (id, agent_id, organization_id, kind, enabled, config, secret_encrypted, cursor, mailbox_id, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(row.id, row.agentId, row.organizationId, row.kind, row.config, row.secretEncrypted, row.cursor, row.mailboxId, row.userId, row.now, row.now)
+    .run()
+}
+
+export function updateTrigger(
+  db: D1Database,
+  triggerId: string,
+  fields: Partial<{ enabled: number; config: string; secret_encrypted: string; cursor: string | null; mailbox_id: string | null; next_run_at: string | null; last_fired_at: string }>,
+) {
+  const sets: string[] = []
+  const values: unknown[] = []
+  for (const [column, value] of Object.entries(fields)) {
+    if (value === undefined) continue
+    sets.push(`${column} = ?`)
+    values.push(value)
+  }
+  sets.push('updated_at = ?')
+  values.push(new Date().toISOString())
+  return db.prepare(`UPDATE agent_triggers SET ${sets.join(', ')} WHERE id = ?`).bind(...values, triggerId).run()
+}
+
+/** Bookkeeping that shouldn't bump updated_at (the trigger's settings didn't change). */
+export function touchTrigger(db: D1Database, triggerId: string, fields: { cursor?: string; last_fired_at?: string; next_run_at?: string | null }) {
+  const sets = Object.keys(fields).map((k) => `${k} = ?`)
+  return db.prepare(`UPDATE agent_triggers SET ${sets.join(', ')} WHERE id = ?`).bind(...Object.values(fields), triggerId).run()
+}
+
+export function deleteTrigger(db: D1Database, triggerId: string) {
+  return db.prepare('DELETE FROM agent_triggers WHERE id = ?').bind(triggerId).run()
+}

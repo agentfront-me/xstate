@@ -1,7 +1,7 @@
 # Plan: Agents
 
-Status: Phase 0 (spike) done and Phase 1 (foundations) built 2026-11-10, uncommitted. Migration 0023 must be applied
-before the API is deployed. Phases 2–6 not started.
+Status: Phase 0 (spike) done; Phases 1 (foundations) and 2 (triggers) built 2026-11-10, uncommitted. Migrations 0023
+and 0024 must be applied before the API is deployed. Phases 3–6 not started.
 
 The design ("xstate App.dc.html", Agents page and Settings → AI providers / Secrets) adds AI agents that customers
 set up in the app, with no code: **triggers** (webhook, schedule, email; events later) start a run, the agent
@@ -259,10 +259,60 @@ To ship:
 3. Optional: create an AI Gateway and set `AI_GATEWAY_ID` to route model calls through it.
 4. Deploy the app.
 
-### 2. Triggers
+### 2. Triggers (built 2026-11-10, uncommitted)
 
-Webhook, schedule and email as above; filters, loop guard, per-sender limit; Setup tab triggers with last fired,
-test event and recent payloads.
+What's there:
+
+- **Migration `0024_agent_triggers.sql`:** `agent_triggers` (kind, enabled, config JSON, webhook secret encrypted,
+  email cursor and mailbox, schedule `next_run_at`, `last_fired_at`). Triggers aren't versioned with the config:
+  a webhook URL must survive publishes and turning a trigger off must work at once. They fire only while the agent
+  is on and published; runs use the published version, acting as its publisher.
+- **Firing** (`agents/triggers.ts` `fire`): checks the agent is on, published and runnable, then starts a run with
+  the trigger's kind, label and id on it. Anything that stops it is logged to the trigger's recent events (kept 20
+  per trigger in the agent's store) with the reason. The daily limit and the new per-sender limit
+  (`limits.perSenderPerHour`, default 10) are checked in `AgentStore.startRun`; a run stopped by a limit is recorded
+  as **Skipped** with the reason, so it shows in the Runs tab.
+- **Webhook:** `POST /hooks/:triggerId`, authenticated by `X-Xstate-Signature: sha256=<hex HMAC-SHA256 of the body>`
+  or `Authorization: Bearer <secret>`; or, in "url" mode for services that can't add headers, the secret as the
+  last path segment (`/hooks/:triggerId/:secret`). 256 KB body cap, `HOOK_RATE` 60/min per trigger, 404 for unknown
+  ids, 409 when the trigger is off, 200 `{ outcome: 'skipped', reason }` when the agent is off. The task comes from
+  a template (`{{payload}}`, `{{order.id}}`), or the whole payload by default. Secrets can be revealed and rotated.
+- **Schedule:** once, every N minutes (5 min–7 days), daily, weekly on chosen days, or five-field cron, all in the
+  trigger's time zone (`agents/schedule.ts`, own cron parser and DST handling, unit tested). The agent's store keeps
+  one SDK alarm per trigger for the next time; when it fires it arms the following one first, then runs.
+- **Email:** rides on mail sync. The MAIL_SYNC consumer calls `processMailbox` (`agents/email-trigger.ts`) before the
+  storage sync, separately, so neither failing blocks the other. Each trigger walks `Email/changes` from its own
+  saved state (set to "now" when created, so old mail never fires), takes new inbox messages (max 50 per sync), and
+  applies: rules (from contains, subject contains, attachments), the loop guard (on by default: `Auto-Submitted`,
+  `Precedence: bulk/junk/list/auto_reply`, `X-Autoreply`, `List-Id`/`List-Unsubscribe`, no-reply/mailer-daemon/
+  postmaster senders, and mail from the mailbox itself), and an optional **AI filter** that runs as the run's first
+  model call ("YES/NO") and ends it as Skipped when it says no. The saved state moves before firing, so a crash skips
+  mail rather than replying twice. Loop-guard skips go to the trigger's events, not the Runs tab, so newsletters
+  don't flood it.
+- **Test events:** each trigger can send a test through itself (a sample webhook payload, the schedule's task, or the
+  newest email in the mailbox): a dry run of the draft, as the person testing, even while the agent is off.
+- **App:** Setup → Triggers: list with on/off, last fired or next run, menu (edit, delete), details (webhook URL,
+  secret reveal/copy/rotate, what the agent sees; schedule task and next run; email rules, AI filter and loop guard),
+  "Send test event", and the last 5 events with their payloads and links to the runs. Add/edit dialogs for all three.
+  Runs tab: email/webhook/schedule filters and icons. Settings: max runs per sender per hour.
+- **Config:** `HOOK_RATE` rate limit (namespace 1003), `API_URL` var (the API's public origin for webhook URLs).
+
+Stalwart detail: `List-Unsubscribe` can only be asked for as `header:List-Unsubscribe:asURLs` (Stalwart rejects
+`asText`).
+
+Verified locally: webhook with signature, bearer, wrong signature, URL mode, wrong URL secret, trigger off, agent
+paused, rotated secret, unknown id, test event; a one-off schedule fired on the minute with the published version and
+marked itself done; a weekly one computed next Monday 09:00 London; bad cron and unknown time zone are refused; email
+on the local Stalwart (`dev@acme.test`): a customer email started a run that read the thread, an auto-reply and a
+no-reply sender were stopped by the loop guard, a third email from the same sender was stopped by the per-sender
+limit (set to 2), the AI filter skipped a lunch invite and let a return request through. In the app: the triggers
+list, details and events, adding a schedule, its test run. 129 API unit tests (23 new) and both typechecks pass.
+
+Found while testing: the model copied a trailing full stop into a thread id ("threadId: w."), so the email task now
+puts ids on lines of their own.
+
+To ship (with Phase 1): apply migrations 0023 and 0024 remotely, then deploy the API (the new rate limit binding and
+var come with it).
 
 ### 3. Actions and approvals
 

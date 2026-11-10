@@ -44,7 +44,9 @@
     "GOOGLE_MODE": "live",
     // Agents (agents/model.ts): an AI Gateway on this account that model calls go through, for per-request logs,
     // token counts and rate limits. Empty: calls go straight to the provider.
-    "AI_GATEWAY_ID": ""
+    "AI_GATEWAY_ID": "",
+    // This API's own public origin, for the webhook URLs agents' triggers show (agents/triggers.ts).
+    "API_URL": "https://api.xstate.com"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -89,7 +91,9 @@
   // COLLECT_RATE: audience events from browsers, 300 a minute per organization and visitor IP (audience/collect.ts).
   "ratelimits": [
     { "name": "SEARCH_RATE", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
-    { "name": "COLLECT_RATE", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } }
+    { "name": "COLLECT_RATE", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } },
+    // HOOK_RATE: agents' webhook triggers, 60 a minute per trigger (agents/triggers.ts).
+    { "name": "HOOK_RATE", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } }
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
