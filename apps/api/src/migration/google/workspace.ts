@@ -226,6 +226,42 @@ async function paged<T, P extends { nextPageToken?: string }>(
 function liveWorkspace(env: WorkspaceEnv): Workspace {
   const token = (subject: string, permission: Permission) => accessToken(env, subject, SCOPES[permission])
 
+  /**
+   * Each user's mail and Drive size from Google's daily usage report, for the newest day Google has finished. Reports
+   * trail by a few days and how far varies, so this starts 2 days back and steps back a day at a time. Google says a
+   * day isn't ready either as a warning in the response or as an HTTP 400 ("Data for dates later than … is not yet
+   * available"); both mean try the day before.
+   */
+  const usageReport = async (adminEmail: string): Promise<Map<string, Usage>> => {
+    const t = await token(adminEmail, 'directory')
+    const MB = 1024 * 1024
+    type R = { entity?: { userEmail?: string }; parameters?: { name: string; intValue?: string }[] }
+    type Page = { usageReports?: R[]; warnings?: { code: string }[]; nextPageToken?: string }
+    for (let daysAgo = 2; daysAgo <= 7; daysAgo++) {
+      const date = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)
+      const base = `${ADMIN}/reports/v1/usage/users/all/dates/${date}?parameters=accounts:gmail_used_quota_in_mb,accounts:drive_used_quota_in_mb&maxResults=1000`
+      let first: Page
+      try {
+        first = await googleGet<Page>(t, base)
+      } catch (err) {
+        if (err instanceof GoogleError && err.status === 400 && /not yet available/i.test(err.message)) continue
+        throw err
+      }
+      if (first.warnings?.some((w) => w.code === 'DATA_NOT_AVAILABLE' || w.code === 'PARTIAL_DATA_AVAILABLE') && daysAgo < 7) continue
+      const reports = [...(first.usageReports ?? [])]
+      if (first.nextPageToken) reports.push(...(await paged<R, Page>(t, `${base}&pageToken=${encodeURIComponent(first.nextPageToken)}`, (p) => p.usageReports)))
+      const out = new Map<string, Usage>()
+      for (const r of reports) {
+        const email = r.entity?.userEmail?.toLowerCase()
+        if (!email) continue
+        const value = (name: string) => Number(r.parameters?.find((p) => p.name === name)?.intValue ?? 0) * MB
+        out.set(email, { mailBytes: value('accounts:gmail_used_quota_in_mb'), driveBytes: value('accounts:drive_used_quota_in_mb') })
+      }
+      return out
+    }
+    return new Map()
+  }
+
   return {
     async clientId() {
       return (await serviceAccount(env)).clientId
@@ -329,29 +365,14 @@ function liveWorkspace(env: WorkspaceEnv): Workspace {
       return out
     },
 
+    // Sizes only inform the plan (and are null when unknown), so a failure here never fails discovery.
     async usage(adminEmail) {
-      const t = await token(adminEmail, 'directory')
-      const MB = 1024 * 1024
-      type R = { entity?: { userEmail?: string }; parameters?: { name: string; intValue?: string }[] }
-      type Page = { usageReports?: R[]; warnings?: { code: string }[]; nextPageToken?: string }
-      // The newest day Google has finished. Reports trail by a few days; an unfinished day comes back as a warning.
-      for (let daysAgo = 2; daysAgo <= 7; daysAgo++) {
-        const date = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)
-        const base = `${ADMIN}/reports/v1/usage/users/all/dates/${date}?parameters=accounts:gmail_used_quota_in_mb,accounts:drive_used_quota_in_mb&maxResults=1000`
-        const first = await googleGet<Page>(t, base)
-        if (first.warnings?.some((w) => w.code === 'DATA_NOT_AVAILABLE' || w.code === 'PARTIAL_DATA_AVAILABLE') && daysAgo < 7) continue
-        const reports = [...(first.usageReports ?? [])]
-        if (first.nextPageToken) reports.push(...(await paged<R, Page>(t, `${base}&pageToken=${encodeURIComponent(first.nextPageToken)}`, (p) => p.usageReports)))
-        const out = new Map<string, Usage>()
-        for (const r of reports) {
-          const email = r.entity?.userEmail?.toLowerCase()
-          if (!email) continue
-          const value = (name: string) => Number(r.parameters?.find((p) => p.name === name)?.intValue ?? 0) * MB
-          out.set(email, { mailBytes: value('accounts:gmail_used_quota_in_mb'), driveBytes: value('accounts:drive_used_quota_in_mb') })
-        }
-        return out
+      try {
+        return await usageReport(adminEmail)
+      } catch (err) {
+        console.warn(`migration usage report unavailable for ${adminEmail}: ${err instanceof Error ? err.message : String(err)}`)
+        return new Map<string, Usage>()
       }
-      return new Map()
     },
 
     async countUser(email) {
