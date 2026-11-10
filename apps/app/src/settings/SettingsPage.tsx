@@ -25,7 +25,7 @@ import {
   type ThemeChoice,
 } from '../lib/core'
 import type { Member } from '../lib/sample'
-import { accessReminder, summary as migrationSummary, type AccessReminder } from '../migration/api'
+import { accessReminder, startNew as startNewMigration, summary as migrationSummary, type AccessReminder } from '../migration/api'
 import type { Stage as MigrationStage } from '../migration/types'
 import type { Domain, MailboxKind } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
@@ -169,6 +169,18 @@ function MigrationSection({ account }: { account: Account }) {
   const started = !!m && m.stage !== 'connect'
   // After an import ends, a reminder until xstate's access to Google Workspace is removed.
   const [reminder, setReminder] = useState<AccessReminder>({ open: false })
+  const [startingNew, setStartingNew] = useState(false)
+  // Done → a fresh import from Connect. The finished one's report stays on the server until its cleanup.
+  const importAnother = async () => {
+    setStartingNew(true)
+    try {
+      await startNewMigration(account.org.id)
+      location.href = migrationUrl()
+    } catch (e) {
+      toast(errorMessage(e))
+      setStartingNew(false)
+    }
+  }
   useEffect(() => {
     if (account.mode !== 'live' || !admin) return
     accessReminder(account.org.id).then(setReminder, () => undefined)
@@ -197,6 +209,12 @@ function MigrationSection({ account }: { account: Account }) {
             </span>
           </div>
           <div className="right">
+            {admin && m?.stage === 'done' && (
+              <button className="btn" style={{ height: 34 }} disabled={startingNew} aria-busy={startingNew} onClick={() => void importAnother()}>
+                {startingNew ? <span className="spinner" /> : <Icon name="plus" size={14} />}
+                Import another
+              </button>
+            )}
             {admin || started ? (
               <a className="btn btn-primary" style={{ height: 34 }} href={migrationUrl()}>
                 {!started ? 'Start import' : m.stage === 'done' ? 'View report' : 'Open'}
