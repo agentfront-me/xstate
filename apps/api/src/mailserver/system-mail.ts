@@ -1,5 +1,5 @@
 // Email from xstate itself (invites), not from a customer's mailbox. It's sent through Stalwart like any other
-// message, from the xstate mailbox whose address is SYSTEM_MAIL_FROM (for example no-reply@xstate.io, a mailbox
+// message, from the xstate mailbox whose address is SYSTEM_MAIL_FROM (for example no-reply@xstate.com, a mailbox
 // in xstate's own organization), so it goes out through SES with that domain's DKIM and lands in its Sent folder.
 //
 // When SYSTEM_MAIL_FROM is empty or isn't an xstate mailbox, nothing is sent and callers are told so: local dev

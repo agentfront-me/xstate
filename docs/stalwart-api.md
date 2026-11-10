@@ -399,8 +399,30 @@ complaint rate), which would stop mail for every customer. Code: `apps/api/src/m
   ```
   The API allows sending again at once; SMTP comes back within the hour. A suspension can also be added by hand
   with reason `manual`.
-- **Not covered yet:** Stalwart's own mail (vacation replies, forwarding rules, bounce notices) isn't capped, only
-  counted. An organization can use both paths at once, so its real ceiling is the API caps plus the SMTP caps.
+- **An organization can use both paths at once**, so its real ceiling is the API caps plus the SMTP caps.
+
+### Mail Stalwart writes itself (tested 2026-11-09)
+
+Tested straight against SES with the mailbox simulator:
+
+| What | Envelope / From | SES |
+|---|---|---|
+| Bounce notice, vacation reply | `MAIL FROM:<>` | `501 Invalid MAIL FROM address provided` |
+| Forward as-is | outside sender, outside From | `554 Email address is not verified` |
+| Forward with SRS envelope | `SRS0=…@xstate.io`, outside From | `554` (SES checks the From header too) |
+| Forward with From rewritten | `asif@xstate.io`, From `asif@xstate.io` | `250 Ok` |
+
+So SES can never carry null-sender mail or mail whose From isn't a verified domain. Stalwart treats those 5xx
+answers as permanent and drops the message without telling anyone. To make nothing fail silently, users' Sieve
+scripts can't send mail any more (`x:SieveUserInterpreter`: `maxRedirects` 0, `maxOutMessages` 0, capabilities
+`vacation`, `vacation-seconds` and `enotify` disabled; applied with `ReloadSettings`). Previous values: 1, 3, none.
+
+Still dropped: Stalwart's own bounce notices to outside senders (null sender). They're rare, because unknown
+recipients are refused during the SMTP session and SES produces the bounces for outgoing mail itself.
+
+To do when auto-replies and forwarding become product features: send them from the API through JMAP, from the
+user's own address. A forward goes out as `"Name via xstate" <the user's address>` with `Reply-To` set to the
+original sender, the way Google Groups does it.
 
 ## 9. Local development
 

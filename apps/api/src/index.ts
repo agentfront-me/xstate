@@ -14,6 +14,7 @@ import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
 import { sendingHourly } from './mailserver'
+import { sesHourly } from './mailserver/domains'
 import type { AppEnv } from './http/types'
 import { operations } from './operations'
 
@@ -83,6 +84,11 @@ export default {
       Promise.all([
         hourly(env),
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
+        // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.
+        sesHourly(env).then(
+          (r) => r.changed && console.log('ses-hourly', JSON.stringify(r)),
+          (err) => console.error('ses-hourly failed', err),
+        ),
         // Google Workspace imports: the automatic second final pass, 24 hours after the first.
         finalHourly(env).catch((err) => console.error('migration final-hourly failed', err)),
         // Lost job chains restarted, the "copy is ready" email, Google access checks after an import, store cleanup.

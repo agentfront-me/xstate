@@ -36,6 +36,15 @@ export async function listByOrganization(db: D1Database, organizationId: string)
   return results
 }
 
+/** Domains SES hasn't verified yet (or that were never registered), a random sample so none is starved. */
+export async function listSesUnverified(db: D1Database, limit: number): Promise<DomainRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM domains WHERE ses_status IS NULL OR ses_status != 'verified' ORDER BY RANDOM() LIMIT ?")
+    .bind(limit)
+    .all<DomainRow>()
+  return results
+}
+
 export function insert(
   db: D1Database,
   domain: { id: string; organizationId: string; name: string; stalwartId: string; createdBy: string; now: string },

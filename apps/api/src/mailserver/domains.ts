@@ -57,6 +57,25 @@ async function syncSes(env: EmailEnv, domain: domainsDb.DomainRow): Promise<doma
   return (await domainsDb.find(env.DB, domain.id))!
 }
 
+/**
+ * Hourly: refreshes SES status for domains it hasn't verified yet. SES verifies DKIM on its own schedule, so a
+ * domain whose mail records were already found would otherwise stay "sending pending" until someone checks again.
+ */
+export async function sesHourly(env: EmailEnv): Promise<{ checked: number; changed: number }> {
+  if (!ses.sesConfigured(env)) return { checked: 0, changed: 0 }
+  const rows = await domainsDb.listSesUnverified(env.DB, 50)
+  let changed = 0
+  for (const row of rows) {
+    try {
+      const after = await syncSes(env, row)
+      if (after.ses_status !== row.ses_status) changed++
+    } catch (err) {
+      console.error(`ses: hourly sync of ${row.name} failed`, err)
+    }
+  }
+  return { checked: rows.length, changed }
+}
+
 const sesDkimRecords = (domain: domainsDb.DomainRow) =>
   ses.dkimRecords(domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : [])
 

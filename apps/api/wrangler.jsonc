@@ -38,7 +38,7 @@
     "APP_URL": "https://go.xstate.com",
     // xstate's own mail (invites) is sent from this mailbox, which has to exist in xstate's organization. Empty:
     // nothing is sent, and outside production the API hands back the invite link instead (mailserver/system-mail.ts).
-    "SYSTEM_MAIL_FROM": "no-reply@xstate.io",
+    "SYSTEM_MAIL_FROM": "no-reply@xstate.com",
     // Google Workspace imports (migration/): "live" uses GOOGLE_MIGRATION_KEY (the service account's JSON key, a
     // secret; not in "required" so deploys work before it exists), "fake" a made-up Workspace for local dev.
     "GOOGLE_MODE": "live"

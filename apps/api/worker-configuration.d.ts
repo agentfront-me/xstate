@@ -22,7 +22,7 @@ interface __BaseEnv_Env {
 	DOMAIN_CONNECT_ENABLED: "false";
 	DOMAIN_CONNECT_KEY_HOST: "_dck1";
 	APP_URL: "https://go.xstate.com";
-	SYSTEM_MAIL_FROM: "no-reply@xstate.io";
+	SYSTEM_MAIL_FROM: "no-reply@xstate.com";
 	GOOGLE_MODE: "live";
 	STALWART_API_KEY: string;
 	JWT_SECRET: string;

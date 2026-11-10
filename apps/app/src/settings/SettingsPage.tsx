@@ -771,7 +771,8 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
     setChecking(true)
     try {
       const { domain } = await verifyDomain(client, d.id)
-      toast(domain?.status === 'verified' ? 'Verified. Mail is on.' : 'Some records are still missing.')
+      if (verified) toast(domain?.sending === 'verified' ? 'Sending ready.' : 'Sending is still pending: Amazon SES has not seen the DKIM records yet.')
+      else toast(domain?.status === 'verified' ? 'Verified. Mail is on.' : 'Some records are still missing.')
     } catch (e) {
       toast(errorMessage(e))
     } finally {
@@ -808,10 +809,18 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
         </div>
         <span className="right">
           {verified ? (
-            <span className="status">
-              <Icon name="circle-check" size={14} />
-              Verified
-            </span>
+            <>
+              <span className="status">
+                <Icon name="circle-check" size={14} />
+                Verified
+              </span>
+              {/* SES checks DKIM on its own schedule; the API also refreshes this hourly. */}
+              {(d.sending === 'pending' || d.sending === 'failed') && (
+                <button className="btn" disabled={checking} aria-busy={checking} onClick={() => void check()}>
+                  Check sending
+                </button>
+              )}
+            </>
           ) : (
             <>
               {/* Owned (the ownership TXT record) but mail not moved yet: what an import from Google needs to start. */}
