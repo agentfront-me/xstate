@@ -9,7 +9,7 @@ import { errorMessage } from '../../lib/core'
 import * as migrationApi from '../api'
 import type { Ctx } from '../main'
 import type { SwitchStatus } from '../types'
-import { CopyButton, day, Notice, num, time, Title, useTick } from '../ui'
+import { day, Notice, num, time, Title, useTick } from '../ui'
 
 export function SwitchStep({ ctx }: { ctx: Ctx }) {
   const orgId = ctx.org.id
@@ -86,13 +86,12 @@ export function SwitchStep({ ctx }: { ctx: Ctx }) {
               <span>Name</span>
               <span>Value</span>
               <span>Status</span>
-              <span />
             </div>
             {status.records.map((r) => (
               <div className="tr" role="row" key={`${r.type}-${r.name}`}>
                 <span className="mono hi">{r.type}</span>
                 <RecordCell label={`${r.type} name`} text={r.name} />
-                <RecordCell label={`${r.type} value`} text={r.value} className="hi" />
+                <RecordCell label={`${r.type} value`} text={r.value} />
                 <span className={`small ${r.found ? 'hi' : 'muted'}`}>
                   {r.found ? (
                     <>
@@ -108,7 +107,6 @@ export function SwitchStep({ ctx }: { ctx: Ctx }) {
                     </>
                   )}
                 </span>
-                <CopyButton text={r.value} label={`Copy ${r.type} value`} />
               </div>
             ))}
           </div>

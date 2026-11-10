@@ -309,15 +309,20 @@ button.sender { width: 100%; text-align: left; }
 .card-row .status.pending { color: var(--text-muted); }
 .card.solo .card-row { padding: 14px 16px; }
 .app-tile { width: 28px; height: 28px; border-radius: 7px; background: var(--bg-muted); color: var(--text-hi); display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
-.records { margin: 0 14px 12px 50px; padding: 8px 12px; border-radius: 7px; background: var(--bg); border: 1px solid var(--border); overflow-x: auto; }
+.records { margin: 0 14px 12px 50px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
 .card-row + .records { border-top: 1px solid var(--border); }
-.records-note { margin: 2px 0 8px; font-size: 12px; line-height: 1.5; color: var(--text-muted); white-space: normal; max-width: 640px; }
-.records table { border-collapse: collapse; font: 12px/1.6 var(--mono); color: var(--text-hi); white-space: nowrap; }
-.records th { font: 12px/1.6 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--text-muted); text-align: left; font-weight: 400; }
-.records th, .records td { padding: 0 16px 0 0; }
-.records .found { color: var(--text-muted); }
-.records button { color: var(--text-dim); vertical-align: middle; }
-.records button:hover { color: var(--text-hi); }
+.records-note { margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--text-muted); white-space: normal; border-bottom: 1px solid var(--border); }
+/* Status · Type · Name · Value. Name and Value end in an ellipsis when they don't fit (full text on hover). */
+.records table { width: 100%; table-layout: fixed; border-collapse: collapse; font: 12px/1.6 var(--mono); color: var(--text-hi); }
+.records .col-state { width: 36px; }
+.records .col-type { width: 72px; }
+.records .col-name { width: 34%; }
+.records th { padding: 7px 12px 7px 0; font: 12px/1.6 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--text-muted); text-align: left; font-weight: 400; border-bottom: 1px solid var(--border); }
+.records td { padding: 6px 12px 6px 0; white-space: nowrap; overflow: hidden; }
+.records th:first-child, .records td:first-child { padding-left: 12px; }
+.records tbody tr + tr td { border-top: 1px solid var(--border); }
+.records .record-state { display: inline-flex; vertical-align: middle; color: var(--text-dim); }
+.records .found .record-state { color: var(--text-hi); }
 /* Add-domain progress line under the form. */
 .form-status { font-size: 12px; color: var(--text-muted); }
 .form-status:empty { display: none; }

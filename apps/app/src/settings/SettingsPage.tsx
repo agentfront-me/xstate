@@ -801,8 +801,7 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
     }
   }
 
-  const copy = async (value: string) => copied(await copyText(value))
-  const copied = (ok: boolean) => toast(ok ? 'Copied' : "Couldn't copy")
+  const copied = (ok: boolean, label: string) => toast(ok ? `Copied ${label}` : "Couldn't copy")
 
   return (
     <>
@@ -857,32 +856,34 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
             </p>
           )}
           <table>
+            <colgroup>
+              <col className="col-state" />
+              <col className="col-type" />
+              <col className="col-name" />
+              <col />
+            </colgroup>
             <thead>
               <tr>
+                <th aria-label="Status" />
                 <th>Type</th>
                 <th>Name</th>
                 <th>Value</th>
-                <th />
               </tr>
             </thead>
             <tbody>
               {records.map((r, i) => (
                 <tr key={i} className={r.found ? 'found' : undefined}>
+                  <td>
+                    <span className="record-state" title={r.found ? 'Record found' : 'Waiting for record'}>
+                      <Icon name={r.found ? 'circle-check' : 'clock'} size={14} />
+                    </span>
+                  </td>
                   <td>{r.type}</td>
                   <td>
                     <RecordCell label={`${r.type} name`} text={r.name} onCopied={copied} />
                   </td>
                   <td>
                     <RecordCell label={`${r.type} value`} text={r.value} onCopied={copied} />
-                  </td>
-                  <td>
-                    {r.found ? (
-                      <Icon name="check" size={13} />
-                    ) : (
-                      <button aria-label={`Copy ${r.type} value`} onClick={() => void copy(r.value)}>
-                        <Icon name="copy" size={13} />
-                      </button>
-                    )}
                   </td>
                 </tr>
               ))}

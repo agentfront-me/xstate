@@ -20,7 +20,7 @@ function RecordField({ label, text }: { label: string; text: string }) {
   return (
     <div className="rec-field">
       <span className="rec-label">{label}</span>
-      <RecordCell label={label} text={text} className="cell" />
+      <RecordCell label={label} text={text} className="cell" copy={false} />
       <button type="button" className="copy" aria-label={`Copy ${lower}`} onClick={() => void copy(text)}>
         <Icon name={copied ? 'check' : 'copy'} size={14} />
       </button>

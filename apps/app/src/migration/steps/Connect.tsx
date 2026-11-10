@@ -150,7 +150,7 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
                       </div>
                       <div className="scope">
                         <span className="scope-name">Value</span>
-                        <RecordCell label="TXT value" text={r.value} />
+                        <RecordCell label="TXT value" text={r.value} copy={false} />
                         <CopyButton text={r.value} label="Copy TXT value" />
                       </div>
                     </div>

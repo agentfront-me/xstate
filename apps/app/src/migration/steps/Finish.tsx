@@ -61,6 +61,9 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
   const skippedTotal = status.skipped.reduce((s, x) => s + x.count, 0)
   const first = status.newMembers[0]
   const noAddress = status.newMembers.filter((m) => m.sendTo === null).length
+  // Nobody new to invite (everyone already had an account here, or has accepted): nothing to send, so it isn't a step.
+  const noOneToInvite = !status.invitesSent && status.newMembers.length === 0
+  const invitesDone = status.invitesSent || noOneToInvite
 
   const send = async () => {
     setSending(true)
@@ -148,14 +151,19 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
                 </ul>
               </div>
             )}
-            {status.invitesSent ? (
+            {noOneToInvite ? (
+              <div className="status-line is-ok">
+                <Icon name="circle-check" size={14} />
+                Everyone already has an account. No invites to send.
+              </div>
+            ) : status.invitesSent ? (
               <div className="status-line is-ok">
                 <Icon name="circle-check" size={14} />
                 Invites sent to {plural(status.newMembers.length, 'member')}.
               </div>
             ) : (
               <div className="actions">
-                <button className="btn btn-primary btn-auto btn-sm" disabled={sending || !ctx.isAdmin || !status.newMembers.length} aria-busy={sending || undefined} onClick={() => void send()}>
+                <button className="btn btn-primary btn-auto btn-sm" disabled={sending || !ctx.isAdmin} aria-busy={sending || undefined} onClick={() => void send()}>
                   {sending ? <span className="spinner spinner-on-primary" /> : <Icon name="send" size={13} />}
                   Send {status.newMembers.length} invites
                 </button>
@@ -225,11 +233,11 @@ export function FinishStep({ ctx }: { ctx: Ctx }) {
       </div>
       {error && <Notice kind="error">{error}</Notice>}
       <div className="actions">
-        <button className="btn btn-primary btn-auto" disabled={!status.invitesSent || !ctx.isAdmin} onClick={() => void ctx.go('done')}>
+        <button className="btn btn-primary btn-auto" disabled={!invitesDone || !ctx.isAdmin} onClick={() => void ctx.go('done')}>
           Finish migration
         </button>
-        {!status.invitesSent && <span className="muted small">Send the invites to finish.</span>}
-        {status.invitesSent && !status.accessRemoved && <span className="muted small">You can finish now and remove Google access later.</span>}
+        {!invitesDone && <span className="muted small">Send the invites to finish.</span>}
+        {invitesDone && !status.accessRemoved && <span className="muted small">You can finish now and remove Google access later.</span>}
       </div>
     </>
   )
@@ -278,7 +286,7 @@ export function DoneStep({ ctx }: { ctx: Ctx }) {
         {totals.contacts > 0 && ' Addresses Gmail saved on its own are under Users → Other contacts.'}
         <br />
         {status?.accessRemoved ? `Google access was removed on ${status.accessRemovedAt ? day(status.accessRemovedAt) : finished}.` : 'Google access is still on; Settings will remind you to remove it.'}{' '}
-        {status && `Invites went out to ${plural(status.newMembers.length, 'member')}.`}
+        {status && (status.invitesSent ? `Invites went out to ${plural(status.newMembers.length, 'member')}.` : 'No one needed an invite.')}
       </p>
       <div className="done-links">
         <a className="chip-link" href={`${app}#/mail`}>

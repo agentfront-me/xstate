@@ -1,99 +1,55 @@
 // One DNS record field (a Name or a Value), shared by Settings → Domains, onboarding and the Google migration.
 //
-// Shows the first ~20 characters (CSS, monospace). Click copies the full text. Hovering or focusing it opens a
-// popover with the full text and a Copy button. The popover is portalled with fixed positioning because the record
-// tables scroll or clip their overflow and would cut it off.
+// The text takes the room its column gives it and ends in an ellipsis when it doesn't fit; hovering shows the full
+// text. A copy button sits right after it and always copies the full text. Where a layout already has its own copy
+// button (the onboarding and migration cards), pass `copy={false}` to get just the truncated text.
 
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { copyText } from '../lib/core'
 import { Icon } from './Icon'
 import '../styles/record-cell.css'
-
-const POP_WIDTH = 440
 
 export function RecordCell({
   label,
   text,
   className,
+  copy = true,
   onCopied,
 }: {
-  /** What the field is, e.g. "TXT value". Shown in the popover and read by screen readers. */
+  /** What the field is, e.g. "MX name". Used for the copy button's label and passed to `onCopied`. */
   label: string
   text: string
   className?: string
-  /** Called after each copy attempt, e.g. to show a toast. */
-  onCopied?: (ok: boolean) => void
+  copy?: boolean
+  /** Called after each copy attempt, e.g. to show a toast ("Copied MX name"). */
+  onCopied?: (ok: boolean, label: string) => void
 }) {
-  const ref = useRef<HTMLButtonElement>(null)
-  const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
   const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
 
-  const show = () => {
-    clearTimeout(hideTimer.current)
-    const r = ref.current?.getBoundingClientRect()
-    if (r) setAt({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - POP_WIDTH - 8)) })
-  }
-  const hide = () => {
-    clearTimeout(hideTimer.current)
-    hideTimer.current = setTimeout(() => setAt(null), 120)
-  }
-  const copy = async () => {
+  const textEl = (
+    <span className={`record-cell-text${!copy && className ? ` ${className}` : ''}`} title={text}>
+      {text}
+    </span>
+  )
+  if (!copy) return textEl
+
+  const onCopy = async () => {
     const ok = await copyText(text)
-    onCopied?.(ok)
+    onCopied?.(ok, label)
     if (!ok) return
     setCopied(true)
-    clearTimeout(copiedTimer.current)
-    copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => setCopied(false), 1500)
   }
 
-  useEffect(() => {
-    if (!at) return
-    const close = () => setAt(null)
-    window.addEventListener('scroll', close, true)
-    window.addEventListener('resize', close)
-    return () => {
-      window.removeEventListener('scroll', close, true)
-      window.removeEventListener('resize', close)
-    }
-  }, [at])
-  useEffect(
-    () => () => {
-      clearTimeout(hideTimer.current)
-      clearTimeout(copiedTimer.current)
-    },
-    [],
-  )
-
   return (
-    <>
-      <button
-        ref={ref}
-        type="button"
-        className={`record-cell${className ? ` ${className}` : ''}`}
-        aria-label={`Copy ${label}: ${text}`}
-        onClick={() => void copy()}
-        onMouseEnter={show}
-        onMouseLeave={hide}
-        onFocus={show}
-        onBlur={hide}
-      >
-        {text}
+    <span className={`record-cell${className ? ` ${className}` : ''}`}>
+      {textEl}
+      <button type="button" className="record-cell-copy" aria-label={copied ? 'Copied' : `Copy ${label}`} title={copied ? 'Copied' : `Copy ${label}`} onClick={() => void onCopy()}>
+        <Icon name={copied ? 'check' : 'copy'} size={13} />
       </button>
-      {at &&
-        createPortal(
-          <div className="record-pop" role="tooltip" style={{ ...at, maxWidth: POP_WIDTH }} onMouseEnter={show} onMouseLeave={hide}>
-            <span className="record-pop-label">{label}</span>
-            <code>{text}</code>
-            <button type="button" className="record-pop-copy" onClick={() => void copy()}>
-              <Icon name={copied ? 'check' : 'copy'} size={13} />
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>,
-          document.body,
-        )}
-    </>
+    </span>
   )
 }
