@@ -8,6 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Icon, type IconName } from '../components/Icon'
+import { RecordCell } from '../components/RecordCell'
 import { toast } from '../components/Toast'
 import { addDomain, createMailbox, isDemo, isOrgAdmin, mailboxesOf, removeDomain, useAccount, verifyDomain, type Account } from '../lib/account'
 import {
@@ -688,14 +689,17 @@ function DomainsSection({ account }: { account: Account }) {
   const client = useQueryClient()
   const [name, setName] = useState('')
   const [error, setError] = useState('')
-  const [adding, setAdding] = useState(false)
+  // The domain being added, while the request runs (empty when idle).
+  const [adding, setAdding] = useState('')
 
   const add = async (event: FormEvent) => {
     event.preventDefault()
+    if (adding) return
     const value = name.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
     if (!DOMAIN_RE.test(value)) return setError('Enter a domain like example.com.')
     if (account.domains.some((d) => d.name === value)) return setError(`${value} is already added.`)
-    setAdding(true)
+    setError('')
+    setAdding(value)
     try {
       await addDomain(client, value)
       toast(`${value} added. Add its DNS records to verify it.`)
@@ -704,7 +708,7 @@ function DomainsSection({ account }: { account: Account }) {
     } catch (e) {
       setError(errorMessage(e))
     } finally {
-      setAdding(false)
+      setAdding('')
     }
   }
 
@@ -738,12 +742,17 @@ function DomainsSection({ account }: { account: Account }) {
           autoComplete="off"
           spellCheck={false}
           value={name}
+          readOnly={!!adding}
           onChange={(e) => setName(e.target.value)}
         />
-        <button className="btn btn-primary" style={{ height: 34 }} disabled={adding} aria-busy={adding}>
-          Add domain
+        <button className="btn btn-primary" style={{ height: 34 }} disabled={!!adding} aria-busy={!!adding}>
+          {adding && <span className="spinner spinner-on-primary" />}
+          {adding ? 'Adding…' : 'Add domain'}
         </button>
       </form>
+      <div className="form-status" role="status" aria-live="polite">
+        {adding && `Adding ${adding}: creating its mail domain and signing keys. This takes a few seconds.`}
+      </div>
       <div className="form-error" role="alert">
         {error}
       </div>
@@ -792,7 +801,8 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
     }
   }
 
-  const copy = async (value: string) => toast((await copyText(value)) ? 'Copied' : "Couldn't copy")
+  const copy = async (value: string) => copied(await copyText(value))
+  const copied = (ok: boolean) => toast(ok ? 'Copied' : "Couldn't copy")
 
   return (
     <>
@@ -859,8 +869,12 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
               {records.map((r, i) => (
                 <tr key={i} className={r.found ? 'found' : undefined}>
                   <td>{r.type}</td>
-                  <td>{r.name}</td>
-                  <td>{r.value}</td>
+                  <td>
+                    <RecordCell label={`${r.type} name`} text={r.name} onCopied={copied} />
+                  </td>
+                  <td>
+                    <RecordCell label={`${r.type} value`} text={r.value} onCopied={copied} />
+                  </td>
                   <td>
                     {r.found ? (
                       <Icon name="check" size={13} />
@@ -881,7 +895,7 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
   )
 }
 
-const KIND_LABEL: Record<MailboxKind, string> = { personal: 'Personal', shared: 'Shared', agent: 'Agent' }
+const KIND_LABEL: Record<MailboxKind, string> ={ personal: 'Personal', shared: 'Shared', agent: 'Agent' }
 const KIND_HINT: Record<MailboxKind, string> = {
   personal: "One person's inbox. They open it in xstate or any mail app.",
   shared: 'For addresses like hello@ or support@. No password: you get access now, and can give it to others later.',

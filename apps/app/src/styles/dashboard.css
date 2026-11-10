@@ -318,6 +318,11 @@ button.sender { width: 100%; text-align: left; }
 .records .found { color: var(--text-muted); }
 .records button { color: var(--text-dim); vertical-align: middle; }
 .records button:hover { color: var(--text-hi); }
+/* Add-domain progress line under the form. */
+.form-status { font-size: 12px; color: var(--text-muted); }
+.form-status:empty { display: none; }
+.spinner.spinner-on-primary { border-color: color-mix(in srgb, var(--on-primary) 35%, transparent); border-top-color: var(--on-primary); }
+.btn[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }
 
 /* Mailboxes under a domain in Settings → Domains, and the Add mailbox form. */
 .domain-mailboxes { display: flex; flex-direction: column; gap: 2px; padding: 0 14px 12px 50px; }

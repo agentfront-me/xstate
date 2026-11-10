@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
+import { RecordCell } from '../components/RecordCell'
 import { api, ApiError, copyText } from '../lib/core'
 import type { DnsRecord, Domain } from '../lib/types'
 import { clearConnectReturn, connectReturn, domainName, POLL_MS, progress, setProgress, type Data } from './state'
@@ -19,9 +20,7 @@ function RecordField({ label, text }: { label: string; text: string }) {
   return (
     <div className="rec-field">
       <span className="rec-label">{label}</span>
-      <button type="button" className="cell" title={`Copy ${lower}`} onClick={() => void copy(text)}>
-        {text}
-      </button>
+      <RecordCell label={label} text={text} className="cell" />
       <button type="button" className="copy" aria-label={`Copy ${lower}`} onClick={() => void copy(text)}>
         <Icon name={copied ? 'check' : 'copy'} size={14} />
       </button>

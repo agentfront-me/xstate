@@ -3,6 +3,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { Icon } from '../../components/Icon'
+import { RecordCell } from '../../components/RecordCell'
 import { ApiError, errorMessage, isEmail } from '../../lib/core'
 import { Help, usePending, type Message } from '../../onboarding/ui'
 import * as migrationApi from '../api'
@@ -149,7 +150,7 @@ export function ConnectStep({ ctx }: { ctx: Ctx }) {
                       </div>
                       <div className="scope">
                         <span className="scope-name">Value</span>
-                        <code title={r.value}>{r.value}</code>
+                        <RecordCell label="TXT value" text={r.value} />
                         <CopyButton text={r.value} label="Copy TXT value" />
                       </div>
                     </div>

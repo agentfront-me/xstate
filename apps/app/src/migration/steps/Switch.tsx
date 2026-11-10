@@ -4,6 +4,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { Icon } from '../../components/Icon'
+import { RecordCell } from '../../components/RecordCell'
 import { errorMessage } from '../../lib/core'
 import * as migrationApi from '../api'
 import type { Ctx } from '../main'
@@ -90,12 +91,8 @@ export function SwitchStep({ ctx }: { ctx: Ctx }) {
             {status.records.map((r) => (
               <div className="tr" role="row" key={`${r.type}-${r.name}`}>
                 <span className="mono hi">{r.type}</span>
-                <span className="mono ellipsis" title={r.name}>
-                  {r.name}
-                </span>
-                <code className="ellipsis" title={r.value}>
-                  {r.value}
-                </code>
+                <RecordCell label={`${r.type} name`} text={r.name} />
+                <RecordCell label={`${r.type} value`} text={r.value} className="hi" />
                 <span className={`small ${r.found ? 'hi' : 'muted'}`}>
                   {r.found ? (
                     <>
