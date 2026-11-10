@@ -91,6 +91,40 @@
       "port": 8791
     },
     {
+      "name": "api-agents",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8798",
+        "--inspector-port",
+        "9238",
+        "--var",
+        "APP_ORIGINS:http://localhost:8799"
+      ],
+      "port": 8798
+    },
+    {
+      "name": "app-agents",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8798/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8799",
+        "--strictPort"
+      ],
+      "port": 8799
+    },
+    {
       "name": "api-migration",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

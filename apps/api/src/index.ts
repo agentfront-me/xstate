@@ -65,6 +65,9 @@ app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpo
 export { AudienceStore } from './audience/store'
 // One per Google Workspace import: what was copied, and what was skipped. See migration/store.ts.
 export { MigrationStore } from './migration/store'
+// One per agent: its runs and their steps (agents/store.ts). Each run is an AgentRun workflow (agents/run.ts).
+export { AgentStore } from './agents/store'
+export { AgentRun } from './agents/run'
 
 export default {
   fetch: app.fetch,

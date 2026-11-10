@@ -14,7 +14,7 @@ const ALL_PAGES: Page[] = [
 ]
 
 /** Pages with their own route; the rest go to the "coming soon" page. */
-export const ROUTED = new Set(['mail', 'storage', 'users', 'calendar'])
+export const ROUTED = new Set(['mail', 'storage', 'users', 'agents', 'calendar'])
 
 /** The pages in the rail. */
 export const PAGES: Page[] = ALL_PAGES.filter((p) => !p.hidden)

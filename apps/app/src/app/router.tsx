@@ -3,6 +3,7 @@
 
 import { createHashHistory, createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
+import { type AgentsSearch, AgentsPage } from '../agents/AgentsPage'
 import { MailPage } from '../mail/MailPage'
 import { SettingsPage } from '../settings/SettingsPage'
 import { type StorageSearch, type StorageView, StoragePage } from '../storage/StoragePage'
@@ -73,6 +74,19 @@ const calendar = createRoute({
   },
 })
 
+const agents = createRoute({
+  getParentRoute: () => root,
+  path: '/agents',
+  validateSearch: (raw: Record<string, unknown>): AgentsSearch => ({
+    agent: str(raw.agent),
+    tab: raw.tab === 'runs' || raw.tab === 'setup' || raw.tab === 'settings' ? raw.tab : undefined,
+    run: str(raw.run),
+  }),
+  component: function Agents() {
+    return <AgentsPage search={agents.useSearch()} />
+  },
+})
+
 const settingsIndex = createRoute({
   getParentRoute: () => root,
   path: '/settings',
@@ -88,7 +102,7 @@ const settings = createRoute({
   },
 })
 
-/** Agents: not built yet. Anything else, including hidden pages, goes to Email. */
+/** Pages not built yet show "coming soon". Anything else, including hidden pages, goes to Email. */
 const soon = createRoute({
   getParentRoute: () => root,
   path: '/$page',
@@ -100,7 +114,7 @@ const soon = createRoute({
 })
 
 export const router = createRouter({
-  routeTree: root.addChildren([index, mail, storage, users, calendar, settingsIndex, settings, soon]),
+  routeTree: root.addChildren([index, mail, storage, users, agents, calendar, settingsIndex, settings, soon]),
   history: createHashHistory(),
   defaultNotFoundComponent: () => <Navigate to="/mail" replace />,
 })

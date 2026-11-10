@@ -1,7 +1,8 @@
-// Settings: Account, Members, Domains, Migration, Secrets, API keys, Billing, Integrations.
+// Settings: Account, Members, Domains, Migration, AI providers, Secrets, API keys, Billing, Integrations.
 //
-// Account, Members, Domains and API keys use the API when signed in. Secrets, Billing and Integrations have no API
-// yet: they show sample data (./store), marked "Sample data" in the header when signed in, and changes stay in memory.
+// Account, Members, Domains, AI providers, Secrets and API keys use the API when signed in (AI providers and Secrets
+// live in ./AiSections). Billing and Integrations have no API yet: they show sample data (./store), marked "Sample
+// data" in the header when signed in, and changes stay in memory.
 // In demo mode (?demo) every section uses sample data.
 
 import { useQueryClient } from '@tanstack/react-query'
@@ -32,10 +33,11 @@ import { ConfirmDialog } from '../storage/dialogs'
 import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
 import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
+import { AiProvidersSection, LiveSecretsSection } from './AiSections'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'migration' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
+  id: 'account' | 'members' | 'domains' | 'migration' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'integrations'
   label: string
   icon: IconName
   sample?: boolean
@@ -67,7 +69,13 @@ const SECTIONS: Section[] = [
     },
   },
   { id: 'migration', label: 'Migration', icon: 'download', sub: (a) => migrationSub(a) },
-  { id: 'secrets', label: 'Secrets', icon: 'key-round', sample: true, sub: (_a, d) => `${d.secrets.length} organization secrets` },
+  { id: 'ai-providers', label: 'AI providers', icon: 'sparkles', sub: () => 'Your Anthropic and OpenAI keys' },
+  {
+    id: 'secrets',
+    label: 'Secrets',
+    icon: 'key-round',
+    sub: (a, d) => (a.mode === 'live' ? 'Values for connector headers' : `${d.secrets.length} organization secrets`),
+  },
   { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
   { id: 'billing', label: 'Billing', icon: 'credit-card', sample: true, sub: (_a, d) => `${d.billing.plan} · renews ${d.billing.renewsShort}` },
   {
@@ -129,7 +137,8 @@ export function SettingsPage({ section }: { section: string }) {
             {s.id === 'members' && (account.mode === 'live' ? <LiveMembers account={account} /> : <MembersSection account={account} data={data} />)}
             {s.id === 'domains' && <DomainsSection account={account} />}
             {s.id === 'migration' && <MigrationSection account={account} />}
-            {s.id === 'secrets' && <SecretsSection data={data} />}
+            {s.id === 'ai-providers' && <AiProvidersSection account={account} />}
+            {s.id === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
             {s.id === 'api-keys' && <ApiKeysSection account={account} />}
             {s.id === 'billing' && <BillingSection data={data} />}
             {s.id === 'integrations' && <IntegrationsSection data={data} />}

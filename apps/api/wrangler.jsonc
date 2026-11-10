@@ -41,7 +41,10 @@
     "SYSTEM_MAIL_FROM": "no-reply@xstate.com",
     // Google Workspace imports (migration/): "live" uses GOOGLE_MIGRATION_KEY (the service account's JSON key, a
     // secret; not in "required" so deploys work before it exists), "fake" a made-up Workspace for local dev.
-    "GOOGLE_MODE": "live"
+    "GOOGLE_MODE": "live",
+    // Agents (agents/model.ts): an AI Gateway on this account that model calls go through, for per-request logs,
+    // token counts and rate limits. Empty: calls go straight to the provider.
+    "AI_GATEWAY_ID": ""
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -91,16 +94,21 @@
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
   // Google Workspace imports: one MigrationStore per organization, the map of what was copied (migration/store.ts).
+  // Agents: one AgentStore per agent (its runs, run steps and usage; agents/store.ts).
   "durable_objects": {
     "bindings": [
       { "name": "AUDIENCE", "class_name": "AudienceStore" },
-      { "name": "MIGRATION_STORE", "class_name": "MigrationStore" }
+      { "name": "MIGRATION_STORE", "class_name": "MigrationStore" },
+      { "name": "AGENT_STORE", "class_name": "AgentStore" }
     ]
   },
   "migrations": [
     { "tag": "v1-audience", "new_sqlite_classes": ["AudienceStore"] },
-    { "tag": "v2-migration-store", "new_sqlite_classes": ["MigrationStore"] }
+    { "tag": "v2-migration-store", "new_sqlite_classes": ["MigrationStore"] },
+    { "tag": "v3-agent-store", "new_sqlite_classes": ["AgentStore"] }
   ],
+  // One agent run = one AgentRun instance (agents/run.ts): every model and tool call is a durable step.
+  "workflows": [{ "name": "xstate-agent-run", "binding": "AGENT_RUN", "class_name": "AgentRun" }],
   // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.

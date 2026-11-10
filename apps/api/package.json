@@ -14,6 +14,11 @@
     "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts'"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.99",
+    "@ai-sdk/openai": "4.0.111",
+    "@modelcontextprotocol/client": "2.4.0",
+    "agents": "0.33.0",
+    "ai": "7.0.166",
     "aws4fetch": "^1.0.20",
     "hono": "^4.13.9",
     "zod": "^4.6.7"
