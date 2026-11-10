@@ -8,6 +8,8 @@ import * as secrets from '../agents/secrets'
 import * as approvals from '../agents/approvals'
 import * as connectors from '../agents/connectors'
 import * as agents from '../agents/service'
+import * as designer from '../agents/designer'
+import { TEMPLATES } from '../agents/templates'
 import * as triggers from '../agents/triggers'
 import { defineOperation } from './define'
 
@@ -99,8 +101,8 @@ export const agentsList = defineOperation({
 
 export const agentsCreate = defineOperation({
   name: 'agents_create',
-  description: 'Create an agent. It starts paused, with an empty draft.',
-  input: z.object({ organizationId: id, name: z.string().max(200), description: z.string().max(1000).optional() }),
+  description: 'Create an agent. It starts paused and unpublished, with the given draft config or an empty one.',
+  input: z.object({ organizationId: id, name: z.string().max(200), description: z.string().max(1000).optional(), config: z.unknown().optional() }),
   http: { method: 'POST', path: '/agents/orgs/:organizationId', status: 201 },
   mcp: false,
   run: async ({ env, actor }, { organizationId, ...input }) => ({ agent: await agents.create(env, actor, organizationId, input) }),
@@ -237,6 +239,31 @@ export const agentsStats = defineOperation({
   http: { method: 'GET', path: '/agents/:agentId/stats' },
   mcp: false,
   run: ({ env, actor }, input) => agents.stats(env, actor, input.agentId),
+})
+
+export const agentsTemplates = defineOperation({
+  name: 'agents_templates',
+  description: 'Ready-made starting points for a new agent: instructions, tools, approvals and a suggested trigger.',
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/agents/orgs/:organizationId/templates' },
+  mcp: false,
+  run: async ({ env, actor }, input) => {
+    await agents.tools(env, actor, input.organizationId) // same access check as the editor's catalogs
+    return { templates: TEMPLATES }
+  },
+})
+
+export const agentsDraft = defineOperation({
+  name: 'agents_draft',
+  description: "Draft a new agent's setup from a description, with the organization's AI key. Nothing is saved.",
+  input: z.object({
+    organizationId: id,
+    prompt: z.string().trim().min(10, 'Describe what the agent should do in a sentence or two').max(4000),
+    model: z.object({ provider, id: z.string().min(1).max(100) }),
+  }),
+  http: { method: 'POST', path: '/agents/orgs/:organizationId/draft' },
+  mcp: false,
+  run: async ({ env, actor }, { organizationId, ...input }) => ({ draft: await designer.draft(env, actor, organizationId, input) }),
 })
 
 export const agentsHealth = defineOperation({
@@ -497,6 +524,8 @@ export const agentOperations = [
   approvalsDecide,
   approvalsPending,
   agentsHealth,
+  agentsTemplates,
+  agentsDraft,
   agentsRetryFailed,
   memoryList,
   memoryAdd,

@@ -35,6 +35,7 @@ import { ApprovalsTab } from './Approvals'
 import { ConnectorTools } from './ConnectorTools'
 import { IssueBanner, issueShort } from './Health'
 import { MemoryTab } from './Memory'
+import { NewAgentDialog, pendingTest } from './NewAgent'
 import { TriggersSection } from './Triggers'
 
 export type AgentsTab = 'runs' | 'setup' | 'approvals' | 'memory' | 'settings'
@@ -60,21 +61,37 @@ export function AgentsPage({ search }: { search: AgentsSearch }) {
 // ---------------------------------------------------------------------------------------------------------------
 // Page
 
+/** True on phone-sized windows, where the page shows the agent list or one agent, not both (like mail). */
+function useNarrow(): boolean {
+  const query = '(max-width: 680px)'
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const m = window.matchMedia(query)
+    const on = () => setNarrow(m.matches)
+    m.addEventListener('change', on)
+    return () => m.removeEventListener('change', on)
+  }, [])
+  return narrow
+}
+
 function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boolean; mailboxes: Mailbox[]; search: AgentsSearch }) {
   const navigate = useNavigate()
+  const narrow = useNarrow()
   const go = (next: AgentsSearch, replace = false) => void navigate({ to: '/agents', search: next, replace })
   const [creating, setCreating] = useState(false)
   // Refreshed every 30 s so "needs approval" badges appear without a reload.
   const list = useQuery({ queryKey: agentKeys.list(orgId), queryFn: () => agentsApi.list(orgId), refetchInterval: 30_000 })
   const agents = list.data?.agents ?? []
-  const selected = agents.find((a) => a.id === search.agent) ?? agents[0]
+  // On a phone the list is the starting point, so nothing is picked for you.
+  const selected = agents.find((a) => a.id === search.agent) ?? (narrow ? undefined : agents[0])
 
   useEffect(() => {
-    if (!search.agent && agents[0]) go({ agent: agents[0].id, tab: search.tab }, true)
-  }, [search.agent, agents[0]?.id])
+    if (!narrow && !search.agent && agents[0]) go({ agent: agents[0].id, tab: search.tab }, true)
+  }, [search.agent, agents[0]?.id, narrow])
 
   return (
-    <div className="storage agents">
+    // With no agents yet, the main pane (its "New agent" invitation) is what a phone shows.
+    <div className={`storage agents${selected || (list.data && !agents.length) ? ' has-open' : ''}`}>
       <aside className="s-side" aria-label="Agents">
         <div className="col-head drag s-side-head">
           <span className="title grow">Agents</span>
@@ -96,9 +113,10 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
       </aside>
       <main className="a-main">
         {selected ? (
-          <AgentView key={selected.id} orgId={orgId} admin={admin} mailboxes={mailboxes} summary={selected} search={search} go={go} />
+          <AgentView key={selected.id} orgId={orgId} admin={admin} mailboxes={mailboxes} summary={selected} search={search} go={go} onBack={narrow ? () => go({}) : undefined} />
         ) : (
-          !list.isLoading && (
+          list.data &&
+          !agents.length && (
             <div className="empty">
               <Icon name="bot" size={28} />
               <strong>No agents yet</strong>
@@ -108,7 +126,7 @@ function Agents({ orgId, admin, mailboxes, search }: { orgId: string; admin: boo
           )
         )}
       </main>
-      {creating && <NewAgentDialog orgId={orgId} onClose={() => setCreating(false)} onCreated={(id) => go({ agent: id, tab: 'setup' })} />}
+      {creating && <NewAgentDialog orgId={orgId} mailboxes={mailboxes} onClose={() => setCreating(false)} onCreated={(id) => go({ agent: id, tab: 'setup' })} />}
     </div>
   )
 }
@@ -130,6 +148,7 @@ function AgentView({
   summary,
   search,
   go,
+  onBack,
 }: {
   orgId: string
   admin: boolean
@@ -137,10 +156,19 @@ function AgentView({
   summary: AgentSummary
   search: AgentsSearch
   go: (s: AgentsSearch, replace?: boolean) => void
+  /** Phones: back to the agent list. */
+  onBack?: () => void
 }) {
   const client = useQueryClient()
   const query = useQuery({ queryKey: agentKeys.one(summary.id), queryFn: () => agentsApi.get(summary.id) })
-  const [testing, setTesting] = useState(false)
+  // A just-created agent opens with the Test drawer on its sample task (New agent → test and activate).
+  const [testing, setTesting] = useState(() => pendingTest.agentId === summary.id)
+  const [testTask] = useState(() => {
+    if (pendingTest.agentId !== summary.id) return ''
+    const task = 'task' in pendingTest ? pendingTest.task : ''
+    Object.assign(pendingTest, { agentId: null, task: undefined })
+    return task
+  })
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [dialog, setDialog] = useState<'versions' | 'delete' | 'rename' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -197,6 +225,9 @@ function AgentView({
   return (
     <>
       <header className="a-head drag">
+        {onBack && (
+          <button className="ghost a-back" aria-label="All agents" onClick={onBack}><Icon name="chevron-left" size={18} /></button>
+        )}
         <span className="s-tile a-avatar lg">{initials(agent.name)}</span>
         <div className="a-title">
           <div className="a-name ellipsis">{agent.name}</div>
@@ -204,7 +235,7 @@ function AgentView({
         </div>
         <div className="a-actions">
           {draftDirty && <span className="a-pill" title="The draft differs from what's published">Draft changes</span>}
-          <button className="btn" onClick={() => setTesting(true)}><Icon name="flask-conical" size={13} />Test</button>
+          <button className="btn" onClick={() => setTesting(true)}><Icon name="flask-conical" size={13} /><span className="a-btn-label">Test</span></button>
           <button className="btn btn-primary" disabled={busy || !draftDirty} onClick={() => void act('Published', () => agentsApi.publish(agent.id))}>
             {agent.publishedVersion ? 'Publish' : 'Publish v1'}
           </button>
@@ -250,7 +281,20 @@ function AgentView({
           <SettingsTab orgId={orgId} admin={admin} agent={agent} mailboxes={mailboxes} onSaved={setAgent} onDelete={() => setDialog('delete')} />
         )}
       </div>
-      {testing && <TestDrawer agent={agent} onClose={() => setTesting(false)} onOpenRun={(runId) => go({ agent: agent.id, tab: 'runs', run: runId })} />}
+      {testing && (
+        <TestDrawer
+          agent={agent}
+          initialTask={testTask}
+          onClose={() => setTesting(false)}
+          onOpenRun={(runId) => go({ agent: agent.id, tab: 'runs', run: runId })}
+          onActivate={() =>
+            act('Published and turned on', async () => {
+              await agentsApi.publish(agent.id)
+              return agentsApi.setStatus(agent.id, 'active')
+            })
+          }
+        />
+      )}
       {search.run && <RunDrawer agent={agent} runId={search.run} onClose={() => go({ agent: agent.id, tab })} />}
       {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
       {dialog === 'versions' && <VersionsDialog agent={agent} onClose={() => setDialog(null)} onRestored={setAgent} />}
@@ -394,7 +438,7 @@ function Outcome({ run }: { run: Run }) {
   return (
     <span className={`a-outcome ${run.status}`}>
       {run.status === 'running' ? <span className="spinner" /> : <Icon name={s.icon} size={13} />}
-      {s.label}
+      <span className="a-outcome-label">{s.label}</span>
     </span>
   )
 }
@@ -589,9 +633,22 @@ function Drawer({ head, foot, children, onClose }: { head: ReactNode; foot?: Rea
 // ---------------------------------------------------------------------------------------------------------------
 // Test drawer
 
-function TestDrawer({ agent, onClose, onOpenRun }: { agent: Agent; onClose: () => void; onOpenRun: (runId: string) => void }) {
+function TestDrawer({
+  agent,
+  initialTask = '',
+  onClose,
+  onOpenRun,
+  onActivate,
+}: {
+  agent: Agent
+  initialTask?: string
+  onClose: () => void
+  onOpenRun: (runId: string) => void
+  onActivate: () => Promise<void>
+}) {
   const client = useQueryClient()
-  const [task, setTask] = useState('')
+  const [task, setTask] = useState(initialTask)
+  const [activating, setActivating] = useState(false)
   const [draft, setDraft] = useState(true)
   const [dryRun, setDryRun] = useState(true)
   const [runId, setRunId] = useState<string | null>(null)
@@ -631,8 +688,22 @@ function TestDrawer({ agent, onClose, onOpenRun }: { agent: Agent; onClose: () =
       foot={
         runId ? (
           <>
-            {done && <button className="btn" onClick={() => onOpenRun(runId)}>Open in Runs</button>}
             <button className="btn btn-quiet" onClick={() => setRunId(null)}>New test</button>
+            {done && <button className="btn" onClick={() => onOpenRun(runId)}>Open in Runs</button>}
+            {done && (agent.status !== 'active' || agent.hasDraftChanges) && (
+              <button
+                className="btn btn-primary"
+                disabled={activating}
+                title="Publish the draft and turn the agent on, so its triggers start runs"
+                onClick={() => {
+                  setActivating(true)
+                  void onActivate().finally(() => setActivating(false))
+                }}
+              >
+                {activating && <span className="spinner" />}
+                {agent.status === 'active' ? 'Publish' : 'Publish and turn on'}
+              </button>
+            )}
           </>
         ) : (
           <>
@@ -1172,46 +1243,6 @@ function MoneyInput({ value, onChange }: { value: number | null; onChange: (n: n
 
 // ---------------------------------------------------------------------------------------------------------------
 // Dialogs
-
-function NewAgentDialog({ orgId, onClose, onCreated }: { orgId: string; onClose: () => void; onCreated: (id: string) => void }) {
-  const client = useQueryClient()
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return setError('Give the agent a name.')
-    setBusy(true)
-    try {
-      const { agent } = await agentsApi.create(orgId, { name, description })
-      await client.invalidateQueries({ queryKey: agentKeys.list(orgId) })
-      onCreated(agent.id)
-      onClose()
-    } catch (err) {
-      setError(errorMessage(err))
-      setBusy(false)
-    }
-  }
-  return (
-    <Modal title="New agent" onClose={onClose}>
-      <form onSubmit={(e) => void create(e)} noValidate>
-        <div className="modal-body">
-          <label className="field">Name<input className="text-input" autoFocus maxLength={80} placeholder="Support Ninja" value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label className="field">What does it do?<input className="text-input" maxLength={300} placeholder="Answers product, policy and refund questions." value={description} onChange={(e) => setDescription(e.target.value)} /></label>
-          <p className="muted small">The agent starts paused. Write its instructions, pick a model and tools, test it, then publish.</p>
-        </div>
-        <div className="modal-foot">
-          <span className="err" role="alert">{error}</span>
-          <span className="row-gap">
-            <button type="button" className="btn btn-quiet" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>Create agent</button>
-          </span>
-        </div>
-      </form>
-    </Modal>
-  )
-}
 
 function RenameDialog({ agent, onClose, onSaved }: { agent: Agent; onClose: () => void; onSaved: (a: Agent) => void }) {
   const [name, setName] = useState(agent.name)

@@ -28,6 +28,24 @@ export type Issue =
   | { kind: 'spend'; message: string; action: 'raise_cap'; blocking: boolean }
   | { kind: 'failures'; message: string; action: 'retry'; count: number }
 
+/** A trigger to add with a new agent (the person picks the mailbox; the time zone is theirs). */
+export type TriggerDraft =
+  | { kind: 'email'; config: { rules: { from: string; subjectContains: string; hasAttachment: boolean | null }; aiFilter: string } }
+  | { kind: 'schedule'; config: { frequency: 'daily' | 'weekly'; time: string; weekdays?: number[]; task: string } }
+  | { kind: 'webhook'; config: { name: string; template: string } }
+
+/** A new agent's setup, from a template or "describe it". Not saved until created. */
+export type AgentDraft = {
+  template: string | null
+  name: string
+  description: string
+  config: AgentConfig
+  trigger: TriggerDraft | null
+  sampleTask: string
+  todo: string[]
+}
+export type Template = AgentDraft & { id: string; icon: string; blurb: string }
+
 export type Health = { issues: Issue[]; monthSpend: number; cap: number | null; memoryFacts: number }
 export type Fact = { id: string; subject: string; fact: string; sourceRun: string | null; createdAt: string; updatedAt: string }
 
@@ -119,7 +137,10 @@ export const agentKeys = {
 
 export const agentsApi = {
   list: (orgId: string) => api<{ agents: AgentSummary[] }>('GET', `/agents/orgs/${orgId}`),
-  create: (orgId: string, input: { name: string; description?: string }) => api<{ agent: Agent }>('POST', `/agents/orgs/${orgId}`, input),
+  create: (orgId: string, input: { name: string; description?: string; config?: AgentConfig }) => api<{ agent: Agent }>('POST', `/agents/orgs/${orgId}`, input),
+  templates: (orgId: string) => api<{ templates: Template[] }>('GET', `/agents/orgs/${orgId}/templates`),
+  draft: (orgId: string, input: { prompt: string; model: NonNullable<AgentConfig['model']> }) =>
+    api<{ draft: AgentDraft & { cost: number } }>('POST', `/agents/orgs/${orgId}/draft`, input),
   tools: (orgId: string) => api<{ tools: ToolInfo[] }>('GET', `/agents/orgs/${orgId}/tools`),
   models: (orgId: string) => api<{ providers: ModelChoice[] }>('GET', `/agents/orgs/${orgId}/models`),
   get: (id: string) => api<{ agent: Agent }>('GET', `/agents/${id}`),

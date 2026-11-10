@@ -1,8 +1,8 @@
 # Plan: Agents
 
-Status: Phase 0 (spike) done; Phases 1–5 (foundations, triggers, actions and approvals, connectors, spend/memory/
-errors) built 2026-11-10, uncommitted. Migrations 0023–0026 must be applied before the API is deployed. Phase 6 not
-started.
+Status: Phase 0 (spike) done; Phases 1–6 (foundations, triggers, actions and approvals, connectors, spend/memory/
+errors, new agent flow and mobile) built 2026-11-10, uncommitted. Migrations 0023–0026 must be applied before the API
+is deployed.
 
 The design ("xstate App.dc.html", Agents page and Settings → AI providers / Secrets) adds AI agents that customers
 set up in the app, with no code: **triggers** (webhook, schedule, email; events later) start a run, the agent
@@ -473,10 +473,43 @@ config, so they change on publish.
 To ship (with Phases 1–4): apply migrations 0023–0026 remotely, deploy the API and the app. The new runs columns
 and the memory table are created by the agent's store when it wakes.
 
-### 6. New agent flow and mobile
+### 6. New agent flow and mobile (built 2026-11-10, uncommitted)
 
-Templates (Support inbox, Lead qualifier, Invoice processing, Weekly digest), "describe it" → drafted setup,
-test → activate. Mobile agent list, runs, run detail, approvals.
+What's there (no migration):
+
+- **Templates** (`agents/templates.ts`, `agents_templates`): Support inbox, Lead qualifier, Invoice processing and
+  Weekly digest. Each is a full draft: instructions, built-in tools, approvals (sending always asks), memory, a
+  suggested trigger (email with an AI filter and rules, or a weekly schedule), a sample task to test with, and a
+  short "before you turn it on" list (which mailbox, which address, where the policies are).
+- **Describe it** (`agents/designer.ts`, `agents_draft`): one model call with the organization's own key and the
+  model picked in the dialog, forced to answer through a `propose_agent` tool. The answer is checked against the
+  real tool catalog and config limits (unknown tools dropped; approval only on tools that change things), and turned
+  into the same draft shape as a template. It never invents addresses or policies: those go in the to-do list. The
+  cost is shown ("about $0.017"); it isn't counted against any agent, since none exists yet. Nothing is saved.
+- **New agent flow** (`apps/app/src/agents/NewAgent.tsx`): describe it or pick a template (or start blank) → review
+  and edit name, description, instructions, tools, the trigger (on/off), the mailbox, model and memory → "Create and
+  test" creates the agent paused and unpublished (`agents_create` now takes a config; mailbox ids are checked against
+  the organization), adds the trigger (schedule in the person's time zone), and opens the agent with the Test drawer
+  on the sample task → after a test, "Publish and turn on".
+- **Mobile** (phone widths, ≤680px): the agent list or one agent, like mail, with a back button; header actions on
+  their own row; tabs scroll; full-width drawers; the runs table shows time, trigger and an outcome icon; approval
+  cards with the note on its own line and large Reject / Edit / Approve buttons; the new agent dialog in one column.
+  Between 680 and 900px the agent list stays (the shared storage layout hides its side list there). Rail counts
+  (unread mail, approvals) show as a dot when the rail is icons only.
+
+Verified locally with real Claude (Sonnet 5.5): the templates list; a description of a refund agent drafted a
+sensible setup (read tools, `email_send` needing approval, memory on, an email trigger with an AI filter, a sample
+email, a to-do list); in the app: Support inbox template → review → create → the Test drawer opened on the sample
+email → the dry run finished → "Publish and turn on" → active with its email trigger on dev@acme.test; "every weekday
+at 9am…" drafted, after a fix, a Mon–Fri 09:00 schedule that was created in the browser's time zone. At phone size:
+the agent list, an agent, the Runs tab, an approval approved from the phone layout, and the new agent dialog.
+139 API tests and both typechecks pass.
+
+Found while testing: the model drafted "every weekday" as daily, so the prompt now spells out weekly with days 1–5,
+and a daily schedule that comes with specific days is turned into a weekly one.
+
+Not done: one trigger per draft (a request for an email trigger and a weekly summary gets one, and the other is
+noted); connectors aren't offered in drafts or templates yet (add them in Setup).
 
 ### Later
 

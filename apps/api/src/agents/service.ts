@@ -217,7 +217,7 @@ const name = (s: string) => {
 export async function create(env: Env, actor: Actor, organizationId: string, input: { name: string; description?: string; config?: unknown }) {
   await requireManager(env, actor, organizationId)
   const id = crypto.randomUUID()
-  const config = input.config === undefined ? defaultConfig() : agentConfig.parse(input.config)
+  const config = input.config === undefined ? defaultConfig() : await scopedConfig(env, organizationId, agentConfig.parse(input.config))
   await db
     .insertAgent(env.DB, {
       id,

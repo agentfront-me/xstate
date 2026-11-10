@@ -18,6 +18,7 @@
 .a-name { font-size: 16px; color: var(--text-hi); }
 .a-desc { font-size: 12px; color: var(--text-muted); }
 .a-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.a-back { display: none; }
 .a-pill { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--border); font-size: 12px; color: var(--text-toned); white-space: nowrap; }
 .a-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
 .a-tabs { height: 40px; flex-shrink: 0; padding: 0 8px; border-bottom: 1px solid var(--border); }
@@ -244,4 +245,70 @@ button.a-tl-head .icon { color: var(--text-dim); }
   .a-trigger-meta { display: none; }
   .a-banner { padding: 8px 16px; flex-wrap: wrap; }
   .a-search { width: 160px; }
+}
+
+/* New agent: describe it, templates, review */
+.a-new { display: flex; flex-direction: column; gap: 14px; max-height: min(72vh, 680px); overflow: auto; }
+.a-new > * { flex-shrink: 0; }
+.a-new-describe { display: flex; flex-direction: column; gap: 8px; }
+.a-new-describe-foot { display: flex; align-items: center; gap: 8px; }
+.a-new-describe-foot .grow { flex: 1; }
+.a-new-or { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-dim); }
+.a-new-or::before, .a-new-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.a-templates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.a-template { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); text-align: left; }
+.a-template:hover { border-color: var(--border-hi); background: var(--bg-hover); }
+.a-template:focus-visible { outline: 2px solid var(--border-hi); outline-offset: 1px; }
+.a-template-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.a-template-text .name { color: var(--text-hi); font-size: 13px; }
+.a-template-text .sub { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.a-review .a-review-instructions { font-size: 13px; line-height: 1.5; }
+.a-todo ul { margin: 4px 0 0; padding-left: 18px; }
+.a-todo strong { display: block; }
+.a-chip.static { cursor: default; }
+.a-review .a-chips { justify-content: flex-start; max-width: none; }
+.a-chip-tag { margin-left: 6px; font-size: 11px; color: #b45309; }
+:root.dark .a-chip-tag { color: #fbbf24; }
+.a-review-memory { align-self: end; padding-bottom: 8px; }
+
+/* Phones and narrow browser windows (design: mobile agents and approvals). The shared storage layout hides its side
+   list below 900px; agents keep theirs, and below 680px show the list or one agent, like mail. */
+@media (max-width: 900px) {
+  .agents .s-side { display: flex; width: 200px; }
+}
+@media (max-width: 680px) {
+  .agents .s-side { width: 100%; border-right: 0; }
+  .agents.has-open .s-side, .agents:not(.has-open) .a-main { display: none; }
+  .a-item { min-height: 52px; }
+  .a-back { display: inline-flex; margin-left: -8px; }
+  .a-head { padding: 10px 12px; gap: 10px; }
+  .a-head .a-avatar.lg { display: none; }
+  .a-title { min-width: 0; }
+  .a-actions { width: 100%; margin-left: 0; }
+  .a-actions .btn-primary { margin-left: auto; }
+  .a-pill { display: none; }
+  .a-tabs { overflow-x: auto; scrollbar-width: none; }
+  .a-tabs::-webkit-scrollbar { display: none; }
+  .a-tabs button { flex: none; padding: 0 12px; }
+  .a-body { padding: 14px 12px 32px; }
+  .a-drawer { width: 100%; border-left: 0; }
+  .a-filters { flex-wrap: wrap; }
+  .a-search { width: 100%; }
+  .a-banner { padding: 8px 12px; }
+  /* Approvals: big targets, the note on its own line, decisions side by side. */
+  .a-approval { padding: 12px; }
+  .a-approval-head { flex-wrap: wrap; }
+  .a-approval-foot .text-input { min-width: 100%; height: 38px; font-size: 15px; }
+  .a-approval-foot .btn { flex: 1; height: 40px; justify-content: center; }
+  .a-mail-edit .text-input { font-size: 15px; }
+  .card-row.a-field-row { flex-wrap: wrap; }
+  .a-templates { grid-template-columns: 1fr; }
+  .a-new { max-height: calc(100dvh - 150px); }
+  .a-new-describe-foot { flex-wrap: wrap; }
+}
+@container (max-width: 480px) {
+  .a-tr { grid-template-columns: 92px minmax(0, 1fr) 20px; gap: 8px; padding: 0 12px; }
+  .a-tr > :first-child { font-size: 12px; }
+  .a-outcome-label { display: none; }
+  .a-th > :nth-child(3) { visibility: hidden; }
 }
