@@ -6,11 +6,11 @@ import { Bot, Check, ChevronDown, ChevronUp, Globe, HardDrive, Inbox, LogOut, ty
 import { useEffect, useState } from 'react'
 import { Animated, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { queryClient, useAccount } from '@/lib/account'
+import { useAccount } from '@/lib/account'
 import { api } from '@/lib/api'
 import { initial } from '@/lib/format'
 import { setPrefs, usePickedDomain } from '@/lib/prefs'
-import { clearSession } from '@/lib/session'
+import { signOut } from '@/lib/sign-out'
 import type { MailboxFolders } from '@/lib/types'
 import { Avatar } from '@/ui/kit'
 import { c } from '@/ui/theme'
@@ -69,8 +69,7 @@ export function Drawer({ open, section, onClose, onPick }: Props) {
 
   async function logOut() {
     close()
-    await clearSession()
-    queryClient.clear()
+    await signOut()
   }
 
   return (

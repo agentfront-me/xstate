@@ -1,4 +1,5 @@
-// Choices kept on this device: the domain picked in the side menu and the notification switches.
+// Choices kept on this device: the domain picked in the side menu and the notification switches. lib/push.ts sends
+// both to the API, which decides what to notify this phone about.
 
 import * as SecureStore from 'expo-secure-store'
 import { useSyncExternalStore } from 'react'
@@ -17,8 +18,9 @@ function set(next: Prefs) {
   listeners.forEach((fn) => fn())
 }
 
-// Read once at startup. Until it lands the defaults show, which is "All domains" and every switch on.
-void SecureStore.getItemAsync(KEY)
+// Read once at startup. Until it lands the defaults show, which is "All domains" and every switch on; `prefsLoaded`
+// is for code that must not act on the defaults (registering for notifications).
+export const prefsLoaded: Promise<void> = SecureStore.getItemAsync(KEY)
   .then((raw) => {
     const stored = JSON.parse(raw ?? 'null') as Partial<Prefs> | null
     if (stored) set({ domainId: stored.domainId ?? null, notify: { ...prefs.notify, ...stored.notify } })

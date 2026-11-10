@@ -10,7 +10,7 @@ import * as db from '../db/agents'
 import { ApiError } from '../errors'
 import { isAdmin, loadMember } from '../mailserver/access'
 import { parseConfig, type AgentConfig } from './config'
-import { emailManagers } from './notices'
+import { emailManagers, pushManagers } from './notices'
 import { agentContext, publishedConfig } from './service'
 import { toolLabel } from './tools'
 
@@ -95,7 +95,7 @@ export async function expire(env: Env, id: string) {
 }
 
 /**
- * Emails the people who can decide. `reminder`: the call is still waiting after the agent's timeout and the agent
+ * Tells the people who can decide: a notification in the mobile app, and an email unless the agent has those off. `reminder`: the call is still waiting after the agent's timeout and the agent
  * keeps waiting (onTimeout "wait"). Best effort: a failure here never stops the run.
  */
 export async function notify(
@@ -105,9 +105,15 @@ export async function notify(
   config: AgentConfig,
   reminder?: { waitedHours: number; leftHours: number },
 ) {
-  if (!config.approvals.notifyEmail) return
   const what = describe(approval.tool, approval.input)
   const lower = `${what.charAt(0).toLowerCase()}${what.slice(1)}`
+  await pushManagers(env, agentId, {
+    kind: 'approvals',
+    to: config.approvals.approvers,
+    title: (name) => (reminder ? `${name} is still waiting` : `${name} needs your approval`),
+    body: what,
+  }).catch((err) => console.error('approval push failed', err))
+  if (!config.approvals.notifyEmail) return
   await emailManagers(env, agentId, {
     to: config.approvals.approvers,
     subject: (name) => (reminder ? `Still waiting: ${name} needs your approval to ${lower}` : `${name} needs your approval: ${what}`),

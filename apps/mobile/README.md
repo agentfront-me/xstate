@@ -55,3 +55,19 @@ Every profile uses the production API for now, because it is the only one. When 
 - `src/sections` — the four sections of the home screen (Email, Users, Storage, Agents) and the drawer.
 - `src/lib` — the API client, the session (kept in the keychain), types and formatting.
 - `src/ui` — colours and the shared pieces (header, card, row, button, toast).
+
+## Push notifications
+
+New email, agent approvals and agent errors are sent by the API through Expo's push service
+(`apps/api/src/push`). The app registers the phone after sign-in (`src/lib/push.ts`) and sends the Settings
+switches and the picked domain to the API, which decides what to send.
+
+Before they work in a build:
+
+- **API:** create the queue once (`wrangler queues create xstate-push`), apply migration `0028_devices.sql`
+  (`pnpm --filter @xstate/api db:migrate:remote`) and deploy the API.
+- **iOS:** an Apple Developer account. EAS creates the push key on the first device build. Simulators get no token.
+- **Android:** a Firebase project. Put `google-services.json` in this folder, set `android.googleServicesFile` in
+  `app.json`, and upload the FCM V1 service account key with `eas credentials`.
+
+`expo-notifications` is native code, so builds made before it was added need rebuilding.

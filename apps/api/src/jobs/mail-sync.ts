@@ -6,6 +6,7 @@ import * as mailboxesDb from '../db/mailboxes'
 import { syncMailbox } from '../storage/mail-sync'
 import { emptyExpiredTrash } from '../storage/drive'
 import { purgeDeletedFiles } from '../storage/purge'
+import { notifyNewMail } from '../push/new-mail'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -31,6 +32,15 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
       if (agents.fired || agents.skipped) console.log('agent-email-triggers', JSON.stringify({ mailboxId, ...agents }))
     } catch (err) {
       console.error(`agent-email-triggers: mailbox ${mailboxId} failed`, err)
+    }
+    // "New email" on people's phones, also on its own. Not for an import's sync: that mail is old.
+    if (messages.some((m) => m.body.reason !== 'import')) {
+      try {
+        const pushed = await notifyNewMail(env, mailboxId)
+        if (pushed.notified) console.log('new-mail-push', JSON.stringify({ mailboxId, ...pushed }))
+      } catch (err) {
+        console.error(`new-mail-push: mailbox ${mailboxId} failed`, err)
+      }
     }
     try {
       const result = await syncMailbox(env, mailboxId)

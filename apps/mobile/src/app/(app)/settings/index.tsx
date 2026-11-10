@@ -1,4 +1,4 @@
-// Settings: your account, the notification switches, and a read-only look at the workspace (members, domains,
+// Settings: your account, the notification switches (sent to the API by lib/push.ts), and a read-only look at the workspace (members, domains,
 // AI providers). Changes to the workspace are made on desktop.
 
 import { useQuery } from '@tanstack/react-query'
@@ -6,11 +6,12 @@ import Constants from 'expo-constants'
 import { router } from 'expo-router'
 import { AtSign, ChevronRight, type LucideIcon, Sparkles, Users } from 'lucide-react-native'
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { canManage, queryClient, useAccount } from '@/lib/account'
+import { canManage, useAccount } from '@/lib/account'
 import { APP_VARIANT } from '@/lib/api'
 import { initial } from '@/lib/format'
 import { type Notify, setPrefs, usePrefs } from '@/lib/prefs'
-import { clearSession } from '@/lib/session'
+import { usePushStatus } from '@/lib/push'
+import { signOut } from '@/lib/sign-out'
 import { membersQuery, providersQuery, providerState, worstProvider } from '@/sections/workspace'
 import { Avatar, BackButton, Card, Header, Row, Screen, SectionLabel, Toggle } from '@/ui/kit'
 import { c, pad } from '@/ui/theme'
@@ -26,17 +27,13 @@ const role = (r: string) => r.charAt(0).toUpperCase() + r.slice(1)
 export default function SettingsScreen() {
   const { user, org, domains } = useAccount()
   const { notify } = usePrefs()
+  const push = usePushStatus()
   const admin = canManage(org)
   const members = useQuery(membersQuery(org.id))
   const providers = useQuery({ ...providersQuery(org.id), enabled: admin })
 
   const verified = domains.filter((d) => d.status === 'verified').length
   const worst = worstProvider(providers.data)
-
-  async function logOut() {
-    await clearSession()
-    queryClient.clear()
-  }
 
   const platform = Platform.OS === 'ios' ? 'iOS' : 'Android'
   const variant = APP_VARIANT === 'production' ? '' : ` · ${role(APP_VARIANT)}`
@@ -73,7 +70,8 @@ export default function SettingsScreen() {
           ))}
         </Card>
 
-        <Text style={s.note}>{"Notifications aren't sent to this app yet. Your choices are saved for when they are."}</Text>
+        {push === 'denied' ? <Text style={s.note}>{"Notifications are turned off for xstate in your phone's settings."}</Text> : null}
+        {push === 'unavailable' ? <Text style={s.note}>{"This device can't receive notifications."}</Text> : null}
 
         <SectionLabel>Workspace</SectionLabel>
         <Card>
@@ -95,7 +93,7 @@ export default function SettingsScreen() {
           ) : null}
         </Card>
 
-        <Pressable onPress={() => void logOut()} style={({ pressed }) => [s.logOut, pressed && { backgroundColor: c.raised }]}>
+        <Pressable onPress={() => void signOut()} style={({ pressed }) => [s.logOut, pressed && { backgroundColor: c.raised }]}>
           <Text style={{ color: c.danger, fontSize: 16, fontWeight: '500' }}>Log out</Text>
         </Pressable>
         <Text style={s.version}>

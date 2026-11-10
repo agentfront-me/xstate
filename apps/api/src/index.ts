@@ -10,6 +10,7 @@ import { migrationHourly } from './migration/watchdog'
 import { consumeMigration, consumeMigrationDead, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
+import { consumePush, type PushJob } from './push/send'
 import { cors } from 'hono/cors'
 import { requireAuth } from './auth/middleware'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
@@ -81,6 +82,7 @@ export default {
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
+  // PUSH jobs: notifications to the mobile app (push/send.ts).
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
@@ -88,7 +90,9 @@ export default {
         ? consumeMigration(batch as MessageBatch<MigrationJob>, env)
         : batch.queue === 'xstate-migration-dlq'
           ? consumeMigrationDead(batch as MessageBatch<MigrationJob>, env)
-          : consume(batch as MessageBatch<MailSyncJob>, env),
+          : batch.queue === 'xstate-push'
+            ? consumePush(batch as MessageBatch<PushJob>, env)
+            : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>
@@ -110,4 +114,4 @@ export default {
         }),
       ]),
     ),
-} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob>
+} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob>

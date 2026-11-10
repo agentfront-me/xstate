@@ -1,9 +1,12 @@
 // Emails about an agent to the people who look after it: approval requests and reminders, the spend cap. System
-// mail, best effort: a failure is logged and never stops a run.
+// mail, best effort: a failure is logged and never stops a run. The same people get the mobile app's notifications
+// (approval requests, failed runs) through pushManagers.
 
 import * as db from '../db/agents'
 import { paragraph, systemMailHtml } from '../mailserver/mail-html'
 import { sendSystemEmail } from '../mailserver/system-mail'
+import * as devices from '../db/devices'
+import { push } from '../push/send'
 
 type Person = { id: string; email: string; name: string | null }
 
@@ -44,4 +47,20 @@ export async function emailManagers(
     const html = systemMailHtml({ paragraphs: lines.map((l) => paragraph(l)), button: { text: mail.button.text, url }, footnote: mail.footnote })
     await sendSystemEmail(env, { to: { name: p.name, email: p.email }, subject, text, html }).catch((err) => console.error('agent email failed', err))
   }
+}
+
+/**
+ * A notification on the phones of the people who look after an agent; a tap opens the agent in the app.
+ * `throttle`: at most one with that key per that many seconds, so an agent failing on every email isn't a flood.
+ */
+export async function pushManagers(
+  env: Env,
+  agentId: string,
+  note: { kind: 'approvals' | 'agentErrors'; title: (agentName: string) => string; body: string; to?: string[]; throttle?: { key: string; seconds: number } },
+) {
+  const agent = await db.findAgent(env.DB, agentId)
+  if (!agent) return
+  if (note.throttle && !(await devices.throttle(env.DB, `${note.throttle.key}:${agentId}`, note.throttle.seconds))) return
+  const people = await managers(env, agent.organization_id, note.to)
+  await push(env, { kind: note.kind, userIds: people.map((p) => p.id), title: note.title(agent.name), body: note.body, path: `/agent/${agent.id}` })
 }

@@ -14,6 +14,7 @@ import { classify, keyFor, label, reportFailure, reportSuccess } from './provide
 import type { AgentStore, RunStatus } from './store'
 import * as mailboxesDb from '../db/mailboxes'
 import * as approvals from './approvals'
+import { pushManagers } from './notices'
 import { callTool as callConnectorTool, type ConnectorTool } from './connectors'
 import { describeCondition } from './rules'
 import { requiresApproval, runBuiltin, scopeInput, toolDefs, type RunConnector, type ToolDef } from './tools'
@@ -241,6 +242,14 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
     } catch (err) {
       const error = errorText(err)
       await step.do('fail', () => this.agent.finishRun(p.runId, { status: 'failed', error, steps, ...usage }))
+      // The mobile app's "Agent errors": at most one an hour per agent. Not for tests of the draft.
+      if (!p.dryRun) {
+        await step
+          .do('push-failure', async () => {
+            await pushManagers(this.env, p.agentId, { kind: 'agentErrors', title: (name) => `${name} failed`, body: error.slice(0, 160), throttle: { key: 'agent-error', seconds: 3600 } })
+          })
+          .catch((err) => console.error('failure push failed', err))
+      }
       return { status: 'failed', error }
     }
   }

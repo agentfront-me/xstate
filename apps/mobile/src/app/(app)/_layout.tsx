@@ -3,6 +3,7 @@
 import { Redirect, Stack } from 'expo-router'
 import { useAccountQuery } from '@/lib/account'
 import { errorMessage } from '@/lib/api'
+import { usePush } from '@/lib/push'
 import { useSession } from '@/lib/session'
 import { Failed, Loading, Screen } from '@/ui/kit'
 import { c } from '@/ui/theme'
@@ -27,6 +28,21 @@ export default function AppLayout() {
     )
   }
 
+  return (
+    <>
+      <Push />
+      <Screens />
+    </>
+  )
+}
+
+/** Registers the phone for notifications and follows taps on them. Only mounted once signed in. */
+function Push() {
+  usePush()
+  return null
+}
+
+function Screens() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
       <Stack.Screen name="index" />

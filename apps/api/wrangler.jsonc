@@ -64,14 +64,18 @@
   // the consumer copies new attachments to the organization's R2 bucket. Create once: wrangler queues create xstate-mail-sync
   // Storage search (search/): every new file version and attachment is queued for indexing; the consumer extracts
   // its text, embeds it with Workers AI and writes the vectors to Vectorize. Create once: wrangler queues create xstate-search-index
+  // Push notifications to the mobile app (push/send.ts): anything that notifies queues a job here, and the consumer
+  // sends through Expo. Create once: wrangler queues create xstate-push
   "queues": {
     "producers": [
       { "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" },
       { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" },
-      { "binding": "MIGRATION", "queue": "xstate-migration" }
+      { "binding": "MIGRATION", "queue": "xstate-migration" },
+      { "binding": "PUSH", "queue": "xstate-push" }
     ],
     "consumers": [
       { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
+      { "queue": "xstate-push", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 5 },
       // At most 3 at once: a migration queues thousands of emails, and Vectorize refuses writes that arrive too fast.
       { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10, "max_concurrency": 3 },
       // Imports from Google Workspace (migration/jobs.ts). Few at a time, so a big import can't crowd out mail
