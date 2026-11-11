@@ -8,6 +8,7 @@ import { emailManagers } from './notices'
 import { formatUsd } from './prices'
 import type { RunParams } from './run'
 import { fireSchedule } from './triggers'
+import { announce } from '../live/announce'
 
 export type RunStatus = 'running' | 'waiting_for_approval' | 'done' | 'failed' | 'max_steps' | 'skipped'
 
@@ -122,6 +123,7 @@ export class AgentStore extends Agent<Env> {
     if (memory.enabled) await this.keepMemoryFor(memory.retentionDays)
     this.insertRun(runId, params, 'running')
     await this.runWorkflow('AGENT_RUN', { ...params, runId } satisfies RunParams, { id: runId })
+    await announce(this.env, params.organizationId, { type: 'agents', agentId: params.agentId })
     return { runId }
   }
 

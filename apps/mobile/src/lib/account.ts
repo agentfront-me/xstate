@@ -1,6 +1,7 @@
 // The signed-in account: the user, the organization they work in, its domains and its mailboxes. Cached under ['account'].
 
-import { QueryClient, useQuery } from '@tanstack/react-query'
+import { focusManager, QueryClient, useQuery } from '@tanstack/react-query'
+import { AppState } from 'react-native'
 import { api } from './api'
 import type { Domain, Mailbox, Org, User } from './types'
 
@@ -8,6 +9,13 @@ export type Account = { user: User; org: Org; domains: Domain[]; mailboxes: Mail
 
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+})
+
+// Coming back to the app reloads whatever is on screen and older than 30 seconds, quietly. React Query does this on
+// its own in a browser; on a phone it has to be told when the app is active.
+focusManager.setEventListener((setFocused) => {
+  const sub = AppState.addEventListener('change', (state) => setFocused(state === 'active'))
+  return () => sub.remove()
 })
 
 async function loadAccount(): Promise<Account> {

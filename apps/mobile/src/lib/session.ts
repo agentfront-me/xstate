@@ -43,6 +43,13 @@ export async function clearSession(): Promise<void> {
 
 export const currentSession = () => valid(state.session)
 
+/** Called whenever the session is set or cleared (after the stored one is read at start-up). */
+export function onSessionChange(fn: (session: Session | null) => void): () => void {
+  const listener = () => state.ready && fn(state.session)
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 export function useSession(): State {
   return useSyncExternalStore(
     (fn) => {

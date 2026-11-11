@@ -15,6 +15,7 @@ import type { AgentStore, RunStatus } from './store'
 import * as mailboxesDb from '../db/mailboxes'
 import * as approvals from './approvals'
 import { pushManagers } from './notices'
+import { announce } from '../live/announce'
 import { callTool as callConnectorTool, type ConnectorTool } from './connectors'
 import { describeCondition } from './rules'
 import { requiresApproval, runBuiltin, scopeInput, toolDefs, type RunConnector, type ToolDef } from './tools'
@@ -157,6 +158,7 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
         })
         if (!pass) {
           await step.do('finish', () => this.agent.finishRun(p.runId, { status: 'skipped', summary: 'Skipped by the AI filter', steps, ...usage }))
+          await announce(this.env, p.organizationId, { type: 'agents', agentId: p.agentId })
           await step.reportComplete({ status: 'skipped' })
           return { status: 'skipped' }
         }
@@ -237,11 +239,13 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
       }
 
       await step.do('finish', () => this.agent.finishRun(p.runId, { status, summary, steps, ...usage }))
+      await announce(this.env, p.organizationId, { type: 'agents', agentId: p.agentId })
       await step.reportComplete({ status })
       return { status }
     } catch (err) {
       const error = errorText(err)
       await step.do('fail', () => this.agent.finishRun(p.runId, { status: 'failed', error, steps, ...usage }))
+      await announce(this.env, p.organizationId, { type: 'agents', agentId: p.agentId })
       // The mobile app's "Agent errors": at most one an hour per agent. Not for tests of the draft.
       if (!p.dryRun) {
         await step
@@ -276,6 +280,7 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
         waitHours: total,
       })
       await this.agent.setStatus(p.runId, 'waiting_for_approval')
+      await announce(this.env, p.organizationId, { type: 'agents', agentId: p.agentId })
       const rule = def.approval.condition ? describeCondition(def.approval.condition) : null
       await this.agent.logStep(p.runId, 'approval_requested', { approvalId, tool: def.name, label: def.label, input, waitHours: total, rule })
       if (created) await approvals.notify(this.env, p.agentId, { tool, input, reason }, p.config).catch((err) => console.error('approval notify failed', err))
@@ -302,6 +307,7 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
     const decided = decision
     await step.do(`decided-${key}`, async () => {
       await this.agent.setStatus(p.runId, 'running')
+      await announce(this.env, p.organizationId, { type: 'agents', agentId: p.agentId })
       await this.agent.logStep(p.runId, decided.approved ? 'approved' : 'rejected', { approvalId, note: decided.note ?? null, edited: !!decided.inputJson })
     })
     return decided

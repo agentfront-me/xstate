@@ -7,6 +7,8 @@ import { syncMailbox } from '../storage/mail-sync'
 import { emptyExpiredTrash } from '../storage/drive'
 import { purgeDeletedFiles } from '../storage/purge'
 import { notifyNewMail } from '../push/new-mail'
+import { announce } from '../live/announce'
+import * as accessDb from '../db/mailbox-access'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -46,11 +48,26 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
       const result = await syncMailbox(env, mailboxId)
       if (result.stored || result.deleted || result.queued || result.unindexed || result.firstSync) console.log('mail-sync', JSON.stringify(result))
       for (const m of messages) m.ack()
+      // The mobile app reloads this mailbox for whoever has it open. Not for the hourly check, which syncs every mailbox
+      // whether or not anything arrived.
+      if (messages.some((m) => m.body.reason === 'webhook')) await announceMailbox(env, mailboxId)
     } catch (err) {
       console.error(`mail-sync: mailbox ${mailboxId} failed`, err)
       // Retried with backoff; the sync picks up from its last saved state.
       for (const m of messages) m.retry({ delaySeconds: 30 * m.attempts })
     }
+  }
+}
+
+/** Tells the people who can open the mailbox, if any of them has the app open. */
+async function announceMailbox(env: Env, mailboxId: string): Promise<void> {
+  try {
+    const mailbox = await mailboxesDb.find(env.DB, mailboxId)
+    if (!mailbox) return
+    const userIds = (await accessDb.list(env.DB, mailboxId)).map((a) => a.user_id)
+    if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId }, userIds)
+  } catch (err) {
+    console.warn(`live: mailbox ${mailboxId} failed`, err)
   }
 }
 

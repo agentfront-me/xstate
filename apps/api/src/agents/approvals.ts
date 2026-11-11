@@ -13,6 +13,7 @@ import { parseConfig, type AgentConfig } from './config'
 import { emailManagers, pushManagers } from './notices'
 import { agentContext, publishedConfig } from './service'
 import { toolLabel } from './tools'
+import { announce } from '../live/announce'
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
 
@@ -216,6 +217,7 @@ export async function decide(
   if (!update.meta.changes) {
     throw new ApiError('already_decided', row.status === 'expired' ? 'This request ran out of time' : 'Someone already decided this', 409)
   }
+  await announce(env, agent.organization_id, { type: 'agents', agentId: agent.id })
   try {
     await env.AGENT_RUN.get(row.run_id).then((run) =>
       run.sendEvent({ type: `approval-${row.step_key}`, payload: { approved, note, inputJson: edited ?? undefined, by: actor.userId } }),

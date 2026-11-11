@@ -115,13 +115,16 @@
     "bindings": [
       { "name": "AUDIENCE", "class_name": "AudienceStore" },
       { "name": "MIGRATION_STORE", "class_name": "MigrationStore" },
-      { "name": "AGENT_STORE", "class_name": "AgentStore" }
+      { "name": "AGENT_STORE", "class_name": "AgentStore" },
+      // One per organization: the mobile app's live-updates sockets (live/hub.ts).
+      { "name": "LIVE", "class_name": "LiveHub" }
     ]
   },
   "migrations": [
     { "tag": "v1-audience", "new_sqlite_classes": ["AudienceStore"] },
     { "tag": "v2-migration-store", "new_sqlite_classes": ["MigrationStore"] },
-    { "tag": "v3-agent-store", "new_sqlite_classes": ["AgentStore"] }
+    { "tag": "v3-agent-store", "new_sqlite_classes": ["AgentStore"] },
+    { "tag": "v4-live-hub", "new_sqlite_classes": ["LiveHub"] }
   ],
   // One agent run = one AgentRun instance (agents/run.ts): every model and tool call is a durable step.
   "workflows": [{ "name": "xstate-agent-run", "binding": "AGENT_RUN", "class_name": "AgentRun" }],

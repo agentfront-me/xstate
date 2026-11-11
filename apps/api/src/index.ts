@@ -13,6 +13,7 @@ import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
 import { cors } from 'hono/cors'
 import { requireAuth } from './auth/middleware'
+import { handleLive } from './live/route'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
@@ -53,6 +54,8 @@ v1.use('*', (c, next) =>
 v1.post('/email/mailboxes/:mailboxId/uploads', requireAuth, handleAttachmentUpload)
 v1.post('/storage/orgs/:organizationId/files', requireAuth, handleStorageUpload)
 v1.put('/storage/items/:itemId/content', requireAuth, handleStorageSave)
+// The mobile app's live updates: a WebSocket per member while the app is open (live/hub.ts).
+v1.get('/live/orgs/:organizationId', handleLive)
 mountOperations(v1, operations)
 app.route('/v1', v1)
 
@@ -76,6 +79,8 @@ export { MigrationStore } from './migration/store'
 // One per agent: its runs and their steps (agents/store.ts). Each run is an AgentRun workflow (agents/run.ts).
 export { AgentStore } from './agents/store'
 export { AgentRun } from './agents/run'
+// One per organization: live-updates sockets for the apps. See live/hub.ts.
+export { LiveHub } from './live/hub'
 
 export default {
   fetch: app.fetch,

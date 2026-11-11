@@ -3,6 +3,7 @@
 import { Redirect, Stack } from 'expo-router'
 import { useAccountQuery } from '@/lib/account'
 import { errorMessage } from '@/lib/api'
+import { useLive } from '@/lib/live'
 import { usePush } from '@/lib/push'
 import { useSession } from '@/lib/session'
 import { Failed, Loading, Screen } from '@/ui/kit'
@@ -36,9 +37,11 @@ export default function AppLayout() {
   )
 }
 
-/** Registers the phone for notifications and follows taps on them. Only mounted once signed in. */
+/** Registers the phone for notifications and follows taps on them, and keeps the live-updates connection open
+ * while the app is on screen (lib/live.ts). Only mounted once signed in. */
 function Push() {
   usePush()
+  useLive()
   return null
 }
 

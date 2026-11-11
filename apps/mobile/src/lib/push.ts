@@ -8,6 +8,7 @@ import { AndroidImportance } from 'expo-notifications'
 import { type Href, router } from 'expo-router'
 import { useEffect, useSyncExternalStore } from 'react'
 import { Platform } from 'react-native'
+import { queryClient } from './account'
 import { api } from './api'
 import { type Prefs, prefsLoaded, usePrefs } from './prefs'
 
@@ -72,6 +73,12 @@ export function usePushStatus(): PushStatus {
   )
 }
 
+/** A notification means something changed on the server: reload what it's about, whether or not it looks fresh. */
+function reloadFor(kind: unknown) {
+  if (kind === 'email') void queryClient.invalidateQueries({ queryKey: ['mail'] })
+  else if (kind === 'approvals' || kind === 'agentErrors') void queryClient.invalidateQueries({ queryKey: ['agents'] })
+}
+
 let handled: string | null = null
 
 /** Mounted once behind sign-in. */
@@ -81,6 +88,12 @@ export function usePush() {
     void prefsLoaded.then(() => syncDevice(prefs))
   }, [prefs])
 
+  // One arriving while the app is open.
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener((n) => reloadFor(n.request.content.data?.kind))
+    return () => sub.remove()
+  }, [])
+
   // A tap on a notification, including the one that opened the app. `path` is a screen in the app.
   const response = Notifications.useLastNotificationResponse()
   useEffect(() => {
@@ -89,6 +102,7 @@ export function usePush() {
     const path = response.notification.request.content.data?.path
     if (handled === id || typeof path !== 'string' || !path.startsWith('/')) return
     handled = id
+    reloadFor(response.notification.request.content.data?.kind)
     router.push(path as Href)
   }, [response])
 }
