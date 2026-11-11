@@ -111,7 +111,13 @@
     { "name": "SEARCH_RATE", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
     { "name": "COLLECT_RATE", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } },
     // HOOK_RATE: agents' webhook triggers, 60 a minute per trigger (agents/triggers.ts).
-    { "name": "HOOK_RATE", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } }
+    { "name": "HOOK_RATE", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } },
+    // Sign-in and sign-up throttling (auth/throttle.ts). LOGIN_IP_RATE: 10 sign-in attempts a minute per IP, against
+    // password spraying. LOGIN_EMAIL_RATE: 5 a minute per email address, against one account being guessed from many
+    // IPs. REGISTER_IP_RATE: 5 sign-ups a minute per IP. Soft limits: nobody is locked out for longer than a minute.
+    { "name": "LOGIN_IP_RATE", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } },
+    { "name": "LOGIN_EMAIL_RATE", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } },
+    { "name": "REGISTER_IP_RATE", "namespace_id": "1006", "simple": { "limit": 5, "period": 60 } }
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.

@@ -6,8 +6,11 @@ import type { Actor } from '../auth/types'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
-/** `waitUntil` keeps background work (e.g. creating a bucket after sign-up) running after the response is sent. */
-type Background = { waitUntil: (promise: Promise<unknown>) => void }
+/**
+ * `waitUntil` keeps background work (e.g. creating a bucket after sign-up) running after the response is sent.
+ * `ip` is the caller's IP (CF-Connecting-IP) for HTTP calls, used for rate limits; unset for MCP and agent calls.
+ */
+type Background = { waitUntil: (promise: Promise<unknown>) => void; ip?: string }
 
 export type OperationContext<Public extends boolean> = Public extends true
   ? { env: Env; actor?: undefined } & Background

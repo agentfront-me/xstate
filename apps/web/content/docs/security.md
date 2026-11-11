@@ -14,6 +14,9 @@ change how something works. Recent changes are listed [at the end](#changes).
   constant time.
 - **Sign-in doesn't reveal accounts.** A wrong password and an unknown email give the same answer, in about the
   same time.
+- **Sign-in attempts are limited** to 5 a minute for each email address and 10 a minute from each network, so
+  passwords can't be guessed at speed. Sign-ups are limited to 5 a minute from each network. Going over pauses
+  attempts for the rest of the minute; accounts are never locked.
 - **Sessions** are signed tokens that expire after 7 days. In the mobile app they're kept in the device keychain.
 - **Invitations** use a long random link. We store only a hash of it, and it expires after 14 days. Sending a new
   invitation cancels the old link.
@@ -113,5 +116,6 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 11, 2026:** Sign-in and sign-up attempts are rate limited.
 - **November 11, 2026:** File-type rules for attachments: programs, disguised programs and risky archives are
   blocked. Macros and archives that can't be checked get a warning.

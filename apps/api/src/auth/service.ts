@@ -5,10 +5,11 @@ import * as organizationsDb from '../db/organizations'
 import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
 import { hashPassword, verifyPassword } from './password'
+import { loginThrottled, registerThrottled, type ThrottleEnv } from './throttle'
 import { issueToken } from './token'
 import type { Actor, User } from './types'
 
-type AuthEnv = Pick<Env, 'DB' | 'JWT_SECRET'>
+type AuthEnv = Pick<Env, 'DB' | 'JWT_SECRET'> & ThrottleEnv
 
 export type Session = { token: string; expiresAt: string; user: User }
 
@@ -19,7 +20,10 @@ export type Session = { token: string; expiresAt: string; user: User }
 export async function register(
   env: AuthEnv,
   input: { name: string; email: string; password: string; organizationName?: string },
+  ip?: string,
 ): Promise<Session & { organization: { id: string; name: string } }> {
+  const throttled = await registerThrottled(env, ip)
+  if (throttled) throw new ApiError('rate_limited', throttled, 429)
   const email = input.email.trim().toLowerCase()
   const existing = await usersDb.findByEmail(env.DB, email)
   // Invited and never accepted: the account is theirs to claim through the invite link, which proves the email is
@@ -51,8 +55,12 @@ export async function register(
   return { ...(await issueToken(env, userId)), user: { id: userId, email, name: input.name, createdAt: now }, organization }
 }
 
-export async function login(env: AuthEnv, input: { email: string; password: string }): Promise<Session> {
-  const user = await usersDb.findByEmail(env.DB, input.email.trim().toLowerCase())
+/** Throttled per IP and per email before the password is checked (auth/throttle.ts). */
+export async function login(env: AuthEnv, input: { email: string; password: string }, ip?: string): Promise<Session> {
+  const email = input.email.trim().toLowerCase()
+  const throttled = await loginThrottled(env, email, ip)
+  if (throttled) throw new ApiError('rate_limited', throttled, 429)
+  const user = await usersDb.findByEmail(env.DB, email)
   // Hash even when there's no such user, so response time doesn't reveal which emails are registered.
   const ok = await verifyPassword(input.password, user?.password_hash ?? (await dummyHash()))
   if (!user || !user.password_hash || !ok) throw new ApiError('invalid_credentials', 'Email or password is incorrect', 401)

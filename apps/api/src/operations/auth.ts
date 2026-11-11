@@ -18,8 +18,8 @@ export const authRegister = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/register', status: 201 },
   mcp: false,
-  run: async ({ env, waitUntil }, input) => {
-    const session = await register(env, input)
+  run: async ({ env, waitUntil, ip }, input) => {
+    const session = await register(env, input, ip)
     // The organization's R2 bucket. If this fails, the first file stored creates it instead.
     ensureBucketsInBackground(env, waitUntil, [session.organization.id])
     return session
@@ -33,7 +33,7 @@ export const authLogin = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/login' },
   mcp: false,
-  run: ({ env }, input) => login(env, input),
+  run: ({ env, ip }, input) => login(env, input, ip),
 })
 
 export const authMe = defineOperation({
