@@ -54,7 +54,7 @@
     // (apps/scanner): "live" refuses infected files, and every file while the scanner is unreachable; "log" scans
     // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
     // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
-    "SCAN_MODE": "off",
+    "SCAN_MODE": "log",
     "SCAN_URL": "https://mx.xstate.io/_scan"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
