@@ -1,13 +1,18 @@
 // Attachments picked for a reply or a new message: uploaded to the mailbox as soon as they're picked.
 
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { errorMessage } from '../lib/core'
 import type { Upload } from '../lib/types'
 import { formatSize } from './format'
 import type { MailSource } from './source'
 
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+/** All of a message's attachments together, the same limit the API enforces (MAX_ATTACHMENTS_BYTES). */
+const MAX_TOTAL_BYTES = 25 * 1024 * 1024
+const LIMIT_TEXT = 'Attachments can add up to 25 MB per message'
+
+/** What the files that count toward the limit add up to (failed ones are left out: they won't be sent). */
+const totalOf = (files: PickedFile[]) => files.reduce((sum, f) => sum + (f.status === 'error' ? 0 : f.size), 0)
 
 export type PickedFile = {
   id: string
@@ -20,15 +25,21 @@ export type PickedFile = {
 
 /** Picked files and their upload state. Uploads belong to `mailboxId`. */
 export function useUploads(source: MailSource, initial: PickedFile[] = []) {
-  const [files, setFiles] = useState<PickedFile[]>(initial)
+  const [files, setFilesState] = useState<PickedFile[]>(initial)
+  // The latest list, so picking several files at once counts the earlier ones in this batch too.
+  const latest = useRef(files)
+  const setFiles = useCallback((next: (all: PickedFile[]) => PickedFile[]) => {
+    latest.current = next(latest.current)
+    setFilesState(latest.current)
+  }, [])
 
   const add = useCallback(
     (mailboxId: string, list: FileList | File[]) => {
       for (const file of list) {
         const id = `f${Date.now()}${Math.random().toString(36).slice(2, 6)}`
         const set = (patch: Partial<PickedFile>) => setFiles((all) => all.map((f) => (f.id === id ? { ...f, ...patch } : f)))
-        if (file.size > MAX_ATTACHMENT_BYTES) {
-          setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'error', error: 'Over the 25 MB limit' }])
+        if (totalOf(latest.current) + file.size > MAX_TOTAL_BYTES) {
+          setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'error', error: `Too large: ${LIMIT_TEXT.toLowerCase()}` }])
           continue
         }
         setFiles((all) => [...all, { id, name: file.name, size: file.size, status: 'uploading' }])
@@ -38,19 +49,24 @@ export function useUploads(source: MailSource, initial: PickedFile[] = []) {
           .catch((err: unknown) => set({ status: 'error', error: errorMessage(err) }))
       }
     },
-    [source],
+    [source, setFiles],
   )
 
   const remove = (id: string) => setFiles((all) => all.filter((f) => f.id !== id))
-  const clear = () => setFiles([])
+  const clear = () => setFiles(() => [])
   return { files, add, remove, clear }
 }
 
-/** The uploaded attachments, or why the message can't be sent yet. */
-export function readyAttachments(files: PickedFile[]): { attachments: Upload[]; error?: undefined } | { error: string } {
+/**
+ * The uploaded attachments, or why the message can't be sent yet. `alsoBytes` counts files that come along without
+ * being picked here (a forward's original attachments).
+ */
+export function readyAttachments(files: PickedFile[], alsoBytes = 0): { attachments: Upload[]; error?: undefined } | { error: string } {
   if (files.some((f) => f.status === 'uploading')) return { error: 'Wait for attachments to finish uploading.' }
   const failed = files.find((f) => f.status === 'error')
   if (failed) return { error: `${failed.name}: ${failed.error ?? 'Upload failed'}. Remove it to send.` }
+  const total = totalOf(files) + alsoBytes
+  if (total > MAX_TOTAL_BYTES) return { error: `${LIMIT_TEXT}; these add up to ${formatSize(total)}. Remove some to send.` }
   return { attachments: files.flatMap((f) => (f.attachment ? [f.attachment] : [])) }
 }
 

@@ -74,7 +74,7 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
       setError('Add at least one recipient.')
       return toInput.current?.focus()
     }
-    const ready = readyAttachments(uploads.files)
+    const ready = readyAttachments(uploads.files, kept.reduce((sum, a) => sum + a.size, 0))
     if (ready.error !== undefined) return setError(ready.error)
     setSending(true)
     try {

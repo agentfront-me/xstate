@@ -331,7 +331,8 @@ export const emailSend = defineOperation({
     "Send a message from a mailbox's address. Needs write access to the mailbox. For a reply pass inReplyTo (the " +
     "message id) so mail apps keep it in the same conversation; for a forward pass forwardOf, which brings the " +
     'original attachments along. attachments are blobs from the upload endpoint. The sent copy lands in Sent. ' +
-    'At most 50 recipients in total. Outside recipients are capped per mailbox (100 an hour, 500 a day) and per ' +
+    'At most 50 recipients in total, and attachments (forwarded ones included) up to 25 MB in total, else ' +
+    'attachments_too_large. Outside recipients are capped per mailbox (100 an hour, 500 a day) and per ' +
     'organization (400 an hour, 2,000 a day): past that it fails with send_limit_reached (429). A mailbox or ' +
     'organization suspended for bounces or spam complaints gets sending_suspended (403).',
   input: z.object({

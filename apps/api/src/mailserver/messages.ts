@@ -254,15 +254,30 @@ export async function getAttachment(
 const blockedAttachment = (name: string, safety: Safety) =>
   new EmailError('attachment_blocked', `${name}: ${safety.message}`, 403)
 
-/** Reads an attachment already on the mail server far enough to judge it (security/attachments). */
-async function blobSafety(env: EmailEnv, accountId: string, a: { blobId: string; name: string; type: string }): Promise<Safety> {
+/**
+ * Reads an attachment already on the mail server far enough to judge it (security/attachments), and its size from
+ * the same response (null when the server doesn't say, or the name alone already blocks it).
+ */
+async function blobSafety(
+  env: EmailEnv,
+  accountId: string,
+  a: { blobId: string; name: string; type: string },
+): Promise<{ safety: Safety; size: number | null }> {
   const byName = checkName(a.name)
-  if (byName.level === 'blocked') return byName
+  if (byName.level === 'blocked') return { safety: byName, size: null }
   const res = await jmap.downloadBlob(env, accountId, a.blobId, a.name, a.type)
+  const length = Number(res.headers.get('Content-Length'))
   const { safety, body } = await inspectStream(res.body!, a.name)
   await body.cancel().catch(() => null)
-  return safety
+  return { safety, size: Number.isFinite(length) && length > 0 ? length : null }
 }
+
+const attachmentsTooLarge = (total: number) =>
+  new EmailError(
+    'attachments_too_large',
+    `Attachments add up to ${(total / 1024 / 1024).toFixed(1)} MB; a message can carry at most ${MAX_ATTACHMENTS_BYTES / 1024 / 1024} MB. ` +
+      'Remove some, or share large files from Storage as a link.',
+  )
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -363,6 +378,12 @@ function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Mess
 export const MAX_RECIPIENTS = 50
 /** Largest attachment upload, matching what most mail servers accept for a whole message. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+/**
+ * Largest total of a message's attachments (sent or draft), uploads and forwarded ones together. Outgoing mail goes through
+ * Amazon SES, which refuses messages over 40 MB once encoded, and attachments grow by about a third when encoded;
+ * past that the send would be accepted here and bounce later. 25 MB is also what Gmail allows.
+ */
+export const MAX_ATTACHMENTS_BYTES = 25 * 1024 * 1024
 
 export type SendInput = {
   to: Address[]
@@ -474,11 +495,11 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
 
   // Attachments may only come from this account: uploads to it, or the forwarded message's own parts.
   const attachments = [...(input.attachments ?? [])]
-  const forwarded: typeof attachments = []
+  const forwarded: (typeof attachments[number] & { size: number })[] = []
   if (input.forwardOf && original) {
     for (const part of original.attachments) {
       if (part.blobId && !attachments.some((a) => a.blobId === part.blobId)) {
-        forwarded.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type })
+        forwarded.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type, size: part.size })
       }
     }
   }
@@ -488,9 +509,14 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
     Promise.all(attachments.map((a) => blobSafety(env, accountId, a))),
     Promise.all(forwarded.map((a) => blobSafety(env, accountId, a))),
   ])
-  const refused = chosen.findIndex((s) => s.level === 'blocked')
-  if (refused >= 0) throw blockedAttachment(attachments[refused]!.name, chosen[refused]!)
-  attachments.push(...forwarded.filter((_, i) => carried[i]!.level !== 'blocked'))
+  const refused = chosen.findIndex((c) => c.safety.level === 'blocked')
+  if (refused >= 0) throw blockedAttachment(attachments[refused]!.name, chosen[refused]!.safety)
+  const kept = forwarded.filter((_, i) => carried[i]!.safety.level !== 'blocked')
+  attachments.push(...kept)
+
+  // One rule for drafts and sent mail alike: a draft over the limit couldn't be sent anyway.
+  const total = chosen.reduce((sum, c) => sum + (c.size ?? 0), 0) + kept.reduce((sum, a) => sum + a.size, 0)
+  if (total > MAX_ATTACHMENTS_BYTES) throw attachmentsTooLarge(total)
 
   const body: Record<string, unknown> = input.html
     ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, { partId: 'html', type: 'text/html' }] }
