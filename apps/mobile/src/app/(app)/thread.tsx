@@ -9,6 +9,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useAccount } from '@/lib/account'
 import { api, errorMessage } from '@/lib/api'
 import { formatTime, initial, sender } from '@/lib/format'
+import { haptic } from '@/lib/haptics'
 import type { FolderRole, Message } from '@/lib/types'
 import { Avatar, BackButton, Failed, Header, IconButton, Loading, Screen, useToast } from '@/ui/kit'
 import { hasRemoteImages, MessageBody } from '@/ui/MessageBody'
@@ -57,11 +58,13 @@ export default function Thread() {
   function togglePin() {
     const target = messages.find((m) => m.pinned) ?? messages.find((m) => m.id === params.id) ?? last
     if (!target) return
+    haptic.tap()
     update.mutate({ id: target.id, patch: { pinned: !pinned } }, { onSuccess: () => (void thread.refetch(), toast(pinned ? 'Unpinned' : 'Pinned')) })
   }
 
   function archive() {
     if (!last) return
+    haptic.tap()
     update.mutate(
       { id: last.id, patch: { folder: archived ? 'inbox' : 'archive' } },
       { onSuccess: () => (toast(archived ? 'Moved to inbox' : 'Archived'), router.back()) },

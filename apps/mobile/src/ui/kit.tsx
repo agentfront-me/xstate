@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
 import { c, pad } from './theme'
+import { Spinner } from './Spinner'
 
 /** A full screen on the app background, padded for the status bar. */
 export function Screen({ children, bottom = true }: { children: ReactNode; bottom?: boolean }) {
@@ -121,8 +122,13 @@ export const Empty = ({ children }: { children: ReactNode }) => <Text style={s.e
 
 export const Loading = () => (
   <View style={{ paddingVertical: 48, alignItems: 'center' }}>
-    <ActivityIndicator color={c.dim} />
+    <Spinner />
   </View>
+)
+
+/** Under a list while its next page loads. */
+export const LoadingMore = ({ active }: { active: boolean }) => (
+  <View style={{ height: 56, alignItems: 'center', justifyContent: 'center' }}>{active ? <Spinner /> : null}</View>
 )
 
 /** What a list shows when its request failed. */
@@ -144,6 +150,9 @@ export const T = {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Toast: one short line at the bottom, gone after a moment.
+// Turned off for now (asked for 2026-11-11): every toast is dropped. The calls stay where they are, so turning this
+// back on brings them all back as they were.
+const TOASTS = false
 
 const ToastContext = createContext<(message: string) => void>(() => undefined)
 export const useToast = () => useContext(ToastContext)
@@ -156,6 +165,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const show = useCallback(
     (text: string) => {
+      if (!TOASTS) return
       if (timer.current) clearTimeout(timer.current)
       setMessage(text)
       Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }).start()

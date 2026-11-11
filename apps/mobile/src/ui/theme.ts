@@ -17,6 +17,9 @@ export const c = {
   // The inbox's swipe actions, sampled from the prototype: pin is green, archive grey.
   pinSwipe: '#4ddf94',
   archiveSwipe: '#52525b',
+  // The loader ring, from the prototype: a grey track with a blue head.
+  ringTrack: '#3a3a3c',
+  ringHead: '#0a84ff',
   blue: '#3b82f6',
   blueStrong: '#2563eb',
   orange: '#f59e0b',

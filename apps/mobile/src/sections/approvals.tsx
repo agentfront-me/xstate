@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { StyleSheet, Text, View } from 'react-native'
 import { api, errorMessage } from '@/lib/api'
 import { relative } from '@/lib/format'
+import { haptic } from '@/lib/haptics'
 import type { Approval } from '@/lib/types'
 import { Button, useToast } from '@/ui/kit'
 import { c, pad } from '@/ui/theme'
@@ -19,10 +20,15 @@ export function ApprovalCard({ approval: a, agentName, canDecide }: { approval: 
   const decide = useMutation({
     mutationFn: (decision: 'approve' | 'reject') => api('POST', `/agents/${a.agentId}/approvals/${encodeURIComponent(a.id)}`, { decision }),
     onSuccess: (_data, decision) => {
+      if (decision === 'approve') haptic.success()
+      else haptic.warning()
       toast(decision === 'approve' ? 'Approved' : 'Rejected')
       void client.invalidateQueries({ queryKey: ['agents'] })
     },
-    onError: (err) => toast(errorMessage(err)),
+    onError: (err) => {
+      haptic.error()
+      toast(errorMessage(err))
+    },
   })
 
   return (

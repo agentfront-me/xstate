@@ -8,6 +8,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { useAccount } from '@/lib/account'
 import { api, errorMessage } from '@/lib/api'
 import { isEmail } from '@/lib/format'
+import { haptic } from '@/lib/haptics'
 import { Screen, useToast } from '@/ui/kit'
 import { c, pad } from '@/ui/theme'
 
@@ -39,11 +40,15 @@ export default function Compose() {
         ...(params.inReplyTo && { inReplyTo: params.inReplyTo }),
       }),
     onSuccess: () => {
+      haptic.success()
       void client.invalidateQueries({ queryKey: ['mail'] })
       toast('Sent')
       router.back()
     },
-    onError: (err) => setError(errorMessage(err)),
+    onError: (err) => {
+      haptic.error()
+      setError(errorMessage(err))
+    },
   })
 
   function submit() {

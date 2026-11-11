@@ -11,7 +11,7 @@ import { api, errorMessage, qs } from '@/lib/api'
 import { initial, personName } from '@/lib/format'
 import { usePickedDomain } from '@/lib/prefs'
 import type { Overview, Person } from '@/lib/types'
-import { Avatar, Card, Empty, Failed, Header, IconButton, Loading, Row } from '@/ui/kit'
+import { Avatar, Card, Empty, Failed, Header, IconButton, Loading, LoadingMore, Row } from '@/ui/kit'
 import { c, pad } from '@/ui/theme'
 
 const ICONS: Record<string, LucideIcon> = {
@@ -153,6 +153,7 @@ function People({ segment, onBack }: { segment: Picked; onBack: () => void }) {
           )}
           ListEmptyComponent={<Empty>No users found.</Empty>}
           contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+          ListFooterComponent={<LoadingMore active={list.isFetchingNextPage} />}
           onEndReached={() => list.hasNextPage && !list.isFetchingNextPage && void list.fetchNextPage()}
           onEndReachedThreshold={0.5}
           refreshControl={<RefreshControl refreshing={list.isRefetching && !list.isFetchingNextPage} onRefresh={() => void list.refetch()} tintColor={c.dim} />}

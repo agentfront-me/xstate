@@ -3,6 +3,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ChevronRight, Menu } from 'lucide-react-native'
+import { useState } from 'react'
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAccount } from '@/lib/account'
@@ -29,6 +30,13 @@ export function Agents({ onMenu }: { onMenu: () => void }) {
   const client = useQueryClient()
   const toast = useToast()
   const list = useQuery(agentsQuery(org.id))
+  // The spinner is for a pull only; an approval or a switch reloads the list quietly.
+  const [pulling, setPulling] = useState(false)
+  async function refresh() {
+    setPulling(true)
+    await client.invalidateQueries({ queryKey: ['agents'] }).catch(() => {})
+    setPulling(false)
+  }
   const agents = list.data ?? []
 
   // The API lists approvals per agent, so ask only the agents that have some.
@@ -55,7 +63,7 @@ export function Agents({ onMenu }: { onMenu: () => void }) {
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
-          refreshControl={<RefreshControl refreshing={list.isRefetching} onRefresh={() => void client.invalidateQueries({ queryKey: ['agents'] })} tintColor={c.dim} />}
+          refreshControl={<RefreshControl refreshing={pulling} onRefresh={() => void refresh()} tintColor={c.dim} />}
         >
           <SectionLabel>Needs approval</SectionLabel>
           {pending.length ? (

@@ -7,14 +7,17 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-q
 import { router } from 'expo-router'
 import { Archive, ArchiveRestore, Check, ChevronDown, Menu, PenLine, Pin, PinOff, Search, Sparkles, X } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
-import { Modal, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Modal, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native'
+import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAccount } from '@/lib/account'
 import { api, errorMessage, qs } from '@/lib/api'
 import { formatTime, sender } from '@/lib/format'
+import { haptic } from '@/lib/haptics'
 import { usePickedDomain } from '@/lib/prefs'
 import type { FolderRole, FolderView, MessageSummary } from '@/lib/types'
-import { Empty, Failed, IconButton, Loading, useToast } from '@/ui/kit'
+import { Empty, Failed, IconButton, Loading, LoadingMore, useToast } from '@/ui/kit'
+import { PullHeader, PullIndicator, ringColors, usePullToRefresh } from '@/ui/Spinner'
 import { SwipeRow } from '@/ui/SwipeRow'
 import { c, pad } from '@/ui/theme'
 
@@ -26,6 +29,10 @@ const VIEWS: { id: ViewId; label: string; folder: FolderView; empty: string }[] 
   { id: 'archived', label: 'Archived', folder: 'archive', empty: 'Nothing archived.' },
   { id: 'spam', label: 'Spam', folder: 'junk', empty: 'No spam.' },
 ]
+
+// iPhone lists stretch past the top, which the design's pull to refresh follows; Android keeps RefreshControl.
+const ios = Platform.OS === 'ios'
+const PullSectionList = Animated.createAnimatedComponent(SectionList<MessageSummary, { title: string; data: MessageSummary[] }>)
 
 type Page = { messages: MessageSummary[]; nextCursor: string | null }
 type Patch = { pinned?: boolean; folder?: FolderRole }
@@ -89,10 +96,9 @@ export function Email({ onMenu }: { onMenu: () => void }) {
   const messages = (list.data?.pages.flatMap((p) => p.messages) ?? []).filter((m) => !inDomain || inDomain.has(m.mailboxId))
   const sections = group(messages, viewId === 'inbox' && !query)
 
-  function refresh() {
-    void list.refetch()
-    void client.invalidateQueries({ queryKey: ['mail', 'folders'] })
-  }
+  // The ring at the top is for a pull only (ui/Spinner.tsx). A swipe, a sent message or coming back to the list also
+  // reloads it, but quietly: the rows are already right on screen.
+  const pull = usePullToRefresh(() => Promise.all([list.refetch(), client.invalidateQueries({ queryKey: ['mail', 'folders'] })]))
 
   /** A swipe. Moving to another folder moves the whole conversation; a pin is on the one message. */
   const update = useMutation({
@@ -104,15 +110,21 @@ export function Email({ onMenu }: { onMenu: () => void }) {
       void client.invalidateQueries({ queryKey: ['mail', 'folders'] })
     },
     onError: (err) => {
+      haptic.error()
       toast(errorMessage(err))
       setGeneration((g) => g + 1)
     },
   })
-  const pin = (m: MessageSummary) => update.mutate({ m, patch: { pinned: !m.pinned }, done: m.pinned ? 'Unpinned' : 'Pinned' })
-  const archive = (m: MessageSummary) =>
-    viewId === 'archived' || viewId === 'spam'
-      ? update.mutate({ m, patch: { folder: 'inbox' }, done: 'Moved to Inbox' })
-      : update.mutate({ m, patch: { folder: 'archive' }, done: 'Archived' })
+  // The tap comes as the row slides off, before the server answers, so it matches what the finger just did.
+  function pin(m: MessageSummary) {
+    haptic.tap()
+    update.mutate({ m, patch: { pinned: !m.pinned }, done: m.pinned ? 'Unpinned' : 'Pinned' })
+  }
+  function archive(m: MessageSummary) {
+    haptic.tap()
+    if (viewId === 'archived' || viewId === 'spam') update.mutate({ m, patch: { folder: 'inbox' }, done: 'Moved to Inbox' })
+    else update.mutate({ m, patch: { folder: 'archive' }, done: 'Archived' })
+  }
 
   function closeSearch() {
     setSearching(false)
@@ -158,22 +170,33 @@ export function Email({ onMenu }: { onMenu: () => void }) {
       ) : list.isPending ? (
         <Loading />
       ) : list.isError ? (
-        <Failed message={errorMessage(list.error)} onRetry={refresh} />
+        <Failed message={errorMessage(list.error)} onRetry={() => void pull.refresh()} />
       ) : (
-        <SectionList
-          sections={sections}
-          // A row that slid away stays hidden until the list comes back with it changed (or gone), which gives it a new key.
-          keyExtractor={(m) => `${m.mailboxId}:${m.id}:${m.pinned}:${m.folder}:${generation}`}
-          renderItem={({ item }) => <MessageRow message={item} restore={viewId === 'archived' || viewId === 'spam'} onPin={pin} onArchive={archive} />}
-          renderSectionHeader={({ section }) => <Text style={s.group}>{section.title}</Text>}
-          stickySectionHeadersEnabled={false}
-          ListEmptyComponent={<Empty>{query ? `Nothing matches “${query}”.` : view.empty}</Empty>}
-          contentContainerStyle={{ paddingBottom: 16 }}
-          onEndReached={() => list.hasNextPage && !list.isFetchingNextPage && void list.fetchNextPage()}
-          onEndReachedThreshold={0.5}
-          refreshControl={<RefreshControl refreshing={list.isRefetching && !list.isFetchingNextPage} onRefresh={refresh} tintColor={c.muted} />}
-          keyboardDismissMode="on-drag"
-        />
+        <View style={{ flex: 1 }}>
+          {ios ? <PullIndicator pull={pull.pull} refreshing={pull.refreshing} /> : null}
+          <PullSectionList
+            sections={sections}
+            // A row that slid away stays hidden until the list comes back with it changed (or gone), which gives it a new key.
+            keyExtractor={(m) => `${m.mailboxId}:${m.id}:${m.pinned}:${m.folder}:${generation}`}
+            renderItem={({ item }) => <MessageRow message={item} restore={viewId === 'archived' || viewId === 'spam'} onPin={pin} onArchive={archive} />}
+            renderSectionHeader={({ section }) => <Text style={s.group}>{section.title}</Text>}
+            stickySectionHeadersEnabled={false}
+            ListEmptyComponent={<Empty>{query ? `Nothing matches “${query}”.` : view.empty}</Empty>}
+            contentContainerStyle={{ paddingBottom: 16 }}
+            ListHeaderComponent={ios ? <PullHeader refreshing={pull.refreshing} /> : undefined}
+            ListFooterComponent={<LoadingMore active={list.isFetchingNextPage} />}
+            onEndReached={() => list.hasNextPage && !list.isFetchingNextPage && void list.fetchNextPage()}
+            onEndReachedThreshold={0.5}
+            onScroll={ios ? pull.onScroll : undefined}
+            scrollEventThrottle={16}
+            refreshControl={
+              ios ? undefined : (
+                <RefreshControl refreshing={pull.refreshing} onRefresh={() => void pull.refresh()} colors={[ringColors.head]} progressBackgroundColor={c.card} />
+              )
+            }
+            keyboardDismissMode="on-drag"
+          />
+        </View>
       )}
 
       {searching ? null : (
