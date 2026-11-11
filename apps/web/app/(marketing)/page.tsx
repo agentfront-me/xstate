@@ -251,8 +251,8 @@ export default function Home() {
           </div>
           <div>
             <span className="muted">Legal</span>
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
+            <a href="/docs/privacy">Privacy</a>
+            <a href="/docs/terms">Terms</a>
             <a href="/dpa">DPA</a>
             <a href="/security">Security</a>
           </div>

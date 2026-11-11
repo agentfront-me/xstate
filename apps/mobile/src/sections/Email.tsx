@@ -95,6 +95,8 @@ export function Email({ onMenu }: { onMenu: () => void }) {
   const inDomain = boxes && !only ? new Set(boxes.map((m) => m.id)) : null
   const messages = (list.data?.pages.flatMap((p) => p.messages) ?? []).filter((m) => !inDomain || inDomain.has(m.mailboxId))
   const sections = group(messages, viewId === 'inbox' && !query)
+  // The first load of the inbox shows only the spinner: search and writing come once there's a list to work with.
+  const loading = list.isPending && boxes?.length !== 0 && !query
 
   // The ring at the top is for a pull only (ui/Spinner.tsx). A swipe, a sent message or coming back to the list also
   // reloads it, but quietly: the rows are already right on screen.
@@ -144,7 +146,9 @@ export function Email({ onMenu }: { onMenu: () => void }) {
             {picked.domain?.name ?? 'All domains'}
           </Text>
         </Pressable>
-        <IconButton icon={searching ? X : Search} label={searching ? 'Close search' : 'Search'} onPress={() => (searching ? closeSearch() : setSearching(true))} />
+        {loading ? null : (
+          <IconButton icon={searching ? X : Search} label={searching ? 'Close search' : 'Search'} onPress={() => (searching ? closeSearch() : setSearching(true))} />
+        )}
       </View>
 
       {searching ? (
@@ -199,7 +203,7 @@ export function Email({ onMenu }: { onMenu: () => void }) {
         </View>
       )}
 
-      {searching ? null : (
+      {searching || loading ? null : (
         <View style={[s.bottom, { paddingBottom: insets.bottom + 8 }]}>
           {/* No assistant behind it yet: it opens search. */}
           <Pressable onPress={() => setSearching(true)} accessibilityRole="button" style={({ pressed }) => [s.ask, pressed && { backgroundColor: c.border }]}>
