@@ -99,10 +99,16 @@ export async function folders(env: Env, organizationId: string, googleId: string
 // ---------------------------------------------------------------------------------------------------------------
 // The job
 
-let limits: Promise<jmap.MailLimits> | null = null
+let limits: jmap.MailLimits | null = null
 
-/** The mail server's size limits, asked once per isolate. */
-export const mailLimits = (env: Env) => (limits ??= jmap.getLimits(env))
+/**
+ * The mail server's size limits, asked once per isolate. Only the answer is kept, never the request in flight, so
+ * one stalled or failed lookup can't leave later jobs waiting on it (see maxCalls in mailserver/stalwart/mail.ts).
+ */
+export async function mailLimits(env: Env): Promise<jmap.MailLimits> {
+  limits ??= await jmap.getLimits(env)
+  return limits
+}
 
 /** Thrown to stop a user's chain with something an admin has to look at. */
 class UserIssue extends Error {

@@ -5,7 +5,12 @@
 
 import { EmailError } from '../errors'
 import { runGroups, type Group } from './batch'
-import { jmap, MAIL_CAPABILITIES, type StalwartEnv } from './client'
+import { jmap, MAIL_CAPABILITIES, stalwartFetch, type StalwartEnv } from './client'
+
+/** Time limits for the calls that don't go through jmap() (which has its own, in ./client). */
+const SESSION_TIMEOUT_MS = 10_000
+const UPLOAD_TIMEOUT_MS = 300_000
+const DOWNLOAD_HEADERS_TIMEOUT_MS = 30_000
 
 type JmapArgs = Record<string, unknown>
 
@@ -57,17 +62,21 @@ function mail(env: StalwartEnv, calls: [string, JmapArgs][]) {
   return jmap(env, calls, MAIL_CAPABILITIES)
 }
 
-let callBudget: Promise<number> | null = null
+let callBudget: number | null = null
 
-/** The server's maxCallsInRequest, asked once per isolate. Falls back to Stalwart's default, 16, and asks again later. */
-function maxCalls(env: StalwartEnv): Promise<number> {
-  callBudget ??= getLimits(env)
-    .then((l) => l.maxCallsInRequest)
-    .catch(() => {
-      callBudget = null
-      return 16
-    })
-  return callBudget
+/**
+ * The server's maxCallsInRequest, asked once per isolate. Falls back to Stalwart's default, 16, and asks again on the
+ * next request. Only the answer is kept, never the request still in flight: a pending promise shared between
+ * requests means one stalled lookup leaves every later request on the isolate waiting on it (2026-11-11).
+ */
+async function maxCalls(env: StalwartEnv): Promise<number> {
+  if (callBudget !== null) return callBudget
+  try {
+    callBudget = (await getLimits(env)).maxCallsInRequest
+    return callBudget
+  } catch {
+    return 16
+  }
 }
 
 /** Runs the same calls for many accounts, in as few requests as the server's call limit allows. */
@@ -382,14 +391,17 @@ export async function uploadBlob(
 ): Promise<{ blobId: string; type: string; size: number }> {
   const headers = new Headers({ Authorization: `Bearer ${env.STALWART_API_KEY}`, 'Content-Type': contentType })
   if (size !== undefined) headers.set('Content-Length', String(size))
-  const res = await fetch(new URL(`/jmap/upload/${encodeURIComponent(accountId)}/`, env.STALWART_URL), {
-    method: 'POST',
-    headers,
-    body,
-  })
-  if (res.status === 413) throw new EmailError('attachment_too_large', 'That file is larger than the mail server accepts', 400)
-  if (!res.ok) throw new EmailError('mail_server_error', `Upload failed with HTTP ${res.status}`, 502)
-  return (await res.json()) as { blobId: string; type: string; size: number }
+  return stalwartFetch(
+    new URL(`/jmap/upload/${encodeURIComponent(accountId)}/`, env.STALWART_URL),
+    { method: 'POST', headers, body },
+    // The body may be a large file streamed from a slow connection, so this limit is generous.
+    { what: 'upload', ms: UPLOAD_TIMEOUT_MS },
+    async (res) => {
+      if (res.status === 413) throw new EmailError('attachment_too_large', 'That file is larger than the mail server accepts', 400)
+      if (!res.ok) throw new EmailError('mail_server_error', `Upload failed with HTTP ${res.status}`, 502)
+      return (await res.json()) as { blobId: string; type: string; size: number }
+    },
+  )
 }
 
 export type ReplySource = {
@@ -491,7 +503,8 @@ export async function downloadBlob(env: StalwartEnv, accountId: string, blobId: 
     env.STALWART_URL,
   )
   url.searchParams.set('accept', type)
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` } })
+  // Only the wait for the headers is limited: the body streams to the browser and a large file can take a while.
+  const res = await stalwartFetch(url, { headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` } }, { what: 'download', ms: DOWNLOAD_HEADERS_TIMEOUT_MS, untilHeaders: true })
   if (res.status === 404) throw new EmailError('attachment_not_found', 'Attachment not found', 404)
   if (!res.ok || !res.body) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status}`, 502)
   return res
@@ -569,14 +582,19 @@ export type MailLimits = {
 
 /** The server's JMAP limits, from its session object. Imports size their batches and skip messages by these. */
 export async function getLimits(env: StalwartEnv): Promise<MailLimits> {
-  const res = await fetch(new URL('/jmap/session', env.STALWART_URL), {
-    headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` },
-  })
-  if (!res.ok) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status} for its session`, 502)
-  const session = (await res.json()) as {
+  type Session = {
     capabilities: Record<string, Record<string, unknown>>
     accounts?: Record<string, { accountCapabilities?: Record<string, Record<string, unknown>> }>
   }
+  const session = await stalwartFetch(
+    new URL('/jmap/session', env.STALWART_URL),
+    { headers: { Authorization: `Bearer ${env.STALWART_API_KEY}` } },
+    { what: 'session', ms: SESSION_TIMEOUT_MS },
+    async (res) => {
+      if (!res.ok) throw new EmailError('mail_server_error', `Mail server returned HTTP ${res.status} for its session`, 502)
+      return (await res.json()) as Session
+    },
+  )
   const core = session.capabilities['urn:ietf:params:jmap:core'] ?? {}
   const mailCaps = Object.values(session.accounts ?? {})[0]?.accountCapabilities?.['urn:ietf:params:jmap:mail'] ?? {}
   const n = (v: unknown, fallback: number) => (typeof v === 'number' && v > 0 ? v : fallback)
