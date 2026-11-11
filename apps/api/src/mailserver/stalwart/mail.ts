@@ -4,6 +4,7 @@
 // with xstate mailboxes (which are Stalwart accounts).
 
 import { EmailError } from '../errors'
+import { runGroups, type Group } from './batch'
 import { jmap, MAIL_CAPABILITIES, type StalwartEnv } from './client'
 
 type JmapArgs = Record<string, unknown>
@@ -56,17 +57,34 @@ function mail(env: StalwartEnv, calls: [string, JmapArgs][]) {
   return jmap(env, calls, MAIL_CAPABILITIES)
 }
 
-/** Every folder of each account, in one request. */
+let callBudget: Promise<number> | null = null
+
+/** The server's maxCallsInRequest, asked once per isolate. Falls back to Stalwart's default, 16, and asks again later. */
+function maxCalls(env: StalwartEnv): Promise<number> {
+  callBudget ??= getLimits(env)
+    .then((l) => l.maxCallsInRequest)
+    .catch(() => {
+      callBudget = null
+      return 16
+    })
+  return callBudget
+}
+
+/** Runs the same calls for many accounts, in as few requests as the server's call limit allows. */
+async function perAccount(env: StalwartEnv, groups: Group[]): Promise<JmapArgs[][]> {
+  return runGroups(groups, await maxCalls(env), (calls) => mail(env, calls))
+}
+
+/** Every folder of each account. */
 export async function getFolders(env: StalwartEnv, accountIds: string[]): Promise<Map<string, JmapFolder[]>> {
   if (!accountIds.length) return new Map()
-  const results = await mail(
+  const results = await perAccount(
     env,
-    accountIds.map((accountId) => [
-      'Mailbox/get',
-      { accountId, properties: ['name', 'role', 'parentId', 'unreadEmails', 'totalEmails'] },
+    accountIds.map((accountId) => () => [
+      ['Mailbox/get', { accountId, properties: ['name', 'role', 'parentId', 'unreadEmails', 'totalEmails'] }],
     ]),
   )
-  return new Map(accountIds.map((id, i) => [id, (results[i]!.list as JmapFolder[]) ?? []]))
+  return new Map(accountIds.map((id, i) => [id, (results[i]![0]!.list as JmapFolder[]) ?? []]))
 }
 
 /** Creates a top-level folder with a role (e.g. Archive) and returns its id. */
@@ -120,39 +138,35 @@ function emailFilter(q: EmailQuery): JmapArgs {
   return conditions.length === 1 ? conditions[0]! : { operator: 'AND', conditions }
 }
 
-/** Runs one query per account in a single request and returns each account's newest matching messages. */
+/** Runs one query per account (batched under the server's call limit) and returns each account's newest matching messages. */
 export async function queryEmails(
   env: StalwartEnv,
   queries: { accountId: string; query: EmailQuery }[],
 ): Promise<Map<string, JmapEmailSummary[]>> {
   if (!queries.length) return new Map()
-  const calls: [string, JmapArgs][] = []
-  queries.forEach(({ accountId, query }, i) => {
-    // collapseThreads (unless turned off): one result per conversation, its newest message that matches the filter.
-    calls.push([
-      'Email/query',
-      {
-        accountId,
-        filter: emailFilter(query),
-        sort: [{ property: 'receivedAt', isAscending: false }],
-        collapseThreads: query.collapseThreads ?? true,
-        limit: query.limit,
-      },
-    ])
-    calls.push([
-      'Email/get',
-      { accountId, '#ids': { resultOf: `c${i * 3}`, name: 'Email/query', path: '/ids' }, properties: SUMMARY },
-    ])
-    calls.push([
-      'Thread/get',
-      { accountId, '#ids': { resultOf: `c${i * 3 + 1}`, name: 'Email/get', path: '/list/*/threadId' } },
-    ])
-  })
-  const results = await mail(env, calls)
+  const results = await perAccount(
+    env,
+    queries.map(({ accountId, query }) => (base) => [
+      // collapseThreads (unless turned off): one result per conversation, its newest message that matches the filter.
+      [
+        'Email/query',
+        {
+          accountId,
+          filter: emailFilter(query),
+          sort: [{ property: 'receivedAt', isAscending: false }],
+          collapseThreads: query.collapseThreads ?? true,
+          limit: query.limit,
+        },
+      ],
+      ['Email/get', { accountId, '#ids': { resultOf: `c${base}`, name: 'Email/query', path: '/ids' }, properties: SUMMARY }],
+      ['Thread/get', { accountId, '#ids': { resultOf: `c${base + 1}`, name: 'Email/get', path: '/list/*/threadId' } }],
+    ]),
+  )
   return new Map(
     queries.map(({ accountId }, i) => {
-      const threads = new Map(((results[i * 3 + 2]!.list as JmapThread[]) ?? []).map((t) => [t.id, t.emailIds.length]))
-      const emails = ((results[i * 3 + 1]!.list as JmapEmailSummary[]) ?? []).map((e) => ({
+      const [, got, threadList] = results[i]!
+      const threads = new Map(((threadList!.list as JmapThread[]) ?? []).map((t) => [t.id, t.emailIds.length]))
+      const emails = ((got!.list as JmapEmailSummary[]) ?? []).map((e) => ({
         ...e,
         threadSize: threads.get(e.threadId) ?? 1,
       }))
@@ -239,8 +253,8 @@ export async function updateThreadOf(
 /** The current Email state string of each account. It changes whenever any message in the account changes. */
 export async function getEmailStates(env: StalwartEnv, accountIds: string[]): Promise<Map<string, string>> {
   if (!accountIds.length) return new Map()
-  const results = await mail(env, accountIds.map((accountId) => ['Email/get', { accountId, ids: [] }]))
-  return new Map(accountIds.map((id, i) => [id, String(results[i]!.state ?? '')]))
+  const results = await perAccount(env, accountIds.map((accountId) => () => [['Email/get', { accountId, ids: [] }]]))
+  return new Map(accountIds.map((id, i) => [id, String(results[i]![0]!.state ?? '')]))
 }
 
 export type EmailChanges = {
