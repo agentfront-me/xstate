@@ -123,6 +123,14 @@ export class MigrationStore extends DurableObject<Env> {
     return out
   }
 
+  /**
+   * How many of an owner's items carry unfinished attempts: left by jobs that died. More than none means the next
+   * run copies them one at a time or skips them, so running again gets further (jobs.ts consumeMigrationDead).
+   */
+  pendingAttempts(kind: string, owner: string): number {
+    return this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM attempts WHERE kind = ? AND owner = ? AND n > 0', kind, owner).toArray()[0]?.n ?? 0
+  }
+
   /** Counts an attempt on each id (`by` 1), or takes one back (`by` -1) when a job stops without dying. */
   attempt(kind: string, owner: string, ids: string[], by: 1 | -1): void {
     for (const id of ids) {

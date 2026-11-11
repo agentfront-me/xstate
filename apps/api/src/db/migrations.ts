@@ -80,6 +80,8 @@ export type MigrationUserRow = {
   mail_updated_at: string | null
   /** Messages a second, smoothed over recent pages (mail.ts saveProgress). */
   mail_rate: number | null
+  /** Times the mail copy was started again from the dead-letter queue (jobs.ts consumeMigrationDead). */
+  mail_revivals: number
   contacts_state: 'copying' | 'done' | 'attention' | null
   contacts_total: number | null
   contacts_done: number

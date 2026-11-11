@@ -622,7 +622,7 @@ export async function fixUser(env: MigrationEnv, actor: Actor, organizationId: s
   await env.DB.prepare(
     `UPDATE migration_users SET
        mail_state = CASE WHEN mail_state <> 'attention' THEN mail_state WHEN history_id IS NULL THEN NULL ELSE 'copying' END,
-       mail_issue = NULL, mail_note = CASE WHEN mail_state = 'attention' THEN NULL ELSE mail_note END,
+       mail_issue = NULL, mail_note = CASE WHEN mail_state = 'attention' THEN NULL ELSE mail_note END, mail_revivals = 0,
        contacts_state = CASE WHEN contacts_state = 'attention' THEN (CASE WHEN contacts_cursor IS NULL THEN NULL ELSE 'copying' END) ELSE contacts_state END,
        contacts_note = CASE WHEN contacts_state = 'attention' THEN NULL ELSE contacts_note END,
        drive_state = CASE WHEN drive_state = 'attention' THEN (CASE WHEN drive_cursor IS NULL THEN NULL ELSE 'copying' END) ELSE drive_state END,

@@ -29,6 +29,7 @@ import { copyDrivePage, driveFinalPage, type DriveFinalJob, type DriveJob } from
 import { finishIfDone, mailFinalPage, type MailFinalJob } from './final'
 import { copyMailPage, type MailJob } from './mail'
 import { existingAddresses, type StoredDomain, type StoredDrive, type StoredGroup } from './service'
+import { migrationStore } from './store'
 import { notifyIfCopied } from './watchdog'
 
 export type MigrationJob =
@@ -95,13 +96,19 @@ export async function consumeMigration(batch: MessageBatch<MigrationJob>, env: E
 /**
  * Jobs that used up their retries without our code seeing an error: the Worker was killed (out of memory or CPU)
  * each time. Marked as needing attention like any job that keeps failing, unless a newer chain has taken over the
- * part since (a resume or the watchdog), in which case it's left to that chain.
+ * part since (a resume or the watchdog), in which case it's left to that chain. A mail job that died on messages
+ * gets a fresh run instead (reviveMail), as long as that run will get further.
  */
 export async function consumeMigrationDead(batch: MessageBatch<MigrationJob>, env: Env): Promise<void> {
   for (const message of batch.messages) {
     const job = message.body
     try {
       if (await superseded(env, job)) {
+        message.ack()
+        continue
+      }
+      if (job.kind === 'mail' && (await reviveMail(env, job))) {
+        console.warn(`migration mail ${job.migrationId}: dead-lettered after ${message.attempts} attempts while skipping messages that kill the job; started again`)
         message.ack()
         continue
       }
@@ -113,6 +120,32 @@ export async function consumeMigrationDead(batch: MessageBatch<MigrationJob>, en
       message.retry({ delaySeconds: 60 })
     }
   }
+}
+
+/** Fresh runs a person's mail copy gets from the dead-letter queue before it needs attention. */
+const MAX_MAIL_REVIVALS = 10
+
+/**
+ * Each death on a message leaves attempt counts in the MigrationStore, and the next run copies those messages one at
+ * a time and skips the ones that killed it alone (mail.ts). A page with several such messages needs more runs than
+ * the queue's retries, so the job lands here while it's still getting past them. When the store shows counts left by
+ * deaths, queue the same job again (same chain and claim, so its claims carry on), up to MAX_MAIL_REVIVALS times.
+ * A death no message is to blame for leaves no counts, and needs attention as before.
+ */
+async function reviveMail(env: Env, job: MailJob): Promise<boolean> {
+  const m = await migrationsDb.find(env.DB, job.migrationId)
+  if (!m || m.status === 'cancelled' || m.paused_at || m.access_lost_at) return false
+  const u = await migrationsDb.findUser(env.DB, job.migrationId, job.googleId)
+  if (!u || u.mail_state !== 'copying' || u.mail_revivals >= MAX_MAIL_REVIVALS) return false
+  if (!(await migrationStore(env, m.organization_id).pendingAttempts('message', job.googleId))) return false
+  const claimed = await env.DB.prepare(
+    "UPDATE migration_users SET mail_revivals = mail_revivals + 1 WHERE migration_id = ? AND google_id = ? AND mail_chain = ? AND mail_state = 'copying' AND mail_revivals < ?",
+  )
+    .bind(job.migrationId, job.googleId, job.chain, MAX_MAIL_REVIVALS)
+    .run()
+  if (!claimed.meta.changes) return false
+  await enqueueMigrationJobs(env, [job])
+  return true
 }
 
 /** Whether a newer chain now copies the part this job was for. */
