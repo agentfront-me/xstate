@@ -1,6 +1,8 @@
-// The side menu: the account, the domain switcher, the four sections, Settings and Log out.
+// The side menu: the account, the domain switcher, the four sections, Settings and Log out, and the app's version
+// under them (tap to copy the details).
 
 import { useQuery } from '@tanstack/react-query'
+import * as Clipboard from 'expo-clipboard'
 import { router } from 'expo-router'
 import { Bot, Check, ChevronDown, ChevronUp, Globe, HardDrive, Inbox, LogOut, type LucideIcon, Settings, Users } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
@@ -9,9 +11,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAccount } from '@/lib/account'
 import { api } from '@/lib/api'
 import { initial } from '@/lib/format'
+import { haptic } from '@/lib/haptics'
 import { setPrefs, usePickedDomain } from '@/lib/prefs'
 import { signOut } from '@/lib/sign-out'
 import type { MailboxFolders } from '@/lib/types'
+import { versionDetails, versionLabel } from '@/lib/version'
 import { Avatar } from '@/ui/kit'
 import { c } from '@/ui/theme'
 
@@ -150,9 +154,34 @@ export function Drawer({ open, section, onClose, onPick }: Props) {
             <LogOut color={c.muted} size={20} strokeWidth={1.75} />
             <Text style={[s.itemText, { color: c.soft }]}>Log out</Text>
           </Pressable>
+          <Version />
         </View>
       </Animated.View>
     </View>
+  )
+}
+
+/** The version line. A tap copies the details (no toast: the line itself says "Copied" for a moment). */
+function Version() {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  async function copy() {
+    await Clipboard.setStringAsync(versionDetails())
+    haptic.tap()
+    setCopied(true)
+  }
+
+  return (
+    <Pressable onPress={() => void copy()} accessibilityRole="button" accessibilityHint="Copies the version details" hitSlop={6} style={s.version}>
+      <Text numberOfLines={1} style={s.versionText}>
+        {copied ? 'Copied' : versionLabel}
+      </Text>
+    </Pressable>
   )
 }
 
@@ -169,5 +198,7 @@ const s = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', gap: 12, height: 46, paddingHorizontal: 12, borderRadius: 10 },
   itemText: { color: c.text, fontSize: 17, flex: 1 },
   badge: { color: c.dim, fontSize: 13 },
+  version: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4 },
+  versionText: { color: c.faint, fontSize: 13 },
   bottom: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, paddingTop: 8, gap: 2 },
 })

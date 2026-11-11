@@ -45,8 +45,10 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
 
 export const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'Something went wrong. Try again.')
 
-export const qs = (params: Record<string, string | number | boolean | undefined>) => {
+// Empty values are left out, null included: a list saved on the phone (lib/cache.ts) comes back with its first
+// page's "no cursor" as null, since JSON has no undefined.
+export const qs = (params: Record<string, string | number | boolean | null | undefined>) => {
   const parts: string[] = []
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== false) parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
   return parts.length ? `?${parts.join('&')}` : ''
 }
