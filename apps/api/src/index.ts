@@ -47,6 +47,8 @@ v1.use('*', (c, next) =>
     origin: (origin) => (c.env.APP_ORIGINS.split(',').includes(origin) ? origin : null),
     allowHeaders: ['Authorization', 'Content-Type'],
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    // Attachment downloads say why a file needs care (security/attachments).
+    exposeHeaders: ['X-Attachment-Warning'],
     maxAge: 600,
   })(c, next),
 )

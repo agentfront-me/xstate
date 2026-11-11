@@ -1,0 +1,24 @@
+# /etc/systemd/system/xstate-scanner.service
+# xstate's scan service (apps/scanner): checks mail and files with ClamAV and the file-type rules.
+[Unit]
+Description=xstate scan service
+After=network.target clamd@scan.service
+Wants=clamd@scan.service
+
+[Service]
+# SCAN_SECRET=… (shared with Stalwart's hook and the API), CLAMD=/run/clamd.scan/clamd.sock, SCAN_ENFORCE=false|true
+EnvironmentFile=/etc/xstate-scanner.env
+ExecStart=/usr/bin/node /opt/xstate-scanner/scanner.mjs
+Restart=always
+RestartSec=2
+User=xstate-scanner
+# Reads clamd's socket, which belongs to the virusgroup group.
+SupplementaryGroups=virusgroup
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=600M
+
+[Install]
+WantedBy=multi-user.target

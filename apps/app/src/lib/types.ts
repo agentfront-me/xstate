@@ -43,7 +43,22 @@ export type MessageSummary = {
   threadSize: number
 }
 
-export type Attachment = { blobId: string; name: string; type: string; size: number; inline: boolean; cid: string | null }
+/**
+ * The API's file-type verdict on an attachment (api/src/security/attachments.ts). Blocked files can't be downloaded
+ * or sent; warnings (macros, archives that couldn't be checked) are shown before downloading.
+ */
+export type Safety = { level: 'ok' | 'warn' | 'blocked'; code?: string; message?: string }
+
+export type Attachment = {
+  blobId: string
+  name: string
+  type: string
+  size: number
+  inline: boolean
+  cid: string | null
+  /** By name only; the download checks the bytes too. Missing in the demo data. */
+  safety?: Safety
+}
 
 /** A reply an agent suggested (demo only for now). */
 export type Draft = { agent: string; from: string; body: string }
@@ -58,4 +73,4 @@ export type Message = MessageSummary & {
 }
 
 /** An attachment uploaded for a message about to be sent. */
-export type Upload = { blobId: string; name: string; type: string; size?: number }
+export type Upload = { blobId: string; name: string; type: string; size?: number; safety?: Safety }

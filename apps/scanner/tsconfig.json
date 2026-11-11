@@ -1,0 +1,6 @@
+{
+  "extends": "@xstate/tsconfig/base.json",
+  // Runs under Node on the mail server, not on Workers. The file-type rules are shared with the API.
+  "compilerOptions": { "types": ["node"], "lib": ["ES2023", "DOM"], "allowImportingTsExtensions": true },
+  "include": ["src", "../api/src/security/attachments.ts"]
+}

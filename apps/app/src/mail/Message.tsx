@@ -234,12 +234,35 @@ function HtmlBody({ message, source, showImages }: { message: Message; source: M
   )
 }
 
+/** What the file-type rules' warnings mean, for files whose bytes (not their name) turned up a warning. */
+const WARNINGS: Record<string, string> = {
+  macros: 'It contains macros, which can run code. Only open it if you trust the sender, and don’t enable macros.',
+  encrypted_archive: 'It’s password-protected, so xstate couldn’t check what’s inside. Only open it if you trust the sender.',
+  unchecked_archive: 'xstate couldn’t look inside this archive. Only open it if you trust the sender.',
+}
+
+const confirmWarning = (name: string, message: string) => window.confirm(`${name}\n\n${message}\n\nDownload it anyway?`)
+
 function DownloadButton({ message, attachment: a, source }: { message: Message; attachment: Attachment; source: MailSource }) {
   const [busy, setBusy] = useState(false)
+  const safety = a.safety
+  if (safety?.level === 'blocked') {
+    return (
+      <span className="attachment is-blocked" title={safety.message}>
+        <Icon name="shield-alert" size={14} />
+        <span className="ellipsis">{a.name}</span>
+        <span className="muted small">Blocked</span>
+      </span>
+    )
+  }
   const download = async () => {
+    // Warned by name (say, a macro spreadsheet): ask first. Warnings found in the bytes are asked about below.
+    if (safety?.level === 'warn' && !confirmWarning(a.name, safety.message ?? '')) return
     setBusy(true)
     try {
-      const url = URL.createObjectURL(await source.attachment(message, a))
+      const { blob, warning } = await source.download(message, a)
+      if (warning && safety?.level !== 'warn' && !confirmWarning(a.name, WARNINGS[warning] ?? WARNINGS.unchecked_archive!)) return
+      const url = URL.createObjectURL(blob)
       const link = Object.assign(document.createElement('a'), { href: url, download: a.name })
       document.body.append(link)
       link.click()
@@ -252,8 +275,13 @@ function DownloadButton({ message, attachment: a, source }: { message: Message; 
     }
   }
   return (
-    <button className="attachment" onClick={() => void download()} title={`Download ${a.name}`} aria-busy={busy || undefined}>
-      <Icon name="paperclip" size={14} />
+    <button
+      className={`attachment${safety?.level === 'warn' ? ' is-warn' : ''}`}
+      onClick={() => void download()}
+      title={safety?.level === 'warn' ? safety.message : `Download ${a.name}`}
+      aria-busy={busy || undefined}
+    >
+      <Icon name={safety?.level === 'warn' ? 'shield-alert' : 'paperclip'} size={14} />
       <span className="ellipsis">{a.name}</span>
       <span className="muted small">{formatSize(a.size)}</span>
       <Icon name="download" size={14} />

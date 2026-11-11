@@ -27,9 +27,11 @@ export type FileRow = {
   deleted_at: string | null
   /** 1 once an admin has kept the file out of search (search/). */
   search_excluded: number
+  /** Mail attachments: the file-type verdict from the sync ('ok', 'warn:<code>', 'blocked:<code>'), see security/. */
+  safety: string | null
 }
 
-export type NewFile = Omit<FileRow, 'status' | 'deleted_at' | 'sha256' | 'item_id' | 'version' | 'search_excluded'> & {
+export type NewFile = Omit<FileRow, 'status' | 'deleted_at' | 'sha256' | 'item_id' | 'version' | 'search_excluded' | 'safety'> & {
   status?: FileStatus
   sha256?: string | null
   item_id?: string | null
@@ -67,6 +69,19 @@ export function insert(db: D1Database, f: NewFile): D1PreparedStatement {
       f.created_by,
       f.created_at,
     )
+}
+
+/** Records the file-type verdict of a copied attachment. */
+export function setSafety(db: D1Database, id: string, safety: string): D1PreparedStatement {
+  return db.prepare('UPDATE files SET safety = ? WHERE id = ?').bind(safety, id)
+}
+
+/**
+ * A claimed attachment the file-type rules blocked: nothing goes to R2, and the row stays (as deleted) so the next
+ * sync leaves the part alone. The purge removes the row later.
+ */
+export function markBlocked(db: D1Database, id: string, safety: string, now: string): D1PreparedStatement {
+  return db.prepare("UPDATE files SET status = 'deleted', deleted_at = ?, safety = ? WHERE id = ?").bind(now, safety, id)
 }
 
 /** The row for one attachment part of a message, if it was recorded before. */

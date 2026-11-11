@@ -59,8 +59,16 @@ export function FileChips({ files, onRemove }: { files: PickedFile[]; onRemove: 
   return (
     <div className="attachments files">
       {files.map((f) => (
-        <span key={f.id} className={`attachment${f.status === 'error' ? ' is-error' : ''}`} title={f.error ?? f.name}>
-          {f.status === 'uploading' ? <span className="spinner" /> : <Icon name={f.status === 'error' ? 'circle-alert' : 'paperclip'} size={14} />}
+        <span
+          key={f.id}
+          className={`attachment${f.status === 'error' ? ' is-error' : warned(f) ? ' is-warn' : ''}`}
+          title={f.error ?? (warned(f) ? f.attachment?.safety?.message : f.name)}
+        >
+          {f.status === 'uploading' ? (
+            <span className="spinner" />
+          ) : (
+            <Icon name={f.status === 'error' ? 'circle-alert' : warned(f) ? 'shield-alert' : 'paperclip'} size={14} />
+          )}
           <span className="ellipsis">{f.name}</span>
           <span className="muted small">{f.status === 'error' ? (f.error ?? 'Upload failed') : formatSize(f.size)}</span>
           <button type="button" className="x-btn" onClick={() => onRemove(f.id)} aria-label={`Remove ${f.name}`}>
@@ -71,3 +79,6 @@ export function FileChips({ files, onRemove }: { files: PickedFile[]; onRemove: 
     </div>
   )
 }
+
+/** Uploaded, with a warning from the file-type rules (macros, an archive that couldn't be checked). */
+const warned = (f: PickedFile) => f.attachment?.safety?.level === 'warn'

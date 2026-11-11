@@ -138,9 +138,18 @@ export default function Thread() {
                       .map((a) => (
                         <View key={a.blobId} style={s.attachment}>
                           <Paperclip color={c.muted} size={14} strokeWidth={1.75} />
-                          <Text numberOfLines={1} style={{ color: c.soft, fontSize: 14, flexShrink: 1 }}>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              color: a.safety?.level === 'blocked' ? c.muted : c.soft,
+                              fontSize: 14,
+                              flexShrink: 1,
+                              textDecorationLine: a.safety?.level === 'blocked' ? 'line-through' : 'none',
+                            }}
+                          >
                             {a.name}
                           </Text>
+                          {a.safety?.level === 'blocked' ? <Text style={{ color: c.muted, fontSize: 12 }}>Blocked</Text> : null}
                         </View>
                       ))}
                   </View>

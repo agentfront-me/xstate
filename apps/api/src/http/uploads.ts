@@ -13,6 +13,7 @@ export async function handleAttachmentUpload(c: Context<AppEnv>): Promise<Respon
   const name = (c.req.query('name') ?? 'attachment').slice(0, 255) || 'attachment'
   const contentType = c.req.header('Content-Type') || 'application/octet-stream'
   const size = Number(c.req.header('Content-Length') ?? NaN)
-  const blob = await uploadAttachment(c.env, c.get('actor'), c.req.param('mailboxId') ?? '', body, { contentType, size })
-  return c.json({ attachment: { blobId: blob.blobId, name, type: contentType, size: blob.size } }, 201)
+  const blob = await uploadAttachment(c.env, c.get('actor'), c.req.param('mailboxId') ?? '', body, { name, contentType, size })
+  // `safety`: a warning (macros, a password-protected archive…) for the composer to show. Blocked files fail above.
+  return c.json({ attachment: { blobId: blob.blobId, name, type: contentType, size: blob.size, safety: blob.safety } }, 201)
 }

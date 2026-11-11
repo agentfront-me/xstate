@@ -7,6 +7,7 @@ xstate gives you business email on a domain you own, plus storage, data and site
 AI agents such as Claude, Claude Code, Codex and Cursor work with it under permissions you choose.
 
 - [Quickstart](./quickstart.md): connect a domain and get a working inbox.
+- [Security](./security.md): how xstate protects accounts, email, attachments, files and agents.
 
 ## For agents
 

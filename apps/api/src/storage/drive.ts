@@ -20,6 +20,9 @@ import { hashing } from './chunks'
 import { copyObject, deleteObject, getObject, presign, putLargeObject, putObject } from './r2'
 import { atLeast, canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, type Reader, type Role } from './roles'
 import { extractText, textKind } from '../search/extract'
+import { decodeSafety, type Safety } from '../security/attachments'
+import { refuseVirus } from '../security/refuse'
+import { scanning } from '../security/scan'
 import { enqueueIndex } from '../search/jobs'
 
 export type StorageEnv = BucketEnv & EmailEnv & Pick<Env, 'SEARCH_INDEX' | 'AI'>
@@ -77,6 +80,8 @@ export type MailAttachment = {
   emailId: string | null
   threadId: string | null
   createdAt: string
+  /** File-type verdict (security/attachments). New blocked files are never copied; older copies show as blocked. */
+  safety: Safety
 }
 
 function toItem(row: ItemView, role: StorageRole): StorageItem {
@@ -116,6 +121,7 @@ function toAttachment(row: FileRow): MailAttachment {
     emailId: row.email_id,
     threadId: row.thread_id,
     createdAt: row.created_at,
+    safety: decodeSafety(row.safety, row.name),
   }
 }
 
@@ -349,7 +355,7 @@ export async function uploadFile(
   const contentType = contentTypeFor(name, upload.contentType)
   const itemId = crypto.randomUUID()
   const bucket = await organizationBucket(env, organizationId)
-  const stored = await storeVersion(env, bucket, { itemId, name, contentType, size: upload.size, body: upload.body })
+  const stored = await storeVersion(env, bucket, { itemId, name, contentType, size: upload.size, body: upload.body, scan: true })
   const now = new Date().toISOString()
   try {
     await env.DB.batch([
@@ -384,12 +390,19 @@ export async function uploadFile(
 
 type Stored = { fileId: string; key: string; size: number; sha256: string; md5?: string }
 
-/** Writes one version's bytes to R2, hashing them on the way. */
+/**
+ * Writes one version's bytes to R2, hashing them on the way. With `scan`, the file is also checked for viruses
+ * (security/scan) and nothing is kept if one is found or the scanner can't be reached: uploads and saves from
+ * people and agents. Text typed in xstate's own editors (a string body) isn't scanned, nor are Google imports.
+ */
 async function storeVersion(
   env: StorageEnv,
   bucket: string,
-  v: { itemId: string; name: string; contentType: string; size: number | null; body: Upload['body']; md5?: boolean },
+  v: { itemId: string; name: string; contentType: string; size: number | null; body: Upload['body']; md5?: boolean; scan?: boolean },
 ): Promise<Stored> {
+  const scan = !!v.scan && scanning(env) && typeof v.body !== 'string'
+  // Bytes already in memory are scanned before anything is written.
+  if (scan && v.body instanceof Uint8Array) await refuseVirus(env, v.body, v.name)
   const fileId = crypto.randomUUID()
   const key = `drive/${v.itemId}/${fileId}/${v.name}`
   const digest = new crypto.DigestStream('SHA-256')
@@ -415,6 +428,18 @@ async function storeVersion(
     }
     await putObject(env, bucket, key, bytes, { contentType: v.contentType, metadata: { 'item-id': v.itemId } })
     size = bytes.byteLength
+  }
+  // A streamed upload can only be read once, so it's scanned from R2 right after it lands, before any row points
+  // at it. The upload takes a little longer; nothing is ever visible unscanned.
+  if (scan && v.body instanceof ReadableStream) {
+    try {
+      const object = await getObject(env, bucket, key)
+      if (!object?.body) throw notFound('file')
+      await refuseVirus(env, object.body, v.name)
+    } catch (err) {
+      await deleteObject(env, bucket, key).catch(() => null)
+      throw err
+    }
   }
   return { fileId, key, size, sha256: hex(await digest.digest), ...(md5 && { md5: hex(await md5.digest) }) }
 }
@@ -531,7 +556,7 @@ export async function writeContent(
   if (ctx.item.version !== expectedVersion) throw conflict()
   const bucket = await organizationBucket(env, ctx.item.organization_id)
   const contentType = ctx.item.content_type ?? contentTypeFor(ctx.item.name, upload.contentType)
-  const stored = await storeVersion(env, bucket, { itemId, name: ctx.item.name, contentType, size: upload.size, body: upload.body })
+  const stored = await storeVersion(env, bucket, { itemId, name: ctx.item.name, contentType, size: upload.size, body: upload.body, scan: true })
   await commitVersion(env, ctx, bucket, stored, contentType, actor)
   return (await getItem(env, actor, itemId)).item
 }
@@ -982,6 +1007,9 @@ async function attachmentContext(env: StorageEnv, actor: Actor, fileId: string):
   await mailContext(env, actor, file.mailbox_id, 'read').catch(() => {
     throw notFound('file')
   })
+  // Copied before the file-type rules existed: judged by name (the sync never copies anything blocked now).
+  const safety = decodeSafety(file.safety, file.name)
+  if (safety.level === 'blocked') throw new ApiError('attachment_blocked', `${file.name}: ${safety.message}`, 403)
   return file
 }
 

@@ -5,6 +5,9 @@
 import * as eventsDb from '../db/email-events'
 import type { MailboxRow } from '../db/mailboxes'
 import * as usersDb from '../db/users'
+import { checkName, inspectStream, type Safety } from '../security/attachments'
+import { refuseVirus } from '../security/refuse'
+import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
 import { EmailError } from './errors'
 import { reserveSend } from './sending'
@@ -44,6 +47,11 @@ export type Attachment = {
   inline: boolean
   /** Content-ID, for inline images referenced as cid: in the HTML. */
   cid: string | null
+  /**
+   * What the file-type rules say about its name (security/attachments). Downloads also check the bytes, so a
+   * file can still turn out blocked or get a warning when it's downloaded.
+   */
+  safety: Safety
 }
 export type Message = MessageSummary & {
   cc: Address[]
@@ -224,6 +232,12 @@ export async function getAttachment(
 ): Promise<Response> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')
   const upstream = await jmap.downloadBlob(env, mailbox.stalwart_id, blobId, name, type)
+  // File-type rules: blocked files never leave; warnings travel in a header the apps show before saving.
+  const { safety, body } = await inspectStream(upstream.body!, name)
+  if (safety.level === 'blocked') {
+    await body.cancel().catch(() => null)
+    throw blockedAttachment(name, safety)
+  }
   const headers = new Headers({
     'Content-Type': upstream.headers.get('Content-Type') ?? type,
     // Always a download, never rendered: attachments are untrusted content.
@@ -231,9 +245,23 @@ export async function getAttachment(
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'private, max-age=300',
   })
+  if (safety.level === 'warn') headers.set('X-Attachment-Warning', safety.code!)
   const length = upstream.headers.get('Content-Length')
   if (length) headers.set('Content-Length', length)
-  return new Response(upstream.body, { headers })
+  return new Response(body, { headers })
+}
+
+const blockedAttachment = (name: string, safety: Safety) =>
+  new EmailError('attachment_blocked', `${name}: ${safety.message}`, 403)
+
+/** Reads an attachment already on the mail server far enough to judge it (security/attachments). */
+async function blobSafety(env: EmailEnv, accountId: string, a: { blobId: string; name: string; type: string }): Promise<Safety> {
+  const byName = checkName(a.name)
+  if (byName.level === 'blocked') return byName
+  const res = await jmap.downloadBlob(env, accountId, a.blobId, a.name, a.type)
+  const { safety, body } = await inspectStream(res.body!, a.name)
+  await body.cancel().catch(() => null)
+  return safety
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -323,6 +351,7 @@ function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Mess
         size: p.size,
         inline: p.disposition === 'inline',
         cid: p.cid?.replace(/^<|>$/g, '') ?? null,
+        safety: checkName(p.name || 'attachment'),
       })),
   }
 }
@@ -444,14 +473,24 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
   }
 
   // Attachments may only come from this account: uploads to it, or the forwarded message's own parts.
-  const attachments = input.attachments ?? []
+  const attachments = [...(input.attachments ?? [])]
+  const forwarded: typeof attachments = []
   if (input.forwardOf && original) {
     for (const part of original.attachments) {
       if (part.blobId && !attachments.some((a) => a.blobId === part.blobId)) {
-        attachments.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type })
+        forwarded.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type })
       }
     }
   }
+  // File-type rules on every file, uploads included: a blob id could also point at a received attachment. A
+  // blocked file someone chose fails the send; a blocked file that only came along with a forward is left out.
+  const [chosen, carried] = await Promise.all([
+    Promise.all(attachments.map((a) => blobSafety(env, accountId, a))),
+    Promise.all(forwarded.map((a) => blobSafety(env, accountId, a))),
+  ])
+  const refused = chosen.findIndex((s) => s.level === 'blocked')
+  if (refused >= 0) throw blockedAttachment(attachments[refused]!.name, chosen[refused]!)
+  attachments.push(...forwarded.filter((_, i) => carried[i]!.level !== 'blocked'))
 
   const body: Record<string, unknown> = input.html
     ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, { partId: 'html', type: 'text/html' }] }
@@ -476,7 +515,7 @@ export async function uploadAttachment(
   actor: Actor,
   mailboxId: string,
   body: ReadableStream,
-  options: { contentType: string; size: number },
+  options: { name: string; contentType: string; size: number },
 ) {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
   if (!Number.isFinite(options.size) || options.size <= 0) {
@@ -485,5 +524,21 @@ export async function uploadAttachment(
   if (options.size > MAX_UPLOAD_BYTES) {
     throw new EmailError('attachment_too_large', `Attachments can be at most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`)
   }
-  return jmap.uploadBlob(env, mailbox.stalwart_id, body, options.contentType, options.size)
+  // File-type rules before anything reaches the mail server (sending checks again, see compose).
+  const byName = checkName(options.name)
+  if (byName.level === 'blocked') throw blockedAttachment(options.name, byName)
+  const { safety, body: checked } = await inspectStream(body, options.name)
+  if (safety.level === 'blocked') {
+    await checked.cancel().catch(() => null)
+    throw blockedAttachment(options.name, safety)
+  }
+  if (!scanning(env)) {
+    const blob = await jmap.uploadBlob(env, mailbox.stalwart_id, checked, options.contentType, options.size)
+    return { ...blob, safety }
+  }
+  // Virus scan before the mail server sees it. The file (25 MB at most) is held in memory for the two sends.
+  const bytes = new Uint8Array(await new Response(checked).arrayBuffer())
+  await refuseVirus(env, bytes, options.name)
+  const blob = await jmap.uploadBlob(env, mailbox.stalwart_id, bytes, options.contentType, bytes.byteLength)
+  return { ...blob, safety }
 }

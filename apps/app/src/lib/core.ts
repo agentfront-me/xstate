@@ -109,6 +109,15 @@ export async function apiBlob(path: string, options: ApiOptions = {}): Promise<B
   return (await request('GET', path, undefined, options)).blob()
 }
 
+/**
+ * Like apiBlob, plus the warning an attachment download carries (X-Attachment-Warning: macros,
+ * encrypted_archive, unchecked_archive), or null.
+ */
+export async function apiDownload(path: string): Promise<{ blob: Blob; warning: string | null }> {
+  const res = await request('GET', path)
+  return { blob: await res.blob(), warning: res.headers.get('X-Attachment-Warning') }
+}
+
 async function request(method: string, path: string, body?: unknown, { file, anonymous }: ApiOptions = {}): Promise<Response> {
   const token = anonymous ? undefined : session()?.token
   let res: Response

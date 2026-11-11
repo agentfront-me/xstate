@@ -420,6 +420,10 @@ button.sender { width: 100%; text-align: left; }
 .files { padding: 0 12px 8px; }
 .files .attachment { height: 30px; font-size: 12px; }
 .attachment.is-error { border-color: var(--text-hi); }
+/* File-type rules (api/src/security/attachments.ts): blocked files can't be downloaded; warned ones ask first. */
+.attachment.is-blocked { cursor: not-allowed; border-style: dashed; color: var(--text-muted); }
+.attachment.is-blocked .ellipsis { text-decoration: line-through; }
+.attachment.is-warn { border-style: dashed; border-color: var(--text-hi); }
 .reply-foot .reply-err { flex: 1; padding: 0 10px; font-size: 12px; color: var(--text-hi); }
 .reply-foot .attach { cursor: pointer; }
 .modal-note { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); }

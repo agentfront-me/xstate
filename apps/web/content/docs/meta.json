@@ -1,4 +1,12 @@
 {
   "title": "Docs",
-  "pages": ["index", "quickstart", "...", "---Legal---", "terms", "privacy"]
+  "pages": [
+    "index",
+    "quickstart",
+    "...",
+    "security",
+    "---Legal---",
+    "terms",
+    "privacy"
+  ]
 }

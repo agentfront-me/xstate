@@ -29,7 +29,16 @@ export type MessageSummary = {
   threadSize: number
 }
 
-export type Attachment = { blobId: string; name: string; type: string; size: number; inline: boolean; cid: string | null }
+export type Attachment = {
+  blobId: string
+  name: string
+  type: string
+  size: number
+  inline: boolean
+  cid: string | null
+  /** The API's file-type verdict by name (api/src/security/attachments.ts). Blocked files can't be downloaded. */
+  safety?: { level: 'ok' | 'warn' | 'blocked'; code?: string; message?: string }
+}
 export type Message = MessageSummary & { cc: Address[]; replyTo?: Address[]; text: string; html: string | null; attachments: Attachment[] }
 
 // Users

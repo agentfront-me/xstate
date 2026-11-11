@@ -4,7 +4,7 @@
 // Shapes match apps/api/src/mailserver/messages.ts (see src/lib/types.ts).
 
 import type { Account } from '../lib/account'
-import { api, apiBlob } from '../lib/core'
+import { api, apiBlob, apiDownload } from '../lib/core'
 import { sampleMessages } from '../lib/sample'
 import type { Attachment, FolderRole, FolderView, Mailbox, MailboxFolders, Message, MessageSummary, Upload } from '../lib/types'
 
@@ -34,6 +34,8 @@ export type MailSource = {
   update(summary: MessageSummary, patch: Patch): Promise<void>
   state(): Promise<string>
   attachment(message: Message, attachment: Attachment): Promise<Blob>
+  /** An attachment to save, with the warning the file-type rules found in its bytes (or null). */
+  download(message: Message, attachment: Attachment): Promise<{ blob: Blob; warning: string | null }>
   send(message: Outgoing): Promise<{ id: string; threadId: string }>
   upload(mailboxId: string, file: File): Promise<Upload>
   clearDraft(summary: MessageSummary): void
@@ -79,8 +81,11 @@ function liveSource(orgId: string): MailSource {
     },
 
     attachment(message, attachment) {
-      const params = new URLSearchParams({ name: attachment.name, type: attachment.type })
-      return apiBlob(`/email/mailboxes/${message.mailboxId}/attachments/${encodeURIComponent(attachment.blobId)}?${params}`)
+      return apiBlob(attachmentPath(message, attachment))
+    },
+
+    download(message, attachment) {
+      return apiDownload(attachmentPath(message, attachment))
     },
 
     async send(message) {
@@ -210,6 +215,10 @@ function demoSource(account: Account): MailSource {
       return new Blob([''], { type: 'text/plain' })
     },
 
+    async download() {
+      return { blob: new Blob([''], { type: 'text/plain' }), warning: null }
+    },
+
     /** Adds a reply to the conversation, or a new message to Sent. */
     async send(message) {
       const now = new Date().toISOString()
@@ -251,4 +260,9 @@ function demoSource(account: Account): MailSource {
       if (m) m.draft = null
     },
   }
+}
+
+function attachmentPath(message: Message, attachment: Attachment): string {
+  const params = new URLSearchParams({ name: attachment.name, type: attachment.type })
+  return `/email/mailboxes/${message.mailboxId}/attachments/${encodeURIComponent(attachment.blobId)}?${params}`
 }

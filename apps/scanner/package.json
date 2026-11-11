@@ -1,0 +1,20 @@
+{
+  "name": "@xstate/scanner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "CLAMD=fake SCAN_SECRET=dev-scan-secret-local node --experimental-strip-types --no-warnings src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/scanner.mjs",
+    "typecheck": "tsc",
+    "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "postal-mime": "2.7.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@xstate/tsconfig": "workspace:*",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

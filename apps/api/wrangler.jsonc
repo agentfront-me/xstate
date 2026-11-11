@@ -49,7 +49,13 @@
     // token counts and rate limits. Empty: calls go straight to the provider.
     "AI_GATEWAY_ID": "",
     // This API's own public origin, for the webhook URLs agents' triggers show (agents/triggers.ts).
-    "API_URL": "https://api.xstate.com"
+    "API_URL": "https://api.xstate.com",
+    // Virus scanning of composer and Storage uploads (security/scan.ts), by the scan service next to Stalwart
+    // (apps/scanner): "live" refuses infected files, and every file while the scanner is unreachable; "log" scans
+    // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
+    // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
+    "SCAN_MODE": "off",
+    "SCAN_URL": "https://mx.xstate.io/_scan"
   },
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
@@ -137,6 +143,8 @@
   // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
   // API_KEYS_ENCRYPTION_KEY: encrypts organizations' secret API keys at rest (audience/keys.ts). Any long random
   // string (openssl rand -base64 48). Changing it makes every stored secret key unreadable, so set it once.
+  // SCAN_SECRET (optional while SCAN_MODE is "off"): shared with the scan service on the mail server
+  // (apps/scanner/deploy/README.md). Not in "required" so deploys work before the scanner exists.
   // DOMAIN_CONNECT_PRIVATE_KEY (optional until DOMAIN_CONNECT_ENABLED is "true"): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {

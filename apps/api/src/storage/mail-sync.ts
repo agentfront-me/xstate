@@ -17,6 +17,7 @@ import type { JmapAttachmentMessage, JmapBodyPart, JmapFolder } from '../mailser
 import { organizationBucket, storageConfigured, type BucketEnv } from './buckets'
 import { cleanFileName, fileKey } from './files'
 import { deleteObject, putObject } from './r2'
+import { encodeSafety, inspectStream } from '../security/attachments'
 import { refreshEmailFolders, removeEmails } from '../search/indexer'
 import { enqueueEmails, enqueueIndex } from '../search/jobs'
 
@@ -31,6 +32,8 @@ export type SyncResult = {
   mailboxId: string
   stored: number
   skipped: number
+  /** Attachments the file-type rules blocked (security/attachments): never copied. */
+  blocked: number
   deleted: number
   /** Messages queued for search by their bodies, documents whose folder changed, and documents of destroyed messages removed. */
   queued: number
@@ -40,7 +43,7 @@ export type SyncResult = {
 }
 
 export async function syncMailbox(env: SyncEnv, mailboxId: string): Promise<SyncResult> {
-  const result: SyncResult = { mailboxId, stored: 0, skipped: 0, deleted: 0, queued: 0, moved: 0, unindexed: 0, firstSync: false }
+  const result: SyncResult = { mailboxId, stored: 0, skipped: 0, blocked: 0, deleted: 0, queued: 0, moved: 0, unindexed: 0, firstSync: false }
   // Without file storage (local dev) there's nowhere to copy attachments to. Skip instead of failing, so the queue
   // doesn't retry the job ten times.
   if (!storageConfigured(env)) return result
@@ -170,18 +173,26 @@ async function copyPart(ctx: Ctx, message: JmapAttachmentMessage, part: JmapBody
 
   try {
     const download = await jmap.downloadBlob(env, ctx.accountId, part.blobId!, name, contentType)
+    // File-type rules: a blocked file is never copied, so Storage, search and agents never see it.
+    const { safety, body } = await inspectStream(download.body!, name)
+    if (safety.level === 'blocked') {
+      await body.cancel().catch(() => null)
+      await filesDb.markBlocked(env.DB, id, encodeSafety(safety), new Date().toISOString()).run()
+      ctx.result.blocked++
+      return false
+    }
     const length = Number(download.headers.get('Content-Length') ?? NaN)
     // Hash while streaming to R2, so large attachments are never held in memory.
     const digest = new crypto.DigestStream('SHA-256')
     let size: number
     if (Number.isFinite(length)) {
-      const [toR2, toHash] = download.body!.tee()
+      const [toR2, toHash] = body.tee()
       const hashing = toHash.pipeTo(digest)
       await putObject(env, ctx.bucket, key, toR2, { contentType, size: length, metadata: { 'file-id': id } })
       await hashing
       size = length
     } else {
-      const bytes = new Uint8Array(await download.arrayBuffer())
+      const bytes = new Uint8Array(await new Response(body).arrayBuffer())
       const writer = digest.getWriter()
       await writer.write(bytes)
       await writer.close()
@@ -189,7 +200,7 @@ async function copyPart(ctx: Ctx, message: JmapAttachmentMessage, part: JmapBody
       size = bytes.byteLength
     }
     const sha256 = [...new Uint8Array(await digest.digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-    await filesDb.markReady(env.DB, id, size, sha256).run()
+    await env.DB.batch([filesDb.markReady(env.DB, id, size, sha256), filesDb.setSafety(env.DB, id, encodeSafety(safety))])
     await enqueueIndex(env, [id])
     return true
   } catch (err) {

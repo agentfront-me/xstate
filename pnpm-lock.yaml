@@ -238,6 +238,25 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
+  apps/scanner:
+    dependencies:
+      postal-mime:
+        specifier: 2.7.6
+        version: 2.7.6
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      '@xstate/tsconfig':
+        specifier: workspace:*
+        version: link:../../tooling/tsconfig
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   apps/web:
     dependencies:
       '@vinext/cloudflare':

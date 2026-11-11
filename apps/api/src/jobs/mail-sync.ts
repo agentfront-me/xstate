@@ -3,6 +3,7 @@
 
 import { processMailbox } from '../agents/email-trigger'
 import * as mailboxesDb from '../db/mailboxes'
+import { scannerHealth } from '../security/scan'
 import { syncMailbox } from '../storage/mail-sync'
 import { emptyExpiredTrash } from '../storage/drive'
 import { purgeDeletedFiles } from '../storage/purge'
@@ -83,4 +84,7 @@ export async function hourly(env: Env): Promise<void> {
   if (emptied) console.log('storage-trash', JSON.stringify({ emptied }))
   const purge = await purgeDeletedFiles(env)
   if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
+  // The virus scanner on the mail server: down, or its signatures have stopped updating.
+  const scanner = await scannerHealth(env)
+  if (scanner && !scanner.ok) console.error('scanner-unhealthy', scanner.detail)
 }

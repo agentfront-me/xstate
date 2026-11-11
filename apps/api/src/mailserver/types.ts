@@ -18,7 +18,9 @@ export type EmailEnv = Pick<
   | 'AWS_SES_REGION'
   | 'SES_SNS_TOPIC_ARNS'
   | 'SES_MODE'
->
+  | 'SCAN_MODE'
+  | 'SCAN_URL'
+> & { SCAN_SECRET?: string }
 
 export type Domain = {
   id: string
