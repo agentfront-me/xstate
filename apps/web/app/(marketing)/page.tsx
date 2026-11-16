@@ -248,6 +248,7 @@ export default function Home() {
             <span className="muted">Legal</span>
             <a href="/docs/privacy">Privacy</a>
             <a href="/docs/terms">Terms</a>
+            <a href="/docs/refunds">Refunds</a>
             <a href="/dpa">DPA</a>
             <a href="/security">Security</a>
           </div>

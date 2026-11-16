@@ -47,8 +47,9 @@ If you do not agree, do not use the Service.
 
 - Business email on your own domain is offered free of charge, subject to the limits in section 6.
 - Some features, including AI agents, are not part of a free plan and may require a paid plan. We will show
-  prices and limits before you are charged. Paid plans renew until cancelled, and fees are non-refundable except
-  where the law requires otherwise or we say so in writing.
+  prices and limits before you are charged. Paid plans renew until cancelled; you can cancel any time and keep
+  the plan until the end of the period you've paid for. You can get a full refund of any payment within 14 days
+  of it, as described in our [Refund Policy](/docs/refunds).
 - We may introduce, change or remove plans, limits and prices. For changes that increase what you pay, we will
   give at least 30 days' notice, and you can cancel before the change takes effect.
 - **Our reseller.** Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant
