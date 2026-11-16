@@ -8,6 +8,7 @@ AI agents such as Claude, Claude Code, Codex and Cursor work with it under permi
 
 - [Quickstart](./quickstart.md): connect a domain and get a working inbox.
 - [Connect AI apps](./mcp.md): let Claude, Cursor, ChatGPT and other apps work with your mail over MCP.
+- [Send transactional email](./transactional-email.md): send receipts, alerts and other one-to-one email from your own server.
 - [Security](./security.md): how xstate protects accounts, email, attachments, files and agents.
 
 ## For agents

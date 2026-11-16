@@ -1,7 +1,7 @@
 // Settings: Account, Members, Domains, Migration, Connected apps, AI providers, Secrets, API keys, Billing, Integrations.
 //
 // Account, Members, Domains, AI providers, Secrets and API keys use the API when signed in (AI providers and Secrets
-// live in ./AiSections; Billing in ./Billing). Integrations have no API yet: it shows sample data (./store), marked
+// live in ./AiSections; Billing in ./Billing; API keys → Personal Tokens in ./PersonalTokens). Integrations have no API yet: it shows sample data (./store), marked
 // "Sample data" in the header when signed in, and changes stay in memory.
 // In demo mode (?demo) every section uses sample data.
 
@@ -37,6 +37,7 @@ import { AiProvidersSection, LiveSecretsSection } from './AiSections'
 import { BillingSection as LiveBillingSection } from './Billing'
 import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
+import { PersonalTokens } from './PersonalTokens'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
@@ -80,7 +81,7 @@ const SECTIONS: Section[] = [
     icon: 'key-round',
     sub: (a, d) => (a.mode === 'live' ? 'Values for connector headers' : `${d.secrets.length} organization secrets`),
   },
-  { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
+  { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Organization keys and personal tokens' },
   {
     id: 'billing',
     label: 'Billing',
@@ -1207,10 +1208,26 @@ function SecretsSection({ data }: { data: SettingsData }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// API keys: the organization's two keys (design: Settings → API keys). They serve every public API: tracking in the
-// Users section today, sending email later.
+// API keys, in two tabs. Organization Keys: the organization's publishable and secret key, for tracking in the
+// Users section; owners and admins only. Personal Tokens: each member's own tokens for sending email from their
+// server (./PersonalTokens); everyone.
 
 function ApiKeysSection({ account }: { account: Account }) {
+  const admin = isOrgAdmin(account.org)
+  const [tab, setTab] = useState<'org' | 'personal'>(admin ? 'org' : 'personal')
+  if (account.mode !== 'live') return <p className="muted">Sign in to see your organization's API keys.</p>
+  return (
+    <>
+      <nav className="set-tabs" role="tablist" aria-label="API keys">
+        {admin && <button role="tab" aria-selected={tab === 'org'} onClick={() => setTab('org')}>Organization Keys</button>}
+        <button role="tab" aria-selected={tab === 'personal'} onClick={() => setTab('personal')}>Personal Tokens</button>
+      </nav>
+      {tab === 'org' && admin ? <OrgKeys account={account} /> : <PersonalTokens orgId={account.org.id} admin={admin} />}
+    </>
+  )
+}
+
+function OrgKeys({ account }: { account: Account }) {
   const admin = isOrgAdmin(account.org)
   const [keys, setKeys] = useState<ApiKeys | null>(null)
   const [secret, setSecret] = useState<string | null>(null)
@@ -1251,8 +1268,8 @@ function ApiKeysSection({ account }: { account: Account }) {
     <>
       <div className="group">
         <GroupHead
-          title="API keys"
-          sub="Keys for your organization. Use the publishable key in browsers and client apps to identify visitors and track events. Keep the secret key on your servers; it has full access to your organization."
+          title="Organization keys"
+          sub="Keys for your organization. Use the publishable key in browsers and client apps to identify visitors and track events. Keep the secret key on your servers; it has full access to your organization's users and segments. To send email from a server, use a personal token."
         />
         <div className="card key-card">
           <div className="card-row">
@@ -1274,7 +1291,7 @@ function ApiKeysSection({ account }: { account: Account }) {
               <span className="lead"><Icon name="lock" size={15} /></span>
               <div className="text">
                 <span className="name">Secret key</span>
-                <span className="sub">Server-side only. Full access to users, segments and sending on behalf of your organization.</span>
+                <span className="sub">Server-side only. Full access to your organization's users and segments.</span>
               </div>
               <span className="when">{ago}</span>
             </div>

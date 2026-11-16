@@ -141,7 +141,12 @@
     { "name": "LOGIN_EMAIL_RATE", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } },
     { "name": "REGISTER_IP_RATE", "namespace_id": "1006", "simple": { "limit": 5, "period": 60 } },
     // MCP_RATE: tool calls from a connected AI app, 120 a minute per person, app and organization (mcp/server.ts).
-    { "name": "MCP_RATE", "namespace_id": "1007", "simple": { "limit": 120, "period": 60 } }
+    { "name": "MCP_RATE", "namespace_id": "1007", "simple": { "limit": 120, "period": 60 } },
+    // TOKEN_FAIL_RATE: requests with a wrong personal API token, 20 a minute per IP (auth/middleware.ts requireToken).
+    { "name": "TOKEN_FAIL_RATE", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } },
+    // EMAILS_RATE: calls to /v1/emails, 300 a minute per personal API token. Sending itself is held by the caps in
+    // mailserver/sending.ts; this keeps a loop that only reads the send log from hammering D1.
+    { "name": "EMAILS_RATE", "namespace_id": "1009", "simple": { "limit": 300, "period": 60 } }
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.

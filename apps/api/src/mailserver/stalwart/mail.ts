@@ -437,12 +437,23 @@ export async function getReplySource(env: StalwartEnv, accountId: string, emailI
 /**
  * Creates the message in Drafts and submits it in one request. On success Stalwart moves it to Sent and clears
  * $draft. Returns the new message and thread ids.
+ *
+ * `keepCopy: false` (mail sent through the API without saveToSent) deletes the message once it is submitted
+ * instead, so nothing is left in the mailbox; the returned id then no longer exists.
  */
 export async function submitEmail(
   env: StalwartEnv,
   accountId: string,
-  options: { identityId: string; draftsId: string; sentId: string; email: JmapArgs },
+  options: { identityId: string; draftsId: string; sentId: string; email: JmapArgs; keepCopy?: boolean },
 ): Promise<{ id: string; threadId: string }> {
+  const afterwards =
+    options.keepCopy === false
+      ? { onSuccessDestroyEmail: ['#s'] }
+      : {
+          onSuccessUpdateEmail: {
+            '#s': { [`mailboxIds/${options.draftsId}`]: null, [`mailboxIds/${options.sentId}`]: true, 'keywords/$draft': null },
+          },
+        }
   const results = await mail(env, [
     ['Email/set', { accountId, create: { m: { ...options.email, mailboxIds: { [options.draftsId]: true }, keywords: { $draft: true, $seen: true } } } }],
     [
@@ -450,9 +461,7 @@ export async function submitEmail(
       {
         accountId,
         create: { s: { identityId: options.identityId, emailId: '#m' } },
-        onSuccessUpdateEmail: {
-          '#s': { [`mailboxIds/${options.draftsId}`]: null, [`mailboxIds/${options.sentId}`]: true, 'keywords/$draft': null },
-        },
+        ...afterwards,
       },
     ],
   ])

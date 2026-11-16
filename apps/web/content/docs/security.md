@@ -122,9 +122,36 @@ calendar, files and contacts.
 - **Limits and records.** Each connected app can make up to 120 calls a minute. Every call is logged with who made
   it, which app and which tool, but never the contents of your mail or files.
 
+## Personal API tokens
+
+A personal token lets your own server send email from mailboxes you can send from. See
+[Send transactional email](./transactional-email.md).
+
+- **Shown once, stored as a hash.** A token is displayed when you create it and never again. xstate keeps only its
+  SHA-256 hash and its last 4 characters, so a copy of the database holds nothing that can be used as a token.
+- **It can never do more than you can.** A token acts as the person who created it, in one organization, and only
+  for the mailboxes they picked. Every request checks that person's access as it is at that moment: lose access
+  to a mailbox and the token can't send from it on the next request. With no mailbox left it stops working.
+- **It only sends email.** A token can't read mail, files, calendars or contacts, can't sign in to xstate, and
+  can't create, change or list tokens. A sign-in session is refused where a token is expected, and the other way
+  round. Agents and connected AI apps can't create or see tokens either.
+- **It ends with your membership.** When you leave an organization or are removed, your tokens there are revoked
+  for good and the owners and admins are told which ones stopped.
+- **Revoking is immediate.** You can revoke your own tokens at any time. Owners and admins see every member's
+  tokens (never the token itself), can revoke any of them, and can turn tokens off for the whole organization.
+- **You're told about new tokens.** xstate emails you when a token is created on your account, and a week before
+  one ends. A token can be set to end after 30 days, 90 days or 1 year.
+- **Limits.** A token can make 300 requests a minute, and requests with a wrong token are limited to 20 a minute
+  from one address. Mail sent with a token is held to the same sending limits as mail sent by hand, and its
+  bounces and spam complaints count against the mailbox in the same way.
+- **What is recorded.** For each message sent with a token xstate keeps the sender, the recipients, the subject
+  and the delivery status for 30 days, never the body or the attachments. No tracking of opens or clicks is added
+  to your email.
+
 ## Keys and webhooks
 
-- **API secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or roll them.
+- **Organization secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or
+  roll them. They are for audience tracking and can't send email.
 - **Webhooks** xstate receives are checked before they're trusted. Mail-server events must carry a valid
   HMAC-SHA256 signature, Amazon SES notifications must have a valid signature from AWS, and billing events from
   Paddle must come from one of Paddle's published addresses and carry a valid, recent HMAC-SHA256 signature.
@@ -144,6 +171,7 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 16, 2026:** Personal API tokens for sending email from your own server, stored only as hashes.
 - **November 16, 2026:** AI apps can be connected over MCP, with access you choose when you approve them.
 - **November 16, 2026:** An agent's search of files and mail now covers only the mailboxes it was given, not every
   mailbox the person it acts for can read.

@@ -107,6 +107,16 @@ export async function readableMailboxes(env: EmailEnv, actor: Actor, organizatio
   return rows.filter((row) => inMailboxScope(actor, row.id) && mailAccess(member, row, own.get(row.id)).read)
 }
 
+/** Every mailbox in the organization the actor can send from and change mail in. */
+export async function writableMailboxes(env: EmailEnv, actor: Actor, organizationId: string): Promise<MailboxRow[]> {
+  const member = await loadMember(env, organizationId, actor.userId)
+  const [rows, own] = await Promise.all([
+    mailboxesDb.list(env.DB, organizationId),
+    mailboxAccessDb.forMember(env.DB, member.id),
+  ])
+  return rows.filter((row) => inMailboxScope(actor, row.id) && mailAccess(member, row, own.get(row.id)).write)
+}
+
 /** The mailbox is one the user can read, but the connection they act through wasn't given it (Actor.mailboxIds). */
 export function outOfScope(): EmailError {
   return forbidden("This connection can't use that mailbox. It was connected with other mailboxes only")

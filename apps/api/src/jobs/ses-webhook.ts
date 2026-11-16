@@ -8,19 +8,26 @@
 // - After a bounce or complaint, the sender's last 7 days are checked and the mailbox or its whole organization is
 //   suspended when they cross the thresholds in mailserver/sending.ts.
 //
+// - Mail sent through POST /v1/emails also has a row per recipient in the send log; every event updates that
+//   recipient's status (emails/service.ts recordDeliveryEvent), which is what GET /v1/emails/:id reports.
+// - When an event suspends the sender, the owners and admins get an email saying so (emails/notices.ts).
+//
 // Handles SES identity notifications ("notificationType") and configuration-set events ("eventType").
 
 import type { Context } from 'hono'
 import * as addressesDb from '../db/addresses'
 import * as eventsDb from '../db/email-events'
 import * as sendingDb from '../db/sending'
+import { notifySuspension } from '../emails/notices'
+import { recordDeliveryEvent } from '../emails/service'
 import { evaluateSender } from '../mailserver'
 import { isSnsUrl, verifySnsMessage, type SnsMessage } from './sns'
 
 type SesNotification = {
   notificationType?: string
   eventType?: string
-  mail?: { messageId?: string; source?: string; timestamp?: string }
+  /** `commonHeaders` is only there when the notifications are set to include the original headers. */
+  mail?: { messageId?: string; source?: string; timestamp?: string; commonHeaders?: { messageId?: string } }
   bounce?: {
     bounceType?: string
     bounceSubType?: string
@@ -65,8 +72,16 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
 
   const sender = (n.mail?.source ?? '').toLowerCase()
   const owner = sender ? await addressesDb.findByAddress(c.env.DB, sender) : null
+  // Our own Message-ID, when SES passes it on: the surest way to find the message in the API's send log.
+  const ourMessageId = n.mail?.commonHeaders?.messageId?.replace(/^<|>$/g, '') || null
+  /** Best effort: the send log is a report, and must never make SNS redeliver an event that was recorded. */
+  const logStatus = (status: 'delivered' | 'bounced' | 'complained', list: { address: string; detail: string | null }[]) =>
+    Promise.all(list.map((r) => recordDeliveryEvent(c.env, { kind: status, sender, recipient: r.address, messageId: ourMessageId, detail: r.detail }))).catch(
+      (err) => console.error('ses-webhook: updating the send log failed', err),
+    )
 
   if (kind === 'delivery') {
+    await logStatus('delivered', (n.delivery?.recipients ?? []).map((address) => ({ address, detail: null })))
     // A notification SNS redelivers is counted twice; that only makes rates look slightly better, never worse.
     const count = n.delivery?.recipients?.length ?? 0
     if (!owner || !count) return c.json({ ignored: 'delivery from an unknown sender' })
@@ -111,6 +126,7 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
     }
   })
   if (writes.length) await c.env.DB.batch(writes)
+  await logStatus(kind === 'bounce' ? 'bounced' : 'complained', recipients)
 
   // Suspend the sender if this pushed it over the line. A failure here mustn't make SNS redeliver the event.
   let suspended: string | null = null
@@ -119,6 +135,11 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
       console.error('ses-webhook: evaluating sender failed', err)
       return null
     })
+  }
+  if (owner && (suspended === 'mailbox' || suspended === 'organization')) {
+    c.executionCtx.waitUntil(
+      notifySuspension(c.env, owner.organization_id, owner.mailbox_id, suspended).catch((err) => console.error('ses-webhook: suspension email failed', err)),
+    )
   }
   return c.json({ recorded: recipients.length, kind, suspended })
 }

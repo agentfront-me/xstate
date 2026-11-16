@@ -14,8 +14,11 @@ import { billingHourly } from './billing/service'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
 import { cors } from 'hono/cors'
-import { requireAuth } from './auth/middleware'
+import { tokensHourly } from './auth/api-tokens'
+import { emailsHourly } from './emails/service'
+import { requireAuth, requireToken } from './auth/middleware'
 import { handleLive } from './live/route'
+import { handleGetEmail, handleListEmails, handleSendEmail } from './http/emails'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
@@ -59,6 +62,10 @@ v1.use('*', (c, next) =>
 v1.post('/email/mailboxes/:mailboxId/uploads', requireAuth, handleAttachmentUpload)
 v1.post('/storage/orgs/:organizationId/files', requireAuth, handleStorageUpload)
 v1.put('/storage/items/:itemId/content', requireAuth, handleStorageSave)
+// Sending email from a customer's own server, with a personal API token instead of a session (http/emails.ts).
+v1.post('/emails', requireToken, handleSendEmail)
+v1.get('/emails', requireToken, handleListEmails)
+v1.get('/emails/:id', requireToken, handleGetEmail)
 // The mobile app's live updates: a WebSocket per member while the app is open (live/hub.ts).
 v1.get('/live/orgs/:organizationId', handleLive)
 mountOperations(v1, operations)
@@ -115,6 +122,10 @@ export default {
         // Connected apps: expired grants and tokens KV's own expiry missed.
         purgeOAuth(env).catch((err) => console.error('oauth purge failed', err)),
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
+        // Personal API tokens: the "ends in a week" email, and removal of long-ended ones.
+        tokensHourly(env).catch((err) => console.error('tokens-hourly failed', err)),
+        // The send log of POST /v1/emails: messages older than 30 days.
+        emailsHourly(env).catch((err) => console.error('emails-hourly failed', err)),
         // Billing: every paying organization billed for its current number of people.
         billingHourly(env).catch((err) => console.error('billing-hourly failed', err)),
         // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.

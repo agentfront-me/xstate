@@ -25,3 +25,8 @@ automatically.
 
 Connect Claude, Claude Code, Codex, Cursor or ChatGPT over MCP and choose what it may do. See
 [Connect AI apps](./mcp.md).
+
+## 6. Send email from your server
+
+To send receipts, alerts or sign-in codes from your own code, create a personal token and call the API. See
+[Send transactional email](./transactional-email.md).

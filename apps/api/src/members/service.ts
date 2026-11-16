@@ -9,6 +9,7 @@
 // members.manage permission (owners and admins have it). Only owners and admins can invite admins, change roles or
 // remove an admin. Nobody can change or remove the owner. Anyone except the owner can leave.
 
+import { revokeTokensOfMember } from '../auth/api-tokens'
 import { hashPassword } from '../auth/password'
 import { issueToken } from '../auth/token'
 import type { Actor } from '../auth/types'
@@ -111,6 +112,12 @@ export async function removeMember(env: MembersEnv, actor: Actor, memberId: stri
     )
   }
   await membersDb.remove(env.DB, memberId).run()
+  // Their personal API tokens end with their membership, and the owners and admins hear which integrations stopped.
+  if (target.status === 'active') {
+    await revokeTokensOfMember(env, target.organization_id, { userId: target.user_id, name: target.name, email: target.email }, actor.userId).catch(
+      (err) => console.error('revoking api tokens failed', err),
+    )
+  }
   // Invited and never accepted: the placeholder account goes too, or they could never sign up on their own.
   if (target.status === 'invited') await usersDb.removeIfUnclaimed(env.DB, target.user_id).run()
 }

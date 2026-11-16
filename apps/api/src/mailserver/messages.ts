@@ -407,6 +407,26 @@ export type SendInput = {
    * message exists. Its attachments are not taken along; pass the ones to keep in attachments.
    */
   draftId?: string
+  /** Only set for mail sent through the API (emails/service.ts). */
+  api?: ApiSendOptions
+}
+
+/**
+ * What a message sent through POST /v1/emails may set that one written in the app can't. The caller has already
+ * checked the token and the size of the request; compose still checks the sender address against the mailbox.
+ */
+export type ApiSendOptions = {
+  /** The mailbox's primary address or one of its aliases, with the name to show. */
+  from: { email: string; name: string | null }
+  replyTo?: Address[]
+  /** Extra headers, already limited to the allowed names and checked for line breaks. */
+  headers?: Record<string, string>
+  /** The Message-ID to send with, without angle brackets, so delivery events can be matched to the message. */
+  messageId: string
+  /** false leaves nothing in the mailbox: the message is deleted once it is on its way. */
+  keepCopy: boolean
+  /** Blob ids of attachments shown inside the HTML (cid:), by Content-ID. */
+  inline?: Record<string, string>
 }
 
 /**
@@ -424,7 +444,7 @@ export async function sendMessage(
 
   // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
   const reservation = await reserveSend(env, mailbox, recipients.map((r) => r.email))
-  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email }).catch(async (err) => {
+  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email, keepCopy: input.api?.keepCopy }).catch(async (err) => {
     await reservation.release()
     throw err
   })
@@ -485,19 +505,31 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
   const sentId = folders.find((f) => f.role === 'sent')?.id
   if (!draftsId || !sentId) throw new EmailError('folder_not_found', 'This mailbox has no Drafts or Sent folder', 409)
 
+  // Mail written in the app leaves from the primary address. The API may also name one of the mailbox's aliases.
+  const fromEmail = input.api?.from.email.toLowerCase() ?? mailbox.address
+  if (fromEmail !== mailbox.address && !(JSON.parse(mailbox.aliases) as string[]).includes(fromEmail)) {
+    throw new EmailError('forbidden_from', 'This mailbox may not send from that address', 403)
+  }
   // The display name people see: your own name on your personal mailbox, otherwise the mailbox's name.
-  const fromName = (mailbox.kind === 'personal' ? user?.name : mailbox.display_name) ?? mailbox.display_name ?? null
+  const ownName = (mailbox.kind === 'personal' ? user?.name : mailbox.display_name) ?? mailbox.display_name ?? null
+  const fromName = input.api?.from.name ?? ownName
   const identityId =
-    identities.find((i) => i.email.toLowerCase() === mailbox.address)?.id ??
-    (await jmap.createIdentity(env, accountId, { name: fromName ?? '', email: mailbox.address }))
+    identities.find((i) => i.email.toLowerCase() === fromEmail)?.id ??
+    (await jmap.createIdentity(env, accountId, { name: ownName ?? '', email: fromEmail }))
 
   const email: Record<string, unknown> = {
-    from: [{ name: fromName, email: mailbox.address }],
+    from: [{ name: fromName, email: fromEmail }],
     to: input.to,
     subject: input.subject,
   }
   if (input.cc?.length) email.cc = input.cc
   if (input.bcc?.length) email.bcc = input.bcc
+  if (input.api) {
+    email.messageId = [input.api.messageId]
+    if (input.api.replyTo?.length) email.replyTo = input.api.replyTo
+    // Raw form, so any allowed header can be set the same way (asText isn't allowed for List-Unsubscribe).
+    for (const [name, value] of Object.entries(input.api.headers ?? {})) email[`header:${name}:asRaw`] = value
+  }
 
   let original: jmap.ReplySource | null = null
   const sourceId = input.inReplyTo ?? input.forwardOf
@@ -547,16 +579,29 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
   const total = chosen.reduce((sum, c) => sum + (c.size ?? 0), 0) + kept.reduce((sum, a) => sum + a.size, 0)
   if (total > MAX_ATTACHMENTS_BYTES) throw attachmentsTooLarge(total)
 
+  // Images the HTML shows with cid: travel next to it (multipart/related); every other file is a plain attachment.
+  const cidOf = new Map(Object.entries(input.api?.inline ?? {}).map(([cid, blobId]) => [blobId, cid]))
+  const inline = input.html ? attachments.filter((a) => cidOf.has(a.blobId)) : []
+  const files = attachments.filter((a) => !inline.includes(a))
+  const htmlPart: Record<string, unknown> = inline.length
+    ? {
+        type: 'multipart/related',
+        subParts: [
+          { partId: 'html', type: 'text/html' },
+          ...inline.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'inline', cid: cidOf.get(a.blobId) })),
+        ],
+      }
+    : { partId: 'html', type: 'text/html' }
   const body: Record<string, unknown> = input.html
-    ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, { partId: 'html', type: 'text/html' }] }
+    ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, htmlPart] }
     : { partId: 'text', type: 'text/plain' }
   email.bodyValues = { text: { value: input.text }, ...(input.html && { html: { value: input.html } }) }
-  email.bodyStructure = attachments.length
+  email.bodyStructure = files.length
     ? {
         type: 'multipart/mixed',
         subParts: [
           body,
-          ...attachments.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'attachment' })),
+          ...files.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'attachment' })),
         ],
       }
     : body

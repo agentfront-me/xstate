@@ -41,7 +41,7 @@ export const onError: ErrorHandler<AppEnv> = (err, c) => {
   return c.json({ error: { code: 'internal_error', message: 'Something went wrong' } }, 500)
 }
 
-async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   const text = await request.text()
   if (!text) return {}
   try {
