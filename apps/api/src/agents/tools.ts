@@ -6,12 +6,13 @@
 // (its Settings → Mailboxes plus the mailboxes its email triggers watch). Tools that change something can require a
 // person's approval first (agents/run.ts); each has a default, which the agent's config can override.
 
-import { z } from 'zod'
+import type { Actor } from '../auth/types'
 import { audienceGetPerson, audienceListPeople } from '../operations/audience'
 import { calendarCreateEvent, calendarListEvents } from '../operations/calendar'
 import type { AnyOperation } from '../operations/define'
 import { emailCreateDraft, emailGetThread, emailListMessages, emailSend, emailUpdateMessage } from '../operations/email'
 import { membersList } from '../operations/members'
+import { toolInputSchema } from '../operations/schema.ts'
 import { storageSearch } from '../operations/storage'
 import type { AgentConfig } from './config'
 import type { ConnectorTool } from './connectors'
@@ -152,16 +153,7 @@ export const MEMORY_TOOLS: ToolDef[] = [
 
 function builtinDefs(config: Pick<AgentConfig, 'tools'>): ToolDef[] {
   return BUILTIN.filter((b) => config.tools.builtin.includes(b.op.name)).map((b) => {
-    const schema = z.toJSONSchema(b.op.input, { io: 'input', unrepresentable: 'any' }) as {
-      properties?: Record<string, unknown>
-      required?: string[]
-      [k: string]: unknown
-    }
-    if (schema.properties?.organizationId) {
-      delete schema.properties.organizationId
-      schema.required = schema.required?.filter((r) => r !== 'organizationId')
-    }
-    delete schema.$schema
+    const schema = toolInputSchema(b.op)
     return {
       name: b.op.name,
       label: b.label,
@@ -195,12 +187,23 @@ export function scopeInput(name: string, input: unknown, mailboxes: string[]): {
   return { input: args }
 }
 
-export async function runBuiltin(env: Env, userId: string, organizationId: string, name: string, input: Record<string, unknown>): Promise<unknown> {
+/**
+ * Runs a built-in tool as the person the run acts for, limited to the agent's mailboxes. scopeInput checks the
+ * mailboxId a call names; the actor's limit (Actor.mailboxIds, enforced in mailserver/access.ts) also covers tools
+ * that reach mail without one, such as storage_search, which would otherwise search every mailbox that person reads.
+ */
+export async function runBuiltin(
+  env: Env,
+  run: { userId: string; organizationId: string; mailboxes: readonly string[] },
+  name: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
   const builtin = BUILTIN.find((b) => b.op.name === name)
   if (!builtin) throw new Error(`Unknown tool ${name}`)
-  const parsed: unknown = builtin.op.input.parse({ ...input, organizationId })
+  const parsed: unknown = builtin.op.input.parse({ ...input, organizationId: run.organizationId })
   // Operations ignore fields they don't declare, so the extra organizationId is harmless for mailbox-scoped tools.
-  return builtin.op.run({ env, actor: { userId }, waitUntil: () => {} } as never, parsed)
+  const actor: Actor = { userId: run.userId, mailboxIds: run.mailboxes }
+  return builtin.op.run({ env, actor, waitUntil: () => {} } as never, parsed)
 }
 
 export const toolLabel = (name: string) => BUILTIN.find((b) => b.op.name === name)?.label ?? name

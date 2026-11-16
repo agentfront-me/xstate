@@ -3,7 +3,7 @@ title: Security
 description: How xstate protects your accounts, email, files and agents, and what it does with risky attachments.
 ---
 
-**Last updated:** November 11, 2026
+**Last updated:** November 16, 2026
 
 This page describes what xstate actually does to keep your organization's data safe. We update it whenever we
 change how something works. Recent changes are listed [at the end](#changes).
@@ -99,6 +99,29 @@ and API. Mail apps connected over IMAP still receive the original message.
   approve. You can change this per tool. Every decision is recorded with who made it and when.
 - **Limits.** Each agent has limits on steps per run, runs per day, runs per sender and, optionally, spend.
 
+## Connected AI apps
+
+You can connect an AI app such as Claude, Cursor or ChatGPT to xstate (over MCP), so it can work with your mail,
+calendar, files and contacts.
+
+- **You sign in and approve on xstate.** The app never sees your password. Before anything is granted, xstate shows
+  the app's name, whether its publisher's domain could be verified, and where the access will be sent.
+- **You choose what it can do.** You pick the organization, the mailboxes, and a level for email (read only, draft
+  only, or draft and send), calendar, storage and contacts. Draft only is the default: the app can't send mail
+  unless you allow it.
+- **It can never do more than you can.** Every action is checked against your own access, then narrowed to what
+  you chose. Mail and calendars of mailboxes you didn't pick are out of reach, including through search.
+- **Some things are never available to a connected app:** resetting mailbox passwords, giving people access to
+  mailboxes, API keys, AI provider keys, secrets, inviting or removing members, and public file links. Managing
+  domains and mailboxes is off unless an owner or admin turns it on for that connection.
+- **Tokens.** Access tokens last one hour and are stored only as hashes. A connection ends 30 days after its last
+  use. If you leave an organization, the app loses access to it straight away.
+- **You can disconnect an app at any time** in Settings → Connected apps, which shows what each app may do and
+  when it was last active. Owners and admins see every app connected to the organization and can disconnect any
+  of them. Access ends at once.
+- **Limits and records.** Each connected app can make up to 120 calls a minute. Every call is logged with who made
+  it, which app and which tool, but never the contents of your mail or files.
+
 ## Keys and webhooks
 
 - **API secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or roll them.
@@ -118,6 +141,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 16, 2026:** AI apps can be connected over MCP, with access you choose when you approve them.
+- **November 16, 2026:** An agent's search of files and mail now covers only the mailboxes it was given, not every
+  mailbox the person it acts for can read.
 - **November 11, 2026:** Sign-in and sign-up attempts are rate limited.
 - **November 11, 2026:** File-type rules for attachments: programs, disguised programs and risky archives are
   blocked. Macros and archives that can't be checked get a warning.

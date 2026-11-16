@@ -66,7 +66,7 @@ export const calendarListCalendars = defineOperation({
     '(the default) and Personal.',
   input: z.object({ mailboxId: id }),
   http: { method: 'GET', path: '/calendar/mailboxes/:mailboxId/calendars' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'calendar.read', readOnly: true },
   run: async ({ env, actor }, input) => ({ calendars: await mailserver.listCalendars(env, actor, input.mailboxId) }),
 })
 
@@ -83,7 +83,7 @@ export const calendarListEvents = defineOperation({
     calendarId: id.optional(),
   }),
   http: { method: 'GET', path: '/calendar/mailboxes/:mailboxId/events' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'calendar.read', readOnly: true },
   run: async ({ env, actor }, { mailboxId, ...range }) => ({
     events: await mailserver.listEvents(env, actor, mailboxId, range),
   }),
@@ -94,7 +94,7 @@ export const calendarGetEvent = defineOperation({
   description: 'Get one event, or one occurrence of a repeating event, by the id from calendar_list_events.',
   input: z.object({ mailboxId: id, eventId }),
   http: { method: 'GET', path: '/calendar/mailboxes/:mailboxId/events/:eventId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'calendar.read', readOnly: true },
   run: async ({ env, actor }, input) => ({ event: await mailserver.getEvent(env, actor, input.mailboxId, input.eventId) }),
 })
 
@@ -107,6 +107,7 @@ export const calendarCreateEvent = defineOperation({
     'emailed to them from the mailbox address unless notify is false; outside guests count against sending limits.',
   input: z.object({ mailboxId: id, ...eventFields }),
   http: { method: 'POST', path: '/calendar/mailboxes/:mailboxId/events', status: 201 },
+  mcp: { scope: 'calendar.write' },
   run: async ({ env, actor }, { mailboxId, ...input }) => ({
     event: await mailserver.createEvent(env, actor, mailboxId, input),
   }),
@@ -129,6 +130,7 @@ export const calendarUpdateEvent = defineOperation({
     occurrence: localDateTime.optional(),
   }),
   http: { method: 'PATCH', path: '/calendar/mailboxes/:mailboxId/events/:eventId' },
+  mcp: { scope: 'calendar.write' },
   run: async ({ env, actor }, { mailboxId, eventId, ...input }) => ({
     event: await mailserver.updateEvent(env, actor, mailboxId, eventId, input),
   }),
@@ -141,7 +143,7 @@ export const calendarDeleteEvent = defineOperation({
     'are emailed a cancellation unless notify is false. Cannot be undone.',
   input: z.object({ mailboxId: id, eventId, occurrence: localDateTime.optional(), notify: flag.optional() }),
   http: { method: 'DELETE', path: '/calendar/mailboxes/:mailboxId/events/:eventId' },
-  mcp: { destructive: true },
+  mcp: { scope: 'calendar.write', destructive: true },
   run: ({ env, actor }, { mailboxId, eventId, ...options }) =>
     mailserver.deleteEvent(env, actor, mailboxId, eventId, options),
 })
@@ -153,6 +155,7 @@ export const calendarRespondToEvent = defineOperation({
     'the answer. Applies to every occurrence of a repeating event.',
   input: z.object({ mailboxId: id, eventId, status: z.enum(['accepted', 'tentative', 'declined']) }),
   http: { method: 'POST', path: '/calendar/mailboxes/:mailboxId/events/:eventId/rsvp' },
+  mcp: { scope: 'calendar.write' },
   run: async ({ env, actor }, input) => ({
     event: await mailserver.respondToEvent(env, actor, input.mailboxId, input.eventId, input.status),
   }),
@@ -169,7 +172,7 @@ export const calendarGetInvite = defineOperation({
     'a reply who answered and how.',
   input: z.object({ mailboxId: id, blobId }),
   http: { method: 'GET', path: '/calendar/mailboxes/:mailboxId/invites/:blobId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'calendar.read', readOnly: true },
   run: async ({ env, actor }, input) => ({ invite: await mailserver.getInvite(env, actor, input.mailboxId, input.blobId) }),
 })
 
@@ -181,6 +184,7 @@ export const calendarApplyInvite = defineOperation({
     'organizer. For a cancellation: removes it from your calendar. Returns your copy (event), or null once removed.',
   input: z.object({ mailboxId: id, blobId, status: z.enum(['accepted', 'tentative', 'declined']).optional() }),
   http: { method: 'POST', path: '/calendar/mailboxes/:mailboxId/invites/:blobId' },
+  mcp: { scope: 'calendar.write' },
   run: async ({ env, actor }, input) => ({
     event: await mailserver.applyInvite(env, actor, input.mailboxId, input.blobId, input.status),
   }),

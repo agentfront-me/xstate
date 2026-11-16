@@ -50,3 +50,6 @@ DOMAIN_CONNECT_ENABLED=false
 DOMAIN_CONNECT_KEY_HOST=_dck1
 # PKCS#8 RSA private key, the base64 body on one line (no BEGIN/END lines).
 DOMAIN_CONNECT_PRIVATE_KEY=
+
+# The MCP server and its OAuth sign-in, on the API's own local address (production: https://mcp.xstate.com).
+MCP_URL=http://localhost:8788

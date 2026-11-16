@@ -21,6 +21,7 @@ xstate shows the DNS records your domain needs. If your DNS is at a provider tha
 Cloudflare, one click writes them for you. Otherwise copy them into your DNS provider; xstate checks them
 automatically.
 
-## 5. Connect an agent
+## 5. Connect an AI app
 
-Connect Claude, Claude Code, Codex or Cursor over MCP and choose what it may do.
+Connect Claude, Claude Code, Codex, Cursor or ChatGPT over MCP and choose what it may do. See
+[Connect AI apps](./mcp.md).

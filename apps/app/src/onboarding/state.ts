@@ -1,10 +1,9 @@
 // What onboarding knows about the signed-in person, the steps, and the progress kept in localStorage (choices
-// the API doesn't store yet: skipping verification, finishing step 5, the chosen agent).
+// the API doesn't store yet: skipping verification, finishing step 5, the app picked on step 5).
 
 import { PROGRESS_KEY, readJson, writeJson } from '../lib/core'
 import type { Domain, Mailbox, Org, User } from '../lib/types'
 
-export const MCP_URL = 'https://mcp.xstate.com/sse'
 export const LOCAL_PART_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 export const POLL_MS = 5000
 
@@ -37,7 +36,8 @@ export type Progress = {
   provider?: Provider & { domainId: string }
   skippedVerify?: string
   finished?: boolean
-  agent?: { id: string; addresses: string[]; access: string }
+  /** The app picked on step 5, to show it again on a return visit. */
+  agent?: { id: string }
 }
 
 export const progress = (): Progress => readJson<Progress>(PROGRESS_KEY) ?? {}

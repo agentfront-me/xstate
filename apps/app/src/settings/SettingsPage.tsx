@@ -1,4 +1,4 @@
-// Settings: Account, Members, Domains, Migration, AI providers, Secrets, API keys, Billing, Integrations.
+// Settings: Account, Members, Domains, Migration, Connected apps, AI providers, Secrets, API keys, Billing, Integrations.
 //
 // Account, Members, Domains, AI providers, Secrets and API keys use the API when signed in (AI providers and Secrets
 // live in ./AiSections). Billing and Integrations have no API yet: they show sample data (./store), marked "Sample
@@ -34,11 +34,12 @@ import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
 import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
 import { AiProvidersSection, LiveSecretsSection } from './AiSections'
+import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'migration' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
+  id: 'account' | 'members' | 'domains' | 'migration' | 'connected-apps' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
   label: string
   icon: IconName
   sample?: boolean
@@ -70,6 +71,7 @@ const SECTIONS: Section[] = [
     },
   },
   { id: 'migration', label: 'Migration', icon: 'download', sub: (a) => migrationSub(a) },
+  { id: 'connected-apps', label: 'Connected apps', icon: 'bot', sub: () => 'Claude, Cursor and other AI apps' },
   { id: 'ai-providers', label: 'AI providers', icon: 'sparkles', sub: () => 'Your Anthropic and OpenAI keys' },
   {
     id: 'secrets',
@@ -137,6 +139,7 @@ export function SettingsPage({ section }: { section: string }) {
             {s.id === 'members' && (account.mode === 'live' ? <LiveMembers account={account} /> : <MembersSection account={account} data={data} />)}
             {s.id === 'domains' && <DomainsSection account={account} />}
             {s.id === 'migration' && <MigrationSection account={account} />}
+            {s.id === 'connected-apps' && <ConnectedAppsSection account={account} />}
             {s.id === 'ai-providers' && <AiProvidersSection account={account} />}
             {s.id === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
             {s.id === 'api-keys' && <ApiKeysSection account={account} />}

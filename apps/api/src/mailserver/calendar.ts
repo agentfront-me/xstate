@@ -8,7 +8,8 @@ import * as mailboxAccessDb from '../db/mailbox-access'
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
 import * as usersDb from '../db/users'
-import { loadMember, mailAccess } from './access'
+import { inMailboxScope } from '../auth/scope.ts'
+import { loadMember, mailAccess, outOfScope } from './access'
 import {
   eventFields,
   mailto,
@@ -404,6 +405,7 @@ async function context(env: EmailEnv, actor: Actor, mailboxId: string, need: 're
   const access = mailAccess(member, mailbox, own)
   // Same answer as a missing mailbox, so people can't probe which mailboxes exist.
   if (!access.read) throw missing('mailbox')
+  if (!inMailboxScope(actor, mailbox.id)) throw outOfScope()
   if (need === 'write' && !access.write) throw forbidden('You can only read this calendar')
   return { mailbox, member, write: access.write }
 }

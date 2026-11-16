@@ -1,9 +1,10 @@
-// Every operation the API exposes. The HTTP router (and later the MCP server) is built from this list.
+// Every operation the API exposes. The HTTP router and the MCP server (mcp/server.ts) are built from this list.
 
 import { agentOperations } from './agents'
 import { audienceOperations } from './audience'
 import { authOperations } from './auth'
 import { calendarOperations } from './calendar'
+import { connectionOperations } from './connections'
 import { deviceOperations } from './devices'
 import type { AnyOperation } from './define'
 import { emailOperations } from './email'
@@ -21,4 +22,5 @@ export const operations: readonly AnyOperation[] = [
   ...audienceOperations,
   ...agentOperations,
   ...deviceOperations,
+  ...connectionOperations,
 ]

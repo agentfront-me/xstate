@@ -11,12 +11,15 @@
     "mail:dev": "scripts/mail-dev.sh start",
     "mail:reset": "scripts/mail-dev.sh reset",
     "typecheck": "tsc",
-    "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts'"
+    "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts' && node scripts/mcp-tools-doc.mjs --check",
+    "docs:mcp": "node scripts/mcp-tools-doc.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.99",
     "@ai-sdk/openai": "4.0.111",
+    "@cloudflare/workers-oauth-provider": "1.2.4",
     "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "agents": "0.33.0",
     "ai": "7.0.166",
     "aws4fetch": "^1.0.20",
@@ -25,6 +28,7 @@
   },
   "devDependencies": {
     "@xstate/tsconfig": "workspace:*",
+    "esbuild": "0.28.2",
     "typescript": "^7.0.2",
     "wrangler": "^4.141.0"
   }

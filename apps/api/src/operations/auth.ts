@@ -41,7 +41,7 @@ export const authMe = defineOperation({
   description: 'The signed-in user and the organizations they belong to, with their role and member id in each.',
   input: z.object({}),
   http: { method: 'GET', path: '/auth/me' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'profile', readOnly: true },
   run: async ({ env, actor, waitUntil }) => {
     const me = await getMe(env, actor)
     // Backfill: organizations created before buckets existed get theirs the next time their owner signs in.

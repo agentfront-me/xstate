@@ -8,6 +8,7 @@ import * as membersDb from '../db/members'
 import type { AccessLevel } from '../db/mailbox-access'
 import type { MailboxRow } from '../db/mailboxes'
 import type { DomainAccess, Member, OrgPermission } from '../db/members'
+import { inMailboxScope } from '../auth/scope.ts'
 import { EmailError, forbidden, notFound } from './errors'
 import type { Actor, EmailEnv } from './types'
 
@@ -91,6 +92,7 @@ export async function mailContext(env: EmailEnv, actor: Actor, mailboxId: string
   const access = mailAccess(member, mailbox, own)
   // Same answer as a missing mailbox, so people can't probe which mailboxes exist.
   if (!access.read) throw notFound('mailbox')
+  if (!inMailboxScope(actor, mailbox.id)) throw outOfScope()
   if (need === 'write' && !access.write) throw forbidden("You can only read this mailbox")
   return { mailbox, member }
 }
@@ -102,7 +104,12 @@ export async function readableMailboxes(env: EmailEnv, actor: Actor, organizatio
     mailboxesDb.list(env.DB, organizationId),
     mailboxAccessDb.forMember(env.DB, member.id),
   ])
-  return rows.filter((row) => mailAccess(member, row, own.get(row.id)).read)
+  return rows.filter((row) => inMailboxScope(actor, row.id) && mailAccess(member, row, own.get(row.id)).read)
+}
+
+/** The mailbox is one the user can read, but the connection they act through wasn't given it (Actor.mailboxIds). */
+export function outOfScope(): EmailError {
+  return forbidden("This connection can't use that mailbox. It was connected with other mailboxes only")
 }
 
 export async function requireMemberInOrg(env: EmailEnv, memberId: string, organizationId: string): Promise<void> {

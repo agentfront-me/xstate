@@ -33,6 +33,8 @@ const DEV_API = (import.meta.env.VITE_API_URL as string | undefined) || 'http://
 const API = desktop?.apiUrl ?? (LOCAL ? DEV_API : 'https://api.xstate.com/v1')
 /** The marketing site and docs (apps/web). The app itself lives on go.xstate.com. */
 export const SITE_URL = LOCAL ? 'http://localhost:8785' : 'https://xstate.com'
+/** The address people give their AI app to connect it to xstate (the API serves it locally, apps/api/src/mcp/oauth.ts). */
+export const MCP_URL = !desktop?.apiUrl && LOCAL ? `${new URL(DEV_API).origin}/mcp` : 'https://mcp.xstate.com/mcp'
 /** Where the app is served on the web; links made inside the desktop app point here. */
 export const APP_ORIGIN = 'https://go.xstate.com'
 const SESSION_KEY = 'xstate.session'

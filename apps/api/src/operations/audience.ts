@@ -41,7 +41,7 @@ export const audienceOverview = defineOperation({
     'With domain, the total and segment counts cover only people on that domain or its subdomains.',
   input: z.object({ organizationId: id, domain: domain.optional() }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/overview' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, input) => audience.overview(env, actor, input.organizationId, input.domain),
 })
 
@@ -50,7 +50,7 @@ export const audienceSchema = defineOperation({
   description: 'The custom attribute names (with type) and event names seen so far, for building segment filters.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/schema' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, input) => audience.schema(env, actor, input.organizationId),
 })
 
@@ -63,7 +63,7 @@ export const audienceListPeople = defineOperation({
     'from Google that you emailed but never saved). Pages of up to 100; pass nextCursor back as cursor.',
   input: listInput.extend({ cursor: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/people' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, { organizationId, ...query }) => audience.listPeople(env, actor, organizationId, query),
 })
 
@@ -83,7 +83,7 @@ export const audienceGetPerson = defineOperation({
     'latest 30 emails to or from their address in the mailboxes you can read (null if mail is unavailable).',
   input: z.object({ organizationId: id, personId: id }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/people/:personId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, input) => audience.getPerson(env, actor, input.organizationId, input.personId),
 })
 
@@ -98,6 +98,7 @@ export const audienceAddPerson = defineOperation({
     shared: z.boolean().default(false),
   }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/people', status: 201 },
+  mcp: { scope: 'contacts.write' },
   run: async ({ env, actor }, { organizationId, ...input }) => ({ person: await audience.addPerson(env, actor, organizationId, input) }),
 })
 
@@ -106,6 +107,7 @@ export const audienceUpdatePerson = defineOperation({
   description: "Change a person's name, email or phone, or set custom attributes (null removes one).",
   input: personFields.extend({ organizationId: id, personId: id }),
   http: { method: 'PATCH', path: '/audience/orgs/:organizationId/people/:personId' },
+  mcp: { scope: 'contacts.write' },
   run: async ({ env, actor }, { organizationId, personId, ...fields }) => ({
     person: await audience.updatePerson(env, actor, organizationId, personId, fields),
   }),
@@ -125,7 +127,7 @@ export const audienceSuggestContacts = defineOperation({
   description: 'Contacts whose name or email contains q, for addressing mail: your own and shared contacts first, then auto-saved "Other contacts".',
   input: z.object({ organizationId: id, q: z.string().trim().min(1).max(100) }),
   http: { method: 'GET', path: '/audience/orgs/:organizationId/contacts/suggest' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, input) => audience.suggestContacts(env, actor, input.organizationId, input.q),
 })
 
@@ -134,7 +136,7 @@ export const audienceDeletePeople = defineOperation({
   description: 'Delete people and all their events for good (for example on a data deletion request).',
   input: z.object({ organizationId: id, ids: z.array(id).min(1).max(500) }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/people/delete' },
-  mcp: { destructive: true },
+  mcp: { scope: 'contacts.write', destructive: true },
   run: ({ env, actor }, input) => audience.deletePeople(env, actor, input.organizationId, input.ids),
 })
 
@@ -148,7 +150,7 @@ export const audienceCountFilter = defineOperation({
     'not_set|is_true|is_false, value }, or { kind: "event", name, op: at_least|did_not, count, days (max 90) }.',
   input: z.object({ organizationId: id, filter, domain: domain.optional() }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/count' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'contacts.read', readOnly: true },
   run: ({ env, actor }, input) => audience.countFilter(env, actor, input.organizationId, input.filter, input.domain),
 })
 
@@ -157,6 +159,7 @@ export const audienceCreateSegment = defineOperation({
   description: 'Save a segment: a name and a filter (see audience_count for the filter shape). Membership is always live.',
   input: z.object({ organizationId: id, name: segmentName, icon: z.enum(SEGMENT_ICONS).optional(), filter }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/segments', status: 201 },
+  mcp: { scope: 'contacts.write' },
   run: async ({ env, actor }, { organizationId, ...input }) => ({ segment: await audience.saveSegment(env, actor, organizationId, input) }),
 })
 
@@ -165,6 +168,7 @@ export const audienceUpdateSegment = defineOperation({
   description: "Rename a segment or replace its filter.",
   input: z.object({ organizationId: id, segmentId: id, name: segmentName, icon: z.enum(SEGMENT_ICONS).optional(), filter }),
   http: { method: 'PUT', path: '/audience/orgs/:organizationId/segments/:segmentId' },
+  mcp: { scope: 'contacts.write' },
   run: async ({ env, actor }, { organizationId, segmentId, ...input }) => ({
     segment: await audience.saveSegment(env, actor, organizationId, { id: segmentId, ...input }),
   }),
@@ -175,7 +179,7 @@ export const audienceDeleteSegment = defineOperation({
   description: 'Delete a saved segment. The people in it are not affected.',
   input: z.object({ organizationId: id, segmentId: id }),
   http: { method: 'DELETE', path: '/audience/orgs/:organizationId/segments/:segmentId' },
-  mcp: { destructive: true },
+  mcp: { scope: 'contacts.write', destructive: true },
   run: ({ env, actor }, input) => audience.deleteSegment(env, actor, input.organizationId, input.segmentId),
 })
 

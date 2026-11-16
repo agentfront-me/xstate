@@ -22,7 +22,7 @@ export const storageListTop = defineOperation({
     'and your role (viewer, editor or manager). Open a folder with storage_get_folder.',
   input: z.object({ organizationId: id, view: z.enum(['personal', 'organization', 'shared', 'trash']).default('personal') }),
   http: { method: 'GET', path: '/storage/orgs/:organizationId/items' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: async ({ env, actor }, input) => ({ items: await drive.listTop(env, actor, input.organizationId, input.view) }),
 })
 
@@ -31,7 +31,7 @@ export const storageGetFolder = defineOperation({
   description: "List a folder's contents (folders first), with the folder itself and the path to it.",
   input: z.object({ folderId: id }),
   http: { method: 'GET', path: '/storage/folders/:folderId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.getFolder(env, actor, input.folderId),
 })
 
@@ -40,7 +40,7 @@ export const storageGetItem = defineOperation({
   description: 'Get one file or folder: name, type, size, current version, owner, your role, and the path to it.',
   input: z.object({ itemId: id }),
   http: { method: 'GET', path: '/storage/items/:itemId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.getItem(env, actor, input.itemId),
 })
 
@@ -51,6 +51,7 @@ export const storageCreateFolder = defineOperation({
     'private to you) or "organization" (a team folder everyone in the organization can view until you change it).',
   input: z.object({ organizationId: id, name, parentId: id.optional(), space: space.optional() }),
   http: { method: 'POST', path: '/storage/orgs/:organizationId/folders', status: 201 },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, { organizationId, ...input }) => ({
     item: await drive.createFolder(env, actor, organizationId, input),
   }),
@@ -63,6 +64,7 @@ export const storageUpdateItem = defineOperation({
     'to the top of My Files ("personal") or the team folders ("organization"). Needs editor access on both sides.',
   input: z.object({ itemId: id, name: name.optional(), parentId: id.nullable().optional(), space: space.optional() }),
   http: { method: 'PATCH', path: '/storage/items/:itemId' },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, { itemId, ...input }) => ({ item: await drive.updateItem(env, actor, itemId, input) }),
 })
 
@@ -71,7 +73,7 @@ export const storageTrashItem = defineOperation({
   description: 'Move a file or folder (with everything inside) to the trash. It can be restored for 30 days.',
   input: z.object({ itemId: id }),
   http: { method: 'POST', path: '/storage/items/:itemId/trash' },
-  mcp: { destructive: true },
+  mcp: { scope: 'storage.write', destructive: true },
   run: ({ env, actor }, input) => drive.trashItem(env, actor, input.itemId),
 })
 
@@ -80,6 +82,7 @@ export const storageRestoreItem = defineOperation({
   description: 'Take a file or folder out of the trash, back where it was.',
   input: z.object({ itemId: id }),
   http: { method: 'POST', path: '/storage/items/:itemId/restore' },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, input) => ({ item: await drive.restoreItem(env, actor, input.itemId) }),
 })
 
@@ -88,7 +91,7 @@ export const storageDeleteItem = defineOperation({
   description: 'Delete a trashed file or folder for good, with everything inside it. Managers only. Cannot be undone.',
   input: z.object({ itemId: id }),
   http: { method: 'DELETE', path: '/storage/items/:itemId' },
-  mcp: { destructive: true },
+  mcp: { scope: 'storage.write', destructive: true },
   run: ({ env, actor }, input) => drive.deleteItem(env, actor, input.itemId),
 })
 
@@ -106,7 +109,7 @@ export const storageDownloadUrl = defineOperation({
   description: 'A link that downloads the file (or an earlier version) for the next 5 minutes.',
   input: z.object({ itemId: id, version: version.optional() }),
   http: { method: 'GET', path: '/storage/items/:itemId/download' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.downloadUrl(env, actor, input.itemId, input.version),
 })
 
@@ -117,7 +120,7 @@ export const storageReadText = defineOperation({
     'item (with its version) and text; truncated is true when the text was cut at 1 MB.',
   input: z.object({ itemId: id }),
   http: { method: 'GET', path: '/storage/items/:itemId/text' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.readText(env, actor, input.itemId),
 })
 
@@ -138,7 +141,7 @@ export const storageSearch = defineOperation({
     limit: z.coerce.number().int().min(1).max(20).default(8),
   }),
   http: { method: 'GET', path: '/storage/orgs/:organizationId/search' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => search(env, actor, input),
 })
 
@@ -149,6 +152,7 @@ export const storageWriteText = defineOperation({
     'saved since, this fails with version_conflict; read it again and retry.',
   input: z.object({ itemId: id, baseVersion: version, text: z.string().max(1024 * 1024) }),
   http: { method: 'PUT', path: '/storage/items/:itemId/text' },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, input) => ({
     item: await drive.writeText(env, actor, input.itemId, input.baseVersion, input.text),
   }),
@@ -167,6 +171,7 @@ export const storageCreateTextFile = defineOperation({
     space: space.optional(),
   }),
   http: { method: 'POST', path: '/storage/orgs/:organizationId/text-files', status: 201 },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, { organizationId, name, text, ...where }) => ({
     item: await drive.uploadFile(env, actor, organizationId, where, {
       name,
@@ -182,7 +187,7 @@ export const storageListVersions = defineOperation({
   description: 'A file\'s current version and the earlier ones still kept (the last 5, each for 30 days).',
   input: z.object({ itemId: id }),
   http: { method: 'GET', path: '/storage/items/:itemId/versions' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.listVersions(env, actor, input.itemId),
 })
 
@@ -191,6 +196,7 @@ export const storageRestoreVersion = defineOperation({
   description: 'Make an earlier version current again. It is saved as a new version, so nothing is lost.',
   input: z.object({ itemId: id, version }),
   http: { method: 'POST', path: '/storage/items/:itemId/versions/:version/restore' },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, input) => ({ item: await drive.restoreVersion(env, actor, input.itemId, input.version) }),
 })
 
@@ -201,7 +207,7 @@ export const storageListAccess = defineOperation({
     'and what comes from folders above it.',
   input: z.object({ itemId: id }),
   http: { method: 'GET', path: '/storage/items/:itemId/access' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.listAccess(env, actor, input.itemId),
 })
 
@@ -217,6 +223,7 @@ export const storageSetAccess = defineOperation({
     grants: z.array(z.object({ memberId: id, role: role.nullable() })).max(100).optional(),
   }),
   http: { method: 'PUT', path: '/storage/items/:itemId/access' },
+  mcp: { scope: 'storage.write' },
   run: ({ env, actor }, { itemId, ...input }) => drive.setAccess(env, actor, itemId, input),
 })
 
@@ -273,7 +280,7 @@ export const storageGetUsage = defineOperation({
     'items are in your trash.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/storage/orgs/:organizationId/usage' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'storage.read', readOnly: true },
   run: ({ env, actor }, input) => drive.getUsage(env, actor, input.organizationId),
 })
 
@@ -282,7 +289,7 @@ export const storageListMembers = defineOperation({
   description: 'People in the organization, with their member id, to share files with.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/storage/orgs/:organizationId/members' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'profile', readOnly: true },
   run: async ({ env, actor }, input) => ({ members: await drive.listMembers(env, actor, input.organizationId) }),
 })
 
@@ -302,7 +309,7 @@ export const storageListAttachments = defineOperation({
     limit: z.coerce.number().int().min(1).max(200).optional(),
   }),
   http: { method: 'GET', path: '/storage/orgs/:organizationId/attachments' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: ({ env, actor }, { organizationId, ...input }) => drive.listAttachments(env, actor, organizationId, input),
 })
 
@@ -311,7 +318,7 @@ export const storageGetAttachment = defineOperation({
   description: 'Get one mail attachment: name, type, size, received or sent, its message and thread, and the mailbox.',
   input: z.object({ fileId: id }),
   http: { method: 'GET', path: '/storage/attachments/:fileId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: ({ env, actor }, input) => drive.getAttachment(env, actor, input.fileId),
 })
 
@@ -329,7 +336,7 @@ export const storageAttachmentDownloadUrl = defineOperation({
   description: 'A link that downloads a mail attachment for the next 5 minutes.',
   input: z.object({ fileId: id }),
   http: { method: 'GET', path: '/storage/attachments/:fileId/download' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: ({ env, actor }, input) => drive.attachmentDownloadUrl(env, actor, input.fileId),
 })
 
@@ -339,6 +346,7 @@ export const storageSaveAttachment = defineOperation({
     'Copy a mail attachment into Storage so it can be edited and shared: into parentId, or the top of My Files.',
   input: z.object({ fileId: id, parentId: id.optional(), space: space.optional() }),
   http: { method: 'POST', path: '/storage/attachments/:fileId/save', status: 201 },
+  mcp: { scope: 'storage.write' },
   run: async ({ env, actor }, { fileId, ...where }) => ({ item: await drive.saveAttachment(env, actor, fileId, where) }),
 })
 

@@ -16,6 +16,7 @@ export const emailAddDomain = defineOperation({
     'call email_get_dns_records next to get the records the owner must add at their DNS provider.',
   input: z.object({ organizationId: id, name: z.string().trim().min(3).max(253) }),
   http: { method: 'POST', path: '/email/orgs/:organizationId/domains', status: 201 },
+  mcp: { scope: 'setup' },
   run: async ({ env, actor }, input) => ({ domain: await mailserver.addDomain(env, actor, input.organizationId, input.name) }),
 })
 
@@ -26,7 +27,7 @@ export const emailCheckDomain = defineOperation({
     '("taken"), and which provider hosts its DNS (e.g. Cloudflare), or null if unrecognized.',
   input: z.object({ name: z.string().trim().min(3).max(253) }),
   http: { method: 'GET', path: '/email/domain-check' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: ({ env }, input) => mailserver.checkDomain(env, input.name),
 })
 
@@ -35,7 +36,7 @@ export const emailListDomains = defineOperation({
   description: "List the organization's domains that you can see.",
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/email/orgs/:organizationId/domains' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: async ({ env, actor }, input) => ({ domains: await mailserver.listDomains(env, actor, input.organizationId) }),
 })
 
@@ -44,7 +45,7 @@ export const emailGetDomain = defineOperation({
   description: 'Get one domain: its name, verification status and whether mail is enabled.',
   input: z.object({ domainId: id }),
   http: { method: 'GET', path: '/email/domains/:domainId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: async ({ env, actor }, input) => ({ domain: await mailserver.getDomain(env, actor, input.domainId) }),
 })
 
@@ -54,7 +55,7 @@ export const emailGetDnsRecords = defineOperation({
     'Get the DNS records (MX, SPF, DKIM, DMARC, SRV, MTA-STS, autoconfig) the domain owner must add, as a zone file.',
   input: z.object({ domainId: id }),
   http: { method: 'GET', path: '/email/domains/:domainId/dns' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: async ({ env, actor }, input) => ({ zoneFile: await mailserver.getDomainDnsRecords(env, actor, input.domainId) }),
 })
 
@@ -65,6 +66,7 @@ export const emailVerifyDomain = defineOperation({
     'Marks the domain "verified" once every required record is found. Safe to call repeatedly while waiting.',
   input: z.object({ domainId: id }),
   http: { method: 'POST', path: '/email/domains/:domainId/verify' },
+  mcp: { scope: 'setup' },
   run: ({ env, actor }, input) => mailserver.verifyDomain(env, actor, input.domainId),
 })
 
@@ -77,7 +79,7 @@ export const emailDomainConnectUrl = defineOperation({
     'redirectUri (optional, must be on an xstate app origin) is where the provider sends the browser back to.',
   input: z.object({ domainId: id, redirectUri: z.string().url().max(2048).optional() }),
   http: { method: 'GET', path: '/email/domains/:domainId/domain-connect' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: ({ env, actor }, input) => mailserver.domainConnectUrl(env, actor, input.domainId, input.redirectUri),
 })
 
@@ -86,6 +88,7 @@ export const emailSetDomainEnabled = defineOperation({
   description: 'Turn mail for a domain on or off. Turning it off stops delivery but deletes nothing.',
   input: z.object({ domainId: id, enabled: z.boolean() }),
   http: { method: 'PATCH', path: '/email/domains/:domainId' },
+  mcp: { scope: 'setup' },
   run: async ({ env, actor }, input) => ({
     domain: await mailserver.setDomainEnabled(env, actor, input.domainId, input.enabled),
   }),
@@ -96,7 +99,7 @@ export const emailRemoveDomain = defineOperation({
   description: 'Remove a domain from xstate. Fails while any mailbox or alias still uses it.',
   input: z.object({ domainId: id }),
   http: { method: 'DELETE', path: '/email/domains/:domainId' },
-  mcp: { destructive: true },
+  mcp: { scope: 'setup', destructive: true },
   run: ({ env, actor }, input) => mailserver.removeDomain(env, actor, input.domainId),
 })
 
@@ -118,6 +121,7 @@ export const emailCreateMailbox = defineOperation({
     ownerMemberId: id.optional(),
   }),
   http: { method: 'POST', path: '/email/domains/:domainId/mailboxes', status: 201 },
+  mcp: { scope: 'setup' },
   run: ({ env, actor }, input) => mailserver.createMailbox(env, actor, input),
 })
 
@@ -126,7 +130,7 @@ export const emailListMailboxes = defineOperation({
   description: 'List the mailboxes in the organization that you can see, optionally only one domain or kind.',
   input: z.object({ organizationId: id, domainId: id.optional(), kind: kind.optional() }),
   http: { method: 'GET', path: '/email/orgs/:organizationId/mailboxes' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: async ({ env, actor }, { organizationId, ...filter }) => ({
     mailboxes: await mailserver.listMailboxes(env, actor, organizationId, filter),
   }),
@@ -137,7 +141,7 @@ export const emailGetMailbox = defineOperation({
   description: 'Get one mailbox: its address, aliases, kind, display name and quota.',
   input: z.object({ mailboxId: id }),
   http: { method: 'GET', path: '/email/mailboxes/:mailboxId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: async ({ env, actor }, input) => ({ mailbox: await mailserver.getMailbox(env, actor, input.mailboxId) }),
 })
 
@@ -150,6 +154,7 @@ export const emailUpdateMailbox = defineOperation({
     quotaBytes: z.number().int().positive().nullable().optional(),
   }),
   http: { method: 'PATCH', path: '/email/mailboxes/:mailboxId' },
+  mcp: { scope: 'setup' },
   run: async ({ env, actor }, { mailboxId, ...changes }) => ({
     mailbox: await mailserver.updateMailbox(env, actor, mailboxId, changes),
   }),
@@ -160,6 +165,7 @@ export const emailSetMailboxPassword = defineOperation({
   description: 'Reset the password of a personal or agent mailbox. Its mail apps must sign in again.',
   input: z.object({ mailboxId: id, password }),
   http: { method: 'PUT', path: '/email/mailboxes/:mailboxId/password' },
+  mcp: false,
   run: ({ env, actor }, input) => mailserver.setMailboxPassword(env, actor, input.mailboxId, input.password),
 })
 
@@ -168,7 +174,7 @@ export const emailDeleteMailbox = defineOperation({
   description: 'Permanently delete a mailbox with all its mail and addresses. This cannot be undone.',
   input: z.object({ mailboxId: id }),
   http: { method: 'DELETE', path: '/email/mailboxes/:mailboxId' },
-  mcp: { destructive: true },
+  mcp: { scope: 'setup', destructive: true },
   run: ({ env, actor }, input) => mailserver.deleteMailbox(env, actor, input.mailboxId),
 })
 
@@ -179,6 +185,7 @@ export const emailAddAlias = defineOperation({
   description: 'Add an extra address to a mailbox, on any domain of the organization. Mail to it lands in the mailbox.',
   input: z.object({ mailboxId: id, localPart, domainId: id }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/aliases', status: 201 },
+  mcp: { scope: 'setup' },
   run: async ({ env, actor }, { mailboxId, ...alias }) => ({
     mailbox: await mailserver.addAlias(env, actor, mailboxId, alias),
   }),
@@ -189,7 +196,7 @@ export const emailRemoveAlias = defineOperation({
   description: 'Remove an alias address from a mailbox. Mail sent to it will bounce.',
   input: z.object({ mailboxId: id, address: z.string().trim().min(3).max(320) }),
   http: { method: 'DELETE', path: '/email/mailboxes/:mailboxId/aliases/:address' },
-  mcp: { destructive: true },
+  mcp: { scope: 'setup', destructive: true },
   run: async ({ env, actor }, input) => ({
     mailbox: await mailserver.removeAlias(env, actor, input.mailboxId, input.address),
   }),
@@ -202,7 +209,7 @@ export const emailListAccess = defineOperation({
   description: 'List the members who can open a mailbox, and their access (owner or full).',
   input: z.object({ mailboxId: id }),
   http: { method: 'GET', path: '/email/mailboxes/:mailboxId/access' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'setup', readOnly: true },
   run: async ({ env, actor }, input) => ({ access: await mailserver.listMailboxAccess(env, actor, input.mailboxId) }),
 })
 
@@ -212,6 +219,7 @@ export const emailGrantAccess = defineOperation({
     'Let a member open a shared mailbox from their own mail app. They get full access (read, send, organize).',
   input: z.object({ mailboxId: id, memberId: id }),
   http: { method: 'PUT', path: '/email/mailboxes/:mailboxId/access/:memberId' },
+  mcp: false,
   run: ({ env, actor }, input) => mailserver.grantMailboxAccess(env, actor, input.mailboxId, input.memberId),
 })
 
@@ -220,7 +228,7 @@ export const emailRevokeAccess = defineOperation({
   description: "Stop a member from opening a shared mailbox. A mailbox owner's access can't be revoked.",
   input: z.object({ mailboxId: id, memberId: id }),
   http: { method: 'DELETE', path: '/email/mailboxes/:mailboxId/access/:memberId' },
-  mcp: { destructive: true },
+  mcp: false,
   run: ({ env, actor }, input) => mailserver.revokeMailboxAccess(env, actor, input.mailboxId, input.memberId),
 })
 
@@ -236,7 +244,7 @@ export const emailListFolders = defineOperation({
     'one mailbox or every mailbox in the organization whose mail you can read.',
   input: z.object({ organizationId: id, mailboxId: id.optional() }),
   http: { method: 'GET', path: '/email/orgs/:organizationId/folders' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: async ({ env, actor }, input) => ({
     mailboxes: await mailserver.listFolders(env, actor, input.organizationId, input.mailboxId),
   }),
@@ -260,7 +268,7 @@ export const emailListMessages = defineOperation({
     limit: z.coerce.number().int().min(1).max(100).default(50),
   }),
   http: { method: 'GET', path: '/email/orgs/:organizationId/messages' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: ({ env, actor }, input) => mailserver.listMessages(env, actor, input.organizationId, input),
 })
 
@@ -271,7 +279,7 @@ export const emailGetThread = defineOperation({
     '(blobId, name, type, size). Does not mark anything as read.',
   input: z.object({ mailboxId: id, threadId: z.string().min(1).max(64) }),
   http: { method: 'GET', path: '/email/mailboxes/:mailboxId/threads/:threadId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: async ({ env, actor }, input) => ({
     messages: await mailserver.getThread(env, actor, input.mailboxId, input.threadId),
   }),
@@ -294,6 +302,7 @@ export const emailUpdateMessage = defineOperation({
     })
     .refine((v) => v.seen !== undefined || v.pinned !== undefined || v.folder !== undefined, 'Nothing to change'),
   http: { method: 'PATCH', path: '/email/mailboxes/:mailboxId/messages/:messageId' },
+  mcp: { scope: 'mail.draft' },
   run: ({ env, actor }, input) => mailserver.updateMessage(env, actor, input.mailboxId, input.messageId, input),
 })
 
@@ -351,6 +360,7 @@ export const emailSend = defineOperation({
       .optional(),
   }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/send', status: 201 },
+  mcp: { scope: 'mail.send' },
   run: async ({ env, actor }, input) => ({
     message: await mailserver.sendMessage(env, actor, input.mailboxId, {
       ...input,
@@ -378,6 +388,7 @@ export const emailCreateDraft = defineOperation({
     forwardOf: z.string().min(1).max(64).optional(),
   }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/drafts', status: 201 },
+  mcp: { scope: 'mail.draft' },
   run: async ({ env, actor }, input) => ({
     draft: await mailserver.saveDraft(env, actor, input.mailboxId, {
       ...input,
@@ -395,7 +406,7 @@ export const emailGetSendingStatus = defineOperation({
     'Owners and admins only.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/email/orgs/:organizationId/sending' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'mail.read', readOnly: true },
   run: ({ env, actor }, input) => mailserver.sendingStatus(env, actor, input.organizationId),
 })
 

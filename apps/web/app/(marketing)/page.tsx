@@ -15,10 +15,10 @@ export const metadata: Metadata = {
 
 const faqs = [
   ['Do I need to own a domain?', 'No. Connect one you own, buy one during setup, or start on a free you.xstate.email subdomain and move later.'],
-  ['Which agents can read my mail?', 'Claude, Claude Code, Codex and Cursor connect over MCP. Each agent gets its own scoped token; you choose read, draft, send and label permissions.'],
+  ['Which agents can read my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['How long does DNS take?', 'With Domain Connect (Cloudflare, GoDaddy, IONOS) records are written for you and verify in under a minute. Manual records usually verify within 15 minutes.'],
   ['Can I export everything?', 'Yes. Mail as .mbox, data as JSON or CSV, sites as static files. Exports are available on every plan.'],
-  ['What does machine readable mean here?', 'Every public URL returns HTML by default and JSON or Markdown when asked via the Accept header. The site also publishes llms.txt, an OpenAPI document, an MCP manifest and schema.org data in each page.'],
+  ['What does machine readable mean here?', 'Every public URL returns HTML by default and JSON or Markdown when asked via the Accept header. The site also publishes llms.txt, an OpenAPI document and schema.org data in each page.'],
 ]
 
 const structuredData = {
@@ -47,10 +47,10 @@ const structuredData = {
 const features = [
   { id: 'F01', tag: 'email', title: 'Email on your domain', body: 'Addresses on a domain you own, with sending, receiving, aliases and catch-all.', points: ['hello@, support@, sales@ in one click', 'IMAP, SMTP and JMAP', 'Shared inboxes per address'] },
   { id: 'F02', tag: 'dns', title: 'DNS that verifies itself', body: 'Records are written through Domain Connect where supported and checked automatically.', points: ['Cloudflare, GoDaddy, IONOS', 'Manual copy with live status', 'Send records to a developer'] },
-  { id: 'F03', tag: 'agents', title: 'Agents with scoped access', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft, send, label', 'Per-agent audit log', 'Revoke in one click'] },
+  { id: 'F03', tag: 'agents', title: 'Agents with scoped access', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send', 'Only the mailboxes you pick', 'Disconnect in one click'] },
   { id: 'F04', tag: 'data', title: 'Data you can query', body: 'Mail, contacts and files are indexed into tables you and your agents can read.', points: ['SQL and JSON endpoints', 'Full-text search', 'Daily snapshots'] },
   { id: 'F05', tag: 'sites', title: 'Sites on the same domain', body: 'Publish static pages and forms at your root or any subdomain, no extra host.', points: ['Deploy from git or upload', 'Forms land in your inbox', 'Edge cache, free TLS'] },
-  { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Every public page serves HTML to people and JSON, Markdown or llms.txt to programs.', points: ['Content negotiation on every URL', 'OpenAPI and MCP manifests', 'Structured data on every page'] },
+  { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Every public page serves HTML to people and JSON, Markdown or llms.txt to programs.', points: ['Content negotiation on every URL', 'OpenAPI document', 'Structured data on every page'] },
 ]
 
 const quotes = [
@@ -258,7 +258,6 @@ export default function Home() {
           <a href="/index.json">/index.json</a>
           <a href="/openapi.json">/openapi.json</a>
           <a href="/sitemap.xml">/sitemap.xml</a>
-          <a href="/.well-known/mcp.json">/.well-known/mcp.json</a>
           <span className="note">Add Accept: application/json to any public URL</span>
         </div>
         <div className="footer-base">

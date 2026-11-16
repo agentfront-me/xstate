@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "mcp",
     "...",
     "security",
     "---Legal---",

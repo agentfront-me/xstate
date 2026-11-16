@@ -161,6 +161,46 @@
         "--strictPort"
       ],
       "port": 8792
+    },
+    {
+      "name": "api-mcp",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8794",
+        "--inspector-port",
+        "9234",
+        "--persist-to",
+        ".wrangler/mcp-test",
+        "--var",
+        "APP_ORIGINS:http://localhost:8795",
+        "--var",
+        "APP_URL:http://localhost:8795",
+        "--var",
+        "MCP_URL:http://localhost:8794"
+      ],
+      "port": 8794
+    },
+    {
+      "name": "app-mcp",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8794/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8795",
+        "--strictPort"
+      ],
+      "port": 8795
     }
   ]
 }

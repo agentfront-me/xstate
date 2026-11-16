@@ -18,6 +18,7 @@ import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
 import { sendingHourly } from './mailserver'
+import { handleMcpHost, purgeOAuth } from './mcp/oauth'
 import { sesHourly } from './mailserver/domains'
 import type { AppEnv } from './http/types'
 import { operations } from './operations'
@@ -85,7 +86,8 @@ export { AgentRun } from './agents/run'
 export { LiveHub } from './live/hub'
 
 export default {
-  fetch: app.fetch,
+  // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) is this same Worker; everything else is the API.
+  fetch: (request, env, ctx) => handleMcpHost(request, env, ctx) ?? app.fetch(request, env, ctx),
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
@@ -106,6 +108,8 @@ export default {
     ctx.waitUntil(
       Promise.all([
         hourly(env),
+        // Connected apps: expired grants and tokens KV's own expiry missed.
+        purgeOAuth(env).catch((err) => console.error('oauth purge failed', err)),
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
         // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.
         sesHourly(env).then(

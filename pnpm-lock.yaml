@@ -23,7 +23,13 @@ importers:
       '@ai-sdk/openai':
         specifier: 4.0.111
         version: 4.0.111(zod@4.6.7)
+      '@cloudflare/workers-oauth-provider':
+        specifier: 1.2.4
+        version: 1.2.4
       '@modelcontextprotocol/client':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@modelcontextprotocol/server':
         specifier: 2.4.0
         version: 2.4.0
       agents:
@@ -45,6 +51,9 @@ importers:
       '@xstate/tsconfig':
         specifier: workspace:*
         version: link:../../tooling/tsconfig
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -969,6 +978,9 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/workers-oauth-provider@1.2.4':
+    resolution: {integrity: sha512-ayo6Z8DBHdAxwDpplFU8BrEoxoSn6wNo+E7ypTENRHUOc8R89A8/+nZ+a8pMZjjXzF0JXfpYXhw/7qqG+DC18Q==}
 
   '@cloudflare/workers-response-store@1.1.5':
     resolution: {integrity: sha512-P9r65vSDPm/pcen45njmrcu9UMOQxycnoV9wTFCPgekRVdl2QRindxWe1GusN0rE/pqe4JtyniZJhtaqAhz2fg==}
@@ -8643,6 +8655,8 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20261104.1':
     optional: true
 
+  '@cloudflare/workers-oauth-provider@1.2.4': {}
+
   '@cloudflare/workers-response-store@1.1.5': {}
 
   '@cspotcode/source-map-support@0.8.1':
@@ -9546,7 +9560,6 @@ snapshots:
     dependencies:
       '@modelcontextprotocol/core': 2.4.0
       zod: 4.6.7
-    optional: true
 
   '@napi-rs/canvas-android-arm64@1.1.0':
     optional: true

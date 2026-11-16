@@ -4,14 +4,21 @@
   "name": "xstate-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-20",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: the MCP sign-in fetches connecting apps' Client ID Metadata Documents (mcp/oauth.ts).
+  // The flag makes fetches to hosts in our own zone go out through the public internet like any other, which is
+  // what stops such a document's URL from reaching something internal.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
   // CPU per invocation. Migration jobs decode and upload mail for a few minutes at a time (migration/mail.ts); the
   // 30-second default is too tight for them. Only what's used is billed.
   "limits": { "cpu_ms": 300000 },
-  // api.xstate.com. A custom domain creates its own DNS record and certificate on deploy.
+  // api.xstate.com, and mcp.xstate.com for the MCP server and its OAuth sign-in (mcp/oauth.ts decides by host).
+  // A custom domain creates its own DNS record and certificate on deploy.
   "workers_dev": false,
-  "routes": [{ "pattern": "api.xstate.com", "custom_domain": true }],
+  "routes": [
+    { "pattern": "api.xstate.com", "custom_domain": true },
+    { "pattern": "mcp.xstate.com", "custom_domain": true }
+  ],
   "vars": {
     "ENVIRONMENT": "production",
     "STALWART_URL": "https://mx.xstate.io",
@@ -50,6 +57,9 @@
     "AI_GATEWAY_ID": "",
     // This API's own public origin, for the webhook URLs agents' triggers show (agents/triggers.ts).
     "API_URL": "https://api.xstate.com",
+    // Where the MCP server and its OAuth sign-in are published (mcp/oauth.ts): the OAuth issuer, and <MCP_URL>/mcp
+    // is what people paste into their AI app. Local dev sets it to the API's own address in .dev.vars.
+    "MCP_URL": "https://mcp.xstate.com",
     // Virus scanning of composer and Storage uploads (security/scan.ts), by the scan service next to Stalwart
     // (apps/scanner): "live" refuses infected files, and every file while the scanner is unreachable; "log" scans
     // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
@@ -57,6 +67,10 @@
     "SCAN_MODE": "log",
     "SCAN_URL": "https://mx.xstate.io/_scan"
   },
+  // Connected apps (mcp/oauth.ts): registered clients, grants and tokens, kept by @cloudflare/workers-oauth-provider
+  // (tokens only as hashes), and sign-in requests waiting on the consent page for up to 10 minutes. No id: wrangler
+  // creates the namespace on the first deploy and writes its id back here.
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
     {
@@ -117,7 +131,9 @@
     // IPs. REGISTER_IP_RATE: 5 sign-ups a minute per IP. Soft limits: nobody is locked out for longer than a minute.
     { "name": "LOGIN_IP_RATE", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } },
     { "name": "LOGIN_EMAIL_RATE", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } },
-    { "name": "REGISTER_IP_RATE", "namespace_id": "1006", "simple": { "limit": 5, "period": 60 } }
+    { "name": "REGISTER_IP_RATE", "namespace_id": "1006", "simple": { "limit": 5, "period": 60 } },
+    // MCP_RATE: tool calls from a connected AI app, 120 a minute per person, app and organization (mcp/server.ts).
+    { "name": "MCP_RATE", "namespace_id": "1007", "simple": { "limit": 120, "period": 60 } }
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.

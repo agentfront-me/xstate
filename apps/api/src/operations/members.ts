@@ -12,7 +12,7 @@ export const membersList = defineOperation({
     'Everyone in the organization: name, email, role (owner, admin or member) and status (invited or active). Invited members include when their invite was sent and when it expires.',
   input: z.object({ organizationId: id }),
   http: { method: 'GET', path: '/members/orgs/:organizationId' },
-  mcp: { readOnly: true },
+  mcp: { scope: 'profile', readOnly: true },
   run: async ({ env, actor }, input) => ({ members: await listMembers(env, actor, input.organizationId) }),
 })
 

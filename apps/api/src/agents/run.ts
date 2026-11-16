@@ -220,7 +220,7 @@ export class AgentRun extends AgentWorkflow<AgentStore, RunParams, DefaultProgre
                   ? await callConnectorTool(this.env, p.organizationId, def.source.connectorId, def.source.tool, approvedInput)
                   : def.source.kind === 'memory'
                     ? await this.memoryTool(p, def.name, approvedInput)
-                    : await runBuiltin(this.env, p.actorUserId, p.organizationId, def.name, approvedInput)
+                    : await runBuiltin(this.env, { userId: p.actorUserId, organizationId: p.organizationId, mailboxes: p.mailboxes }, def.name, approvedInput)
               return truncate(JSON.stringify(out ?? null))
             } catch (err) {
               // A tool error goes back to the model as data; it decides what to do next.

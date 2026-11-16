@@ -4,6 +4,26 @@
 import type { z } from 'zod'
 import type { Actor } from '../auth/types'
 
+/**
+ * What a person can let a connected app do, picked on the consent screen (docs/mcp-server-plan.md). A grant lists
+ * every scope it has: "draft and send" is mail.read, mail.draft and mail.send. `profile` (who you are, who is in the
+ * organization) comes with every connection. `setup` is domains, mailboxes and aliases, for owners and admins.
+ */
+export const MCP_SCOPES = [
+  'profile',
+  'mail.read',
+  'mail.draft',
+  'mail.send',
+  'calendar.read',
+  'calendar.write',
+  'storage.read',
+  'storage.write',
+  'contacts.read',
+  'contacts.write',
+  'setup',
+] as const
+export type McpScope = (typeof MCP_SCOPES)[number]
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 /**
@@ -27,8 +47,11 @@ export type Operation<Input extends z.ZodType = z.ZodType, Public extends boolea
   public?: Public
   /** Path is relative to /v1. `status` is used for a non-empty result; an undefined result returns 204. */
   http?: { method: HttpMethod; path: string; status?: 200 | 201 }
-  /** Hints for MCP clients, or false to keep this operation off MCP. */
-  mcp?: false | { readOnly?: boolean; destructive?: boolean }
+  /**
+   * false keeps this operation off MCP. Otherwise `scope` is what a connection must have been granted for the tool
+   * to be listed and callable (mcp/tools.ts), and the rest are hints for MCP clients.
+   */
+  mcp: false | { scope: McpScope; readOnly?: boolean; destructive?: boolean }
   run(ctx: OperationContext<Public>, input: z.output<Input>): Promise<unknown>
 }
 
