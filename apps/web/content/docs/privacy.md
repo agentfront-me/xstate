@@ -34,8 +34,9 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
 - **Account data:** name, email address, password (stored only as a hash), profile photo, organization name,
   role and membership.
 - **Domain data:** domains you connect, DNS records and verification status.
-- **Billing data (paid plans):** billing name, address, plan and payment history. Card details are handled by our
-  payment processor, Stripe; we don't store full card numbers.
+- **Billing data (paid plans):** plan, number of people billed and subscription status. Paid plans are sold by our
+  reseller Paddle (Paddle.com Market Ltd), the merchant of record: Paddle collects your payment details, billing
+  name, address and tax details under its own privacy policy, and we never see full card numbers.
 - **Support:** messages you send us and the details you include.
 
 ### Your Content
@@ -124,7 +125,7 @@ We share personal data only as described here:
   | Cloudflare, Inc. | Hosting, databases, file storage, queues, search indexing, AI embeddings, DNS and network security |
   | Amazon Web Services, Inc. | Hosting the mail servers that store and deliver mailboxes; delivering outgoing email (Amazon SES), bounce and complaint handling |
   | Expo (650 Industries, Inc.), Apple, Google | Delivering push notifications to the mobile apps |
-  | Stripe, Inc. | Payments for paid plans |
+  | Paddle.com Market Ltd | Reseller and merchant of record for paid plans: checkout, payments, invoices and sales tax |
 
 - **Providers your organization chooses**, such as AI providers and connected services, when your organization
   configures them.

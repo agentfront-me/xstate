@@ -51,7 +51,10 @@ If you do not agree, do not use the Service.
   where the law requires otherwise or we say so in writing.
 - We may introduce, change or remove plans, limits and prices. For changes that increase what you pay, we will
   give at least 30 days' notice, and you can cancel before the change takes effect.
-- Taxes are your responsibility, except taxes on our income.
+- **Our reseller.** Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant
+  of Record for all our orders. Paddle provides all customer service inquiries and handles returns.
+- Sales tax and VAT are added at checkout where they apply, and Paddle collects and remits them. Any other taxes
+  are your responsibility, except taxes on our income.
 
 ## 5. Your content
 

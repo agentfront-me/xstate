@@ -126,7 +126,10 @@ calendar, files and contacts.
 
 - **API secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or roll them.
 - **Webhooks** xstate receives are checked before they're trusted. Mail-server events must carry a valid
-  HMAC-SHA256 signature, and Amazon SES notifications must have a valid signature from AWS.
+  HMAC-SHA256 signature, Amazon SES notifications must have a valid signature from AWS, and billing events from
+  Paddle must carry a valid, recent HMAC-SHA256 signature.
+- **Payments** happen in Paddle's checkout, never on xstate's servers: xstate doesn't see or store card numbers.
+  Only owners and admins can buy, change or cancel a plan, and connected AI apps and agents can't touch billing.
 - **Agent webhook triggers** check a secret or an HMAC signature in constant time, and are rate limited.
 
 ## Desktop app

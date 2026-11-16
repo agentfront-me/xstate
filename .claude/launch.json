@@ -201,6 +201,46 @@
         "--strictPort"
       ],
       "port": 8795
+    },
+    {
+      "name": "api-billing",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8822",
+        "--inspector-port",
+        "9262",
+        "--persist-to",
+        ".wrangler/billing-test",
+        "--var",
+        "APP_ORIGINS:http://localhost:8823",
+        "--var",
+        "APP_URL:http://localhost:8823",
+        "--var",
+        "MCP_URL:http://localhost:8822"
+      ],
+      "port": 8822
+    },
+    {
+      "name": "app-billing",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8822/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8823",
+        "--strictPort"
+      ],
+      "port": 8823
     }
   ]
 }

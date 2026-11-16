@@ -79,6 +79,8 @@ export async function getMe(env: AuthEnv, actor: Actor) {
       name: m.organization_name,
       role: m.role,
       memberId: m.member_id,
+      // The organization's plan, shown next to its name (billing/).
+      plan: m.plan === 'pro' ? 'Pro' : m.plan === 'team' ? 'Team' : 'Free',
     })),
   }
 }

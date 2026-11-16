@@ -9,6 +9,8 @@ import { finalHourly } from './migration/final'
 import { migrationHourly } from './migration/watchdog'
 import { consumeMigration, consumeMigrationDead, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
+import { handlePaddleWebhook } from './billing/webhook'
+import { billingHourly } from './billing/service'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
 import { cors } from 'hono/cors'
@@ -66,6 +68,8 @@ app.route('/v1', v1)
 app.post('/webhooks/stalwart', handleStalwartWebhook)
 // Amazon SES bounces and complaints, delivered by SNS (signed by SNS; not part of the public /v1 API).
 app.post('/webhooks/ses', handleSesWebhook)
+// Paddle subscription events (signed with PADDLE_WEBHOOK_SECRET; billing/webhook.ts).
+app.post('/webhooks/paddle', handlePaddleWebhook)
 // Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
 app.post('/hooks/:triggerId', handleWebhook)
 app.post('/hooks/:triggerId/:token', handleWebhook)
@@ -111,6 +115,8 @@ export default {
         // Connected apps: expired grants and tokens KV's own expiry missed.
         purgeOAuth(env).catch((err) => console.error('oauth purge failed', err)),
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
+        // Billing: every paying organization billed for its current number of people.
+        billingHourly(env).catch((err) => console.error('billing-hourly failed', err)),
         // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.
         sesHourly(env).then(
           (r) => r.changed && console.log('ses-hourly', JSON.stringify(r)),

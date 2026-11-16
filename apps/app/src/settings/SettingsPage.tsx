@@ -1,8 +1,8 @@
 // Settings: Account, Members, Domains, Migration, Connected apps, AI providers, Secrets, API keys, Billing, Integrations.
 //
 // Account, Members, Domains, AI providers, Secrets and API keys use the API when signed in (AI providers and Secrets
-// live in ./AiSections). Billing and Integrations have no API yet: they show sample data (./store), marked "Sample
-// data" in the header when signed in, and changes stay in memory.
+// live in ./AiSections; Billing in ./Billing). Integrations have no API yet: it shows sample data (./store), marked
+// "Sample data" in the header when signed in, and changes stay in memory.
 // In demo mode (?demo) every section uses sample data.
 
 import { useQueryClient } from '@tanstack/react-query'
@@ -34,6 +34,7 @@ import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
 import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
 import { AiProvidersSection, LiveSecretsSection } from './AiSections'
+import { BillingSection as LiveBillingSection } from './Billing'
 import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
 import { setSettings, useSettingsData, type SettingsData } from './store'
@@ -80,7 +81,12 @@ const SECTIONS: Section[] = [
     sub: (a, d) => (a.mode === 'live' ? 'Values for connector headers' : `${d.secrets.length} organization secrets`),
   },
   { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Publishable and secret key' },
-  { id: 'billing', label: 'Billing', icon: 'credit-card', sample: true, sub: (_a, d) => `${d.billing.plan} · renews ${d.billing.renewsShort}` },
+  {
+    id: 'billing',
+    label: 'Billing',
+    icon: 'credit-card',
+    sub: (a, d) => (a.mode === 'live' ? 'Plan, payment and invoices' : `${d.billing.plan} · renews ${d.billing.renewsShort}`),
+  },
   {
     id: 'connectors',
     label: 'Connectors',
@@ -143,7 +149,7 @@ export function SettingsPage({ section }: { section: string }) {
             {s.id === 'ai-providers' && <AiProvidersSection account={account} />}
             {s.id === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
             {s.id === 'api-keys' && <ApiKeysSection account={account} />}
-            {s.id === 'billing' && <BillingSection data={data} />}
+            {s.id === 'billing' && (account.mode === 'live' ? <LiveBillingSection account={account} /> : <BillingSection data={data} />)}
             {s.id === 'connectors' && (account.mode === 'live' ? <ConnectorsSection account={account} /> : <IntegrationsSection data={data} />)}
           </div>
         </div>

@@ -65,7 +65,15 @@
     // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
     // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
     "SCAN_MODE": "log",
-    "SCAN_URL": "https://mx.xstate.io/_scan"
+    "SCAN_URL": "https://mx.xstate.io/_scan",
+    // Billing through Paddle (billing/, docs/pricing-plan.md). The client-side token (live_…) is public: it only
+    // opens checkout. PADDLE_PRICES maps plans to the live catalog's price ids, printed by
+    // `node scripts/paddle-catalog.mjs`. Local dev uses the sandbox, set in .dev.vars.
+    "PADDLE_CLIENT_TOKEN": "live_f98c13c9051250b7ab1d78ec490",
+    "PADDLE_PRICES": {
+      "pro": { "month": "pri_01m7hsw4asdwzjbx2jct35akfz", "year": "pri_01m7hsw4pgcs6hxfpbe735ybgw" },
+      "team": { "month": "pri_01m7hsw6jpntng6tpkkmjrw6kp", "year": "pri_01m7hsw6xnwnetag7j6z0xyr7p" }
+    }
   },
   // Connected apps (mcp/oauth.ts): registered clients, grants and tokens, kept by @cloudflare/workers-oauth-provider
   // (tokens only as hashes), and sign-in requests waiting on the consent page for up to 10 minutes. Namespace
@@ -167,6 +175,9 @@
   // string (openssl rand -base64 48). Changing it makes every stored secret key unreadable, so set it once.
   // SCAN_SECRET (optional while SCAN_MODE is "off"): shared with the scan service on the mail server
   // (apps/scanner/deploy/README.md). Not in "required" so deploys work before the scanner exists.
+  // PADDLE_API_KEY / PADDLE_WEBHOOK_SECRET: the live Paddle API key (pdl_live_…, "xstate production API", expires
+  // 2027-11-16: make a new one before then) and the secret of the notification destination
+  // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.
   // DOMAIN_CONNECT_PRIVATE_KEY (optional until DOMAIN_CONNECT_ENABLED is "true"): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {
@@ -179,7 +190,9 @@
       "STALWART_WEBHOOK_SECRET",
       "AWS_SES_ACCESS_KEY_ID",
       "AWS_SES_SECRET_ACCESS_KEY",
-      "API_KEYS_ENCRYPTION_KEY"
+      "API_KEYS_ENCRYPTION_KEY",
+      "PADDLE_API_KEY",
+      "PADDLE_WEBHOOK_SECRET"
     ]
   }
 }

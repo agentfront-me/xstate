@@ -46,21 +46,23 @@ export function HeaderActions() {
   )
 }
 
+// docs/pricing-plan.md. Prices per person; yearly is ten months' price.
 const plans = [
-  { name: 'Pro', monthly: 8, plan: 'pro' },
-  { name: 'Team', monthly: 24, plan: 'team' },
+  { name: 'Pro', monthly: 6, plan: 'pro' },
+  { name: 'Team', monthly: 12, plan: 'team' },
 ]
 
 const rows: [string, string, string, string][] = [
-  ['Domains', '1 (subdomain)', '3', 'unlimited'],
-  ['Addresses', '2', '25', 'unlimited'],
-  ['Storage', '2 GB', '50 GB', '1 TB pooled'],
-  ['Outbound mail / day', '100', '5,000', '50,000'],
-  ['Agents', '1', '4', 'unlimited'],
-  ['Data API requests / month', '10k', '1M', '20M'],
-  ['Sites', '1', '5', 'unlimited'],
-  ['Audit log retention', '7 days', '90 days', '2 years'],
-  ['Support', 'community', 'email, 1 day', 'email, 4 hours'],
+  ['People (mailboxes)', 'up to 5', 'unlimited', 'unlimited'],
+  ['Domains', '1', '10', 'unlimited'],
+  ['Shared addresses and aliases', '5', 'unlimited, no seat charge', 'unlimited, no seat charge'],
+  ['Storage', '5 GB per person', '30 GB per person, pooled', '200 GB per person, pooled'],
+  ['Mail covered by AI search', 'last 90 days', '50,000 emails per person', '200,000 emails per person'],
+  ['Connected AI apps (tool calls a day)', '200 per person', '2,000 per person', '10,000 per person'],
+  ['Agents (your own AI key)', 'not included', '10 agents, 500 runs per person a month', 'unlimited, 2,000 runs per person a month'],
+  ['Outside recipients a day', '100 per mailbox', '500 per mailbox', '1,000 per mailbox'],
+  ['File version history', '5 versions, 30 days', '5 versions, 30 days', '100 versions, 1 year'],
+  ['Support', 'docs', 'email, 1 business day', 'email, 4 hours'],
 ]
 
 export function Pricing() {
@@ -117,7 +119,7 @@ export function Pricing() {
           </tbody>
         </table>
       </div>
-      <p className="small faint">Prices in USD. Domains billed at registry cost, no markup. Tax added where required.</p>
+      <p className="small faint">Prices in USD per person. Shared mailboxes are free. Tax added at checkout where required. Sold by our reseller, Paddle.</p>
     </section>
   )
 }

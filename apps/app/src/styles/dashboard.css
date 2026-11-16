@@ -429,3 +429,17 @@ button.sender { width: 100%; text-align: left; }
 .modal-note { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); }
 .modal-row .btn-quiet.small { height: 26px; padding: 0 6px; font-size: 12px; }
 .modal label.btn { cursor: pointer; }
+
+/* Settings → Billing (settings/Billing.tsx) */
+.billing-toggle { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--bg-muted); gap: 2px; flex-wrap: wrap; }
+.billing-toggle button { height: 26px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.billing-toggle button[aria-pressed="true"] { background: var(--panel); color: var(--text-hi); box-shadow: 0 0 0 1px var(--border); }
+.plan-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.plan-card { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+.plan-card.current { box-shadow: 0 0 0 1px var(--text-muted); }
+.plan-card .plan-top { display: flex; flex-direction: column; gap: 2px; }
+.plan-card .name { color: var(--text-hi); font-weight: 600; }
+.plan-card .plan-price { font-size: 20px; color: var(--text-hi); }
+.plan-card .plan-features { margin: 0; padding: 0 0 0 16px; flex: 1; font-size: 12.5px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
+.plan-card .btn { align-self: flex-start; }
+@media (max-width: 760px) { .plan-grid { grid-template-columns: 1fr; } }

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import * as mailserver from '../mailserver'
+import * as mailboxesDb from '../db/mailboxes'
+import { syncSeats } from '../billing/service'
 import { defineOperation } from './define'
 
 const id = z.string().min(1).max(64)
@@ -122,7 +124,12 @@ export const emailCreateMailbox = defineOperation({
   }),
   http: { method: 'POST', path: '/email/domains/:domainId/mailboxes', status: 201 },
   mcp: { scope: 'setup' },
-  run: ({ env, actor }, input) => mailserver.createMailbox(env, actor, input),
+  run: async ({ env, actor, waitUntil }, input) => {
+    const result = await mailserver.createMailbox(env, actor, input)
+    // People are billed as seats (billing/): a new person changes the subscription's quantity.
+    if (result.mailbox.kind === 'personal') waitUntil(syncSeats(env, result.mailbox.organizationId))
+    return result
+  },
 })
 
 export const emailListMailboxes = defineOperation({
@@ -175,7 +182,11 @@ export const emailDeleteMailbox = defineOperation({
   input: z.object({ mailboxId: id }),
   http: { method: 'DELETE', path: '/email/mailboxes/:mailboxId' },
   mcp: { scope: 'setup', destructive: true },
-  run: ({ env, actor }, input) => mailserver.deleteMailbox(env, actor, input.mailboxId),
+  run: async ({ env, actor, waitUntil }, input) => {
+    const row = await mailboxesDb.find(env.DB, input.mailboxId)
+    await mailserver.deleteMailbox(env, actor, input.mailboxId)
+    if (row?.kind === 'personal') waitUntil(syncSeats(env, row.organization_id))
+  },
 })
 
 // Aliases

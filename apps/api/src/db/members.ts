@@ -28,12 +28,12 @@ export async function find(db: D1Database, organizationId: string, userId: strin
 export async function listForUser(db: D1Database, userId: string) {
   const { results } = await db
     .prepare(
-      `SELECT m.id AS member_id, m.role, o.id AS organization_id, o.name AS organization_name
+      `SELECT m.id AS member_id, m.role, o.id AS organization_id, o.name AS organization_name, o.plan
        FROM members m JOIN organizations o ON o.id = m.organization_id
        WHERE m.user_id = ? AND m.status = 'active' ORDER BY o.created_at`,
     )
     .bind(userId)
-    .all<{ member_id: string; role: Role; organization_id: string; organization_name: string }>()
+    .all<{ member_id: string; role: Role; organization_id: string; organization_name: string; plan: 'free' | 'pro' | 'team' }>()
   return results
 }
 

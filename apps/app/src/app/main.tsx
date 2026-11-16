@@ -14,6 +14,12 @@ import { router } from './router'
 
 applyTheme(themeChoice())
 
+// Paddle's emails and portal link to the default payment link (/app/) with ?_ptxn=<transaction> to pay an open
+// invoice. Routes are in the hash, so send it to Settings → Billing, which opens checkout for it (settings/Billing.tsx).
+if (new URLSearchParams(location.search).has('_ptxn') && !location.hash.startsWith('#/settings/billing')) {
+  location.hash = '#/settings/billing'
+}
+
 function App() {
   const account = useAccountQuery()
 

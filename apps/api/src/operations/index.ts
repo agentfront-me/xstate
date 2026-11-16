@@ -3,6 +3,7 @@
 import { agentOperations } from './agents'
 import { audienceOperations } from './audience'
 import { authOperations } from './auth'
+import { billingOperations } from './billing'
 import { calendarOperations } from './calendar'
 import { connectionOperations } from './connections'
 import { deviceOperations } from './devices'
@@ -23,4 +24,5 @@ export const operations: readonly AnyOperation[] = [
   ...agentOperations,
   ...deviceOperations,
   ...connectionOperations,
+  ...billingOperations,
 ]

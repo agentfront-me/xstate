@@ -33,8 +33,8 @@ const structuredData = {
       description: 'Your domain, emails, data, agents and sites in one place.',
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },
-        { '@type': 'Offer', name: 'Pro', price: '8', priceCurrency: 'USD' },
-        { '@type': 'Offer', name: 'Team', price: '24', priceCurrency: 'USD' },
+        { '@type': 'Offer', name: 'Pro', price: '6', priceCurrency: 'USD' },
+        { '@type': 'Offer', name: 'Team', price: '12', priceCurrency: 'USD' },
       ],
     },
     {
