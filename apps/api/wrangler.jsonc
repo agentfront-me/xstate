@@ -68,9 +68,9 @@
     "SCAN_URL": "https://mx.xstate.io/_scan"
   },
   // Connected apps (mcp/oauth.ts): registered clients, grants and tokens, kept by @cloudflare/workers-oauth-provider
-  // (tokens only as hashes), and sign-in requests waiting on the consent page for up to 10 minutes. No id: wrangler
-  // creates the namespace on the first deploy and writes its id back here.
-  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  // (tokens only as hashes), and sign-in requests waiting on the consent page for up to 10 minutes. Namespace
+  // "xstate-api-oauth", created by hand: the deploy token can't create namespaces. Local dev uses a local copy.
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "4a0a11ef054d4b2197cedfaa3617eaaf" }],
   // Users, organizations, domains and mailboxes. Schema lives in migrations/.
   "d1_databases": [
     {

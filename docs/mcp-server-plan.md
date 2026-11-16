@@ -338,13 +338,23 @@ Not touched, but untrue on the marketing page today: `/openapi.json`, `/index.js
 
 ## Before deploying
 
-1. **Connect real apps** over a public HTTPS tunnel to `api-mcp` / `app-mcp`: Claude (web and desktop), Claude
-   Code, Cursor, Codex, ChatGPT. Needs a person at the keyboard. `MCP_URL`, `APP_URL` and `APP_ORIGINS` must name
-   the tunnel addresses.
-2. **Deploy the API, the app and the docs together.** The security page (`apps/web/content/docs/security.md`)
-   already describes connected apps; the app has `/connect/`; the API has the rest. The first API deploy creates
-   the `OAUTH_KV` namespace and the `mcp.xstate.com` domain.
-3. **Deploy the docs site with the rest.** `/docs/mcp` and the corrected marketing page are in `apps/web`.
+Decided 2026-11-16: no testing with real apps over a tunnel first. Nobody but the owner uses xstate yet, so the real
+apps are tested on production right after the deploy.
+
+1. **Deploy the API, the app and the docs site together** (API first). No new D1 migrations and no new secrets.
+   The first API deploy creates the `mcp.xstate.com` custom domain (DNS record and certificate; `xstate.com` is on
+   Cloudflare, no manual DNS). The `OAUTH_KV` namespace (`xstate-api-oauth`) was created by hand on 2026-11-16
+   and its id is in `wrangler.jsonc`: the GitHub deploy token can't create KV namespaces, which failed the first two
+   deploys.
+2. **Check:** `https://mcp.xstate.com/.well-known/oauth-authorization-server` names `https://mcp.xstate.com` as
+   issuer, and `POST https://mcp.xstate.com/mcp` without a token answers `401`.
+3. **Connect the real apps** with `https://mcp.xstate.com/mcp` and a real account: Claude (web and desktop),
+   Claude Code, Codex, Cursor, ChatGPT. Then Settings → Connected apps and Disconnect. Read the `mcp call`,
+   `mcp connected` and `mcp disconnected` lines in the Worker logs.
+
+Local tunnel testing stays possible: `api-mcp` / `app-mcp` in `.claude/launch.json` with
+`MCP_URL` set to a `cloudflared tunnel --url http://localhost:8794` address, and the test account in
+`apps/api/.wrangler/mcp-test` (gitignored).
 
 ## Decided (user, 2026-11-16)
 
