@@ -99,8 +99,9 @@ export type BillingView = {
     customerId: string | null
     organizationId: string
   } | null
-  /** Paddle.js for paying an open transaction (a link from Paddle's emails or portal lands on the billing page). */
-  paddle: { environment: 'production' | 'sandbox'; clientToken: string } | null
+  /** Paddle.js for paying an open transaction (a link from Paddle's emails or portal lands on the billing page).
+   *  customerId goes to Paddle.js as pwCustomer, which Paddle Retain needs (payment recovery, cancellation flows). */
+  paddle: { environment: 'production' | 'sandbox'; clientToken: string; customerId: string | null } | null
 }
 
 export async function getBilling(env: BillingEnv, actor: Actor, organizationId: string): Promise<BillingView> {
@@ -123,7 +124,7 @@ export async function getBilling(env: BillingEnv, actor: Actor, organizationId: 
       c && manage && !hasLiveSubscription(org)
         ? { environment: c.environment, clientToken: c.clientToken, priceIds: c.prices, customerId: org.paddle_customer_id, organizationId }
         : null,
-    paddle: c ? { environment: c.environment, clientToken: c.clientToken } : null,
+    paddle: c ? { environment: c.environment, clientToken: c.clientToken, customerId: org.paddle_customer_id } : null,
   }
 }
 

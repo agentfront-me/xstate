@@ -36,7 +36,7 @@ type Billing = {
     customerId: string | null
     organizationId: string
   } | null
-  paddle: { environment: PaddleEnvironment; clientToken: string } | null
+  paddle: { environment: PaddleEnvironment; clientToken: string; customerId: string | null } | null
 }
 
 const NAMES: Record<Plan, string> = { free: 'Free', pro: 'Pro', team: 'Team' }
@@ -53,12 +53,22 @@ const keys = { billing: (orgId: string) => ['billing', orgId] as const }
 const dollars = (cents: number) => `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
 
-/** One Paddle.js per page; it refuses a second initialization. */
+/** One Paddle.js per page; it refuses a second initialization. pwCustomer (the Paddle customer, ctm_…) is what Paddle
+ *  Retain needs to recover failed payments and run cancellation flows; it's set again once a first purchase creates it. */
 let paddlePromise: Promise<Paddle | undefined> | null = null
+let paddleCustomer: string | null = null
 let onPaddleEvent: ((e: PaddleEventData) => void) | null = null
-function loadPaddle(environment: PaddleEnvironment, token: string): Promise<Paddle | undefined> {
-  paddlePromise ??= initializePaddle({ environment, token, eventCallback: (e) => onPaddleEvent?.(e) })
-  return paddlePromise
+async function loadPaddle(environment: PaddleEnvironment, token: string, customerId: string | null): Promise<Paddle | undefined> {
+  paddlePromise ??= initializePaddle({
+    environment,
+    token,
+    ...(customerId ? { pwCustomer: { id: customerId } } : {}),
+    eventCallback: (e) => onPaddleEvent?.(e),
+  })
+  const paddle = await paddlePromise
+  if (paddle && customerId && customerId !== paddleCustomer) paddle.Update({ pwCustomer: { id: customerId } })
+  paddleCustomer = customerId ?? paddleCustomer
+  return paddle
 }
 
 export function BillingSection({ account }: { account: Account }) {
@@ -110,8 +120,13 @@ function LiveBilling({ orgId, email }: { orgId: string; email: string }) {
     const txn = new URLSearchParams(window.location.search).get('_ptxn')
     if (!txn || !b?.paddle || paidLink.current) return
     paidLink.current = true
-    void loadPaddle(b.paddle.environment, b.paddle.clientToken).then((p) => p?.Checkout.open({ transactionId: txn }))
+    void loadPaddle(b.paddle.environment, b.paddle.clientToken, b.paddle.customerId).then((p) => p?.Checkout.open({ transactionId: txn }))
   }, [b?.paddle])
+
+  // Load Paddle.js with the customer once the org has one, so Retain knows who is on the page.
+  useEffect(() => {
+    if (b?.paddle?.customerId) void loadPaddle(b.paddle.environment, b.paddle.clientToken, b.paddle.customerId)
+  }, [b?.paddle?.environment, b?.paddle?.clientToken, b?.paddle?.customerId])
 
   if (query.isLoading) return <p className="muted">Loading…</p>
   if (query.isError || !b) return <p className="muted">{errorMessage(query.error)}</p>
@@ -121,7 +136,7 @@ function LiveBilling({ orgId, email }: { orgId: string; email: string }) {
     if (!c) return
     setBusy(plan)
     try {
-      const paddle = await loadPaddle(c.environment, c.clientToken)
+      const paddle = await loadPaddle(c.environment, c.clientToken, c.customerId)
       if (!paddle) throw new Error('Paddle checkout didn’t load. Check your connection and try again.')
       paddle.Checkout.open({
         items: [{ priceId: c.priceIds[plan][interval], quantity: Math.max(1, b!.people) }],

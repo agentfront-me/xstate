@@ -197,8 +197,10 @@ a month per person on Pro.
 - Live ("HireNinja LLC"): API key "xstate production API" (expires **2027-11-16**, renew before then) and webhook
   secret stored as Worker secrets; catalog created; client token and live price ids in `wrangler.jsonc`; webhook
   destination `https://api.xstate.com/webhooks/paddle` (subscription events, platform + simulation).
-- Still to do for live: deploy, then submit `xstate.com` and `go.xstate.com` under Paddle → Website approval, and
-  once approved set the live default payment link to `https://go.xstate.com/app/`. Live checkout fails until then.
+- Deployed 2026-11-16 with a 14-day refund policy (`/docs/refunds`, linked from Terms §4 and the footer), which
+  Paddle's domain review requires. `xstate.com` and `go.xstate.com` submitted for Website approval the same day
+  (In review). Once approved: set the live default payment link to `https://go.xstate.com/app/`. Live checkout
+  fails until then.
 
 **Not built yet:** every usage limit below (people, domains, storage, search window, MCP and agent quotas, sending
 by plan) and the 10% grace. Until then, plans change billing and the plan name only.
