@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { Icon } from '../components/Icon'
 import { api, ApiError, errorMessage, PROGRESS_KEY, saveSession, SITE_URL, writeJson, type Session } from '../lib/core'
-import { GoogleButton, Head, Help, PasswordInput, usePending, type Message } from './ui'
+import { Head, Help, PasswordInput, usePending, type Message } from './ui'
 
 export function AccountStep({ resume }: { resume: () => Promise<void> }) {
   const [name, setName] = useState('')
@@ -54,7 +54,6 @@ export function AccountStep({ resume }: { resume: () => Promise<void> }) {
         Back
       </a>
       <Head title="Create your account" sub="Free email on your own domain, with an AI agent that helps in your inbox." />
-      <GoogleButton />
       <form className="stack" id="form" noValidate onSubmit={submit}>
         <label className="field">
           Full name
@@ -126,7 +125,6 @@ export function LoginStep({ resume }: { resume: () => Promise<void> }) {
         Back
       </a>
       <Head title="Sign in to xstate" sub="Welcome back. Your inbox is where you left it." />
-      <GoogleButton />
       <form className="stack" id="form" noValidate onSubmit={submit}>
         <label className="field">
           Email

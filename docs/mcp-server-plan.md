@@ -258,7 +258,8 @@ Left out, against the plan:
 
 - **Signing up from the consent page doesn't come back to it.** "Create an account" goes to the normal sign-up and
   the request is lost; the person connects again afterwards. A brand-new account has no mailbox to connect anyway.
-- **"Continue with Google" on the consent page's sign-in** was not tried.
+- "Continue with Google" was removed from sign-in and sign-up on 2026-11-16 (it was only a "coming soon" button), so
+  the consent page signs in with email and password only.
 
 ### 3. Safety and settings (built 2026-11-16)
 

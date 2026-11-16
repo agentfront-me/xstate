@@ -62,9 +62,6 @@ main { flex: 1; padding: 0 48px; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .btn-primary:disabled:hover { opacity: 0.4; }
 .btn[aria-busy="true"], .btn[aria-busy="true"]:hover { cursor: progress; opacity: 1; }
-.google { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid currentColor; display: flex; align-items: center; justify-content: center; font-size: 10px; }
-.or { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-dim); }
-.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); }

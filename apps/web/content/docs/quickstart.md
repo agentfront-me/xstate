@@ -5,7 +5,7 @@ description: From sign-up to a working inbox on your domain.
 
 ## 1. Create an account
 
-Sign up at [go.xstate.com/signup](https://go.xstate.com/signup) with your email and a password, or with Google.
+Sign up at [go.xstate.com/signup](https://go.xstate.com/signup) with your email and a password.
 
 ## 2. Add your domain
 

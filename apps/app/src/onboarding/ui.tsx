@@ -82,26 +82,6 @@ export function PasswordInput(props: { value: string; onChange: (value: string) 
   )
 }
 
-export function GoogleButton() {
-  const [message, setMessage] = useState<Message>(null)
-  return (
-    <>
-      <button
-        type="button"
-        className="btn"
-        onClick={() => setMessage({ text: 'Google sign-in is coming soon. Use your email for now.', kind: 'info' })}
-      >
-        <span className="google" aria-hidden="true">
-          G
-        </span>
-        Continue with Google
-      </button>
-      <Help id="google-help" message={message} />
-      <div className="or">or</div>
-    </>
-  )
-}
-
 /** Runs `work` with a pending flag, for disabling a button (with aria-busy) while it runs. */
 export function usePending(): [boolean, <T>(work: () => Promise<T>) => Promise<T | undefined>] {
   const [pending, setPending] = useState(false)

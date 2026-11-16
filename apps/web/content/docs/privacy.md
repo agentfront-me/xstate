@@ -3,7 +3,7 @@ title: Privacy Policy
 description: What data xstate collects, why, who we share it with, and the choices you have.
 ---
 
-**Last updated:** November 11, 2026
+**Last updated:** November 16, 2026
 
 This policy explains how **HireNinja LLC** ("xstate", "we", "us") handles personal data when you use
 xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related services (the
@@ -63,7 +63,6 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
 
 ### Data from third parties
 
-- **Sign in with Google:** your name, email address and profile photo, if you choose this sign-in option.
 - **Imports from Google Workspace:** see section 5.
 
 ## 3. How we use data
@@ -98,9 +97,8 @@ when the law requires it. Automated systems scan mail for spam and malware.
 
 ## 5. Google user data
 
-If you sign in with Google or import from Google Workspace, we access Google user data only as described here.
+If you import from Google Workspace, we access Google user data only as described here.
 
-- **Sign-in:** we receive your basic profile (name, email, photo) to create and sign in to your account.
 - **Workspace import:** with an administrator's authorization (domain-wide delegation), we read the
   organization's users and groups, usage reports for sizing, Gmail messages and labels, contacts, and Google
   Drive files and their sharing settings, only to copy them into the organization's xstate account and to keep

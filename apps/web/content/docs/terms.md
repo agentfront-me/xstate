@@ -3,7 +3,7 @@ title: Terms of Service
 description: The agreement between you and xstate for using xstate.
 ---
 
-**Last updated:** November 11, 2026
+**Last updated:** November 16, 2026
 
 These Terms of Service ("Terms") are an agreement between you and **HireNinja LLC** ("xstate", "we", "us"),
 the operator of xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related
@@ -24,7 +24,7 @@ If you do not agree, do not use the Service.
 
 ## 2. Accounts and organizations
 
-- **Your account.** You sign up with an email and password or with Google. You are responsible for keeping your
+- **Your account.** You sign up with an email and password. You are responsible for keeping your
   sign-in details secure and for everything done under your account. Tell us right away at
   [hello@xstate.com](mailto:hello@xstate.com) if you suspect unauthorized access.
 - **Organizations.** Domains, mailboxes, storage, audiences, agents and settings belong to an organization. The
