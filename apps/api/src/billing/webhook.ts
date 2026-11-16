@@ -4,7 +4,8 @@
 // Anything but a 2xx makes Paddle retry (live: for about 3 days), so failures answer 500.
 
 import type { Context } from 'hono'
-import { verifySignature, type PaddleSubscription } from './paddle'
+import { ipInCidrs, paddleWebhookCidrs } from './ips'
+import { apiBase, verifySignature, type PaddleSubscription } from './paddle'
 import { applySubscription, type BillingEnv } from './service'
 
 type PaddleEvent = { event_id: string; event_type: string; occurred_at: string; data: unknown }
@@ -16,6 +17,16 @@ export async function handlePaddleWebhook(c: Context<{ Bindings: Env }>): Promis
   if (!env.PADDLE_WEBHOOK_SECRET) {
     console.error('billing webhook: PADDLE_WEBHOOK_SECRET is not set')
     return c.json({ error: { code: 'not_configured', message: 'Billing is not set up' } }, 503)
+  }
+  // Only Paddle's published addresses (billing/ips.ts); local development posts signed fakes from localhost.
+  if ((c.env as { ENVIRONMENT?: string }).ENVIRONMENT !== 'development') {
+    const cidrs = await paddleWebhookCidrs(apiBase(env.PADDLE_API_KEY ?? ''))
+    if (!cidrs) return c.json({ error: { code: 'unavailable', message: 'Try again later' } }, 503)
+    const ip = c.req.header('CF-Connecting-IP') ?? ''
+    if (!ipInCidrs(ip, cidrs)) {
+      console.warn('billing webhook: rejected source address', ip)
+      return c.json({ error: { code: 'forbidden', message: 'Source address not allowed' } }, 403)
+    }
   }
   if (!(await verifySignature(env.PADDLE_WEBHOOK_SECRET, signature, raw))) {
     return c.json({ error: { code: 'bad_signature', message: 'Signature does not match' } }, 401)
