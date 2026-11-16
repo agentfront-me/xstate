@@ -142,6 +142,7 @@ Read only, Draft only or Draft and send.
 | `email_get_sending_status` | read only | The organization's outbound sending limits, how many outside recipients it sent to in the last hour and day, and any active suspensions (a mailbox, or mailboxId null for the whole organization) with the reason. |
 | `storage_list_attachments` | read only | Attachments of the mail you can read, newest first, optionally for one mailbox, only "received" or "sent", or matching a name. |
 | `storage_get_attachment` | read only | Get one mail attachment: name, type, size, received or sent, its message and thread, and the mailbox. |
+| `storage_read_attachment_text` | read only | Read the whole text of a mail attachment: a PDF up to 25 MB, or a text file (CSV, Markdown, plain text, JSON) up to 1 MB. |
 | `storage_attachment_download_url` | read only | A link that downloads a mail attachment for the next 5 minutes. |
 
 ### Calendar

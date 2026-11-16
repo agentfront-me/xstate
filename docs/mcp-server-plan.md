@@ -1,7 +1,9 @@
 # Plan: xstate MCP server
 
-Status: plan approved; Phases 0–4 built 2026-11-16, uncommitted and not deployed. Phase 5 (later) not started.
-No real app (Claude, Cursor, Codex, ChatGPT) has connected yet: see [Before deploying](#before-deploying).
+Status: Phases 0–4 built and deployed to production 2026-11-16 (commit 8fbc720). `https://mcp.xstate.com/mcp` is
+live; checked: discovery documents, `401` without a token, Claude's sign-in request redirected to the Connect page.
+Connected from a real app on 2026-11-16 (the owner, in Claude Code): sign-in, consent and the tool list worked.
+Cursor, Codex and ChatGPT not tried yet. Phase 5 (later) not started.
 
 The MCP server lets the AI apps people already use (Claude, Claude Code, Codex, Cursor, ChatGPT) work with their
 xstate mail, calendar, files and contacts. Onboarding step 5 and the marketing footer already promise it; today
@@ -330,8 +332,15 @@ Not touched, but untrue on the marketing page today: `/openapi.json`, `/index.js
 ### 5. Later
 
 - **Mobile** Settings → Connected apps.
-- Mail search across all folders at once (today `email_list_messages` searches one folder) and reading the text of
-  a mail attachment, as `storage_read_text` does for files. New operations, so agents and HTTP get them too.
+- Mail search across all folders at once (today `email_list_messages` searches one folder).
+- **Done 2026-11-16:** `storage_read_attachment_text` (`GET /v1/storage/attachments/:fileId/text`, scope
+  `mail.read`) reads a mail attachment's whole text, PDFs through the same extraction as search and
+  `storage_read_text`, with the same access check as downloading it. `storage_search` takes `fileId` to ask one
+  file only (Vectorize filter on the `doc` metadata index, no 3-passages-per-file cap; the usual permission check
+  still runs). Found while summarising a contract over MCP: a dozen near-identical PDFs outranked it, and nothing
+  could read an attachment whole. Tried locally with a test PDF and Markdown file sent between two mailboxes.
+- `storage_search` needs `storage.read`, though it also searches mail: a connection with Storage off can't search
+  mail at all. Worth splitting by what the grant allows.
 - Read-only agent run history on MCP.
 - Personal access tokens or the organization secret key for headless clients.
 - Listing in the Claude and ChatGPT connector directories.

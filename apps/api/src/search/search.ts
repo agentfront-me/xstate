@@ -7,6 +7,7 @@ import * as filesDb from '../db/files'
 import type { FileRow } from '../db/files'
 import * as membersDb from '../db/members'
 import * as searchDb from '../db/search'
+import { fileDoc } from '../db/search'
 import type { DocRow } from '../db/search'
 import * as storageDb from '../db/storage'
 import type { ItemView } from '../db/storage'
@@ -18,7 +19,8 @@ import { embed, query, TOP_K, type Hit, type VectorEnv } from './vectors'
 
 export type SearchEnv = EmailEnv & VectorEnv & Pick<Env, 'SEARCH_RATE'>
 
-export type SearchInput = { organizationId: string; q: string; folderId?: string; limit: number }
+/** fileId asks one document only (a Storage file's current version or a mail attachment), any number of passages. */
+export type SearchInput = { organizationId: string; q: string; folderId?: string; fileId?: string; limit: number }
 
 export type SearchResult = {
   /** A Storage file ("storage"), a mail attachment ("mail") or a message's body ("email"). */
@@ -76,6 +78,18 @@ export async function search(env: SearchEnv, actor: Actor, input: SearchInput): 
   const [vector] = await embed(env, [input.q])
   if (!vector) throw new Error('search: no embedding')
 
+  // One document: filter on it alone (doc is a metadata index); the checker still decides whether the actor may
+  // open it, so this can't reach a file the scopes above would have left out.
+  if (input.fileId) {
+    const doc = fileDoc(input.fileId)
+    const check = new Checker(env, actor, reader, mailboxById, undefined)
+    const hits = await query(env, input.organizationId, vector, { doc } as unknown as SearchFilter)
+    const results = await check.keep(merge(hits, input.limit))
+    // Same answer for a file that doesn't exist and one the actor can't open.
+    if (!results.length && check.failed.has(doc)) throw new ApiError('file_not_found', 'File not found', 404)
+    return { results: results.slice(0, input.limit) }
+  }
+
   const run = (filter: SearchFilter) => query(env, input.organizationId, vector, filter)
   const first = await inBatches(filters, run)
   const check = new Checker(env, actor, reader, mailboxById, folder?.id)
@@ -115,8 +129,8 @@ async function inBatches<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise
   return out
 }
 
-/** Hits by score, each vector once, at most PER_DOC per document. */
-function merge(hits: Hit[]): Hit[] {
+/** Hits by score, each vector once, at most perDoc per document. */
+function merge(hits: Hit[], perDocMax = PER_DOC): Hit[] {
   const byId = new Map<string, Hit>()
   for (const h of hits) if ((byId.get(h.id)?.score ?? -1) < h.score) byId.set(h.id, h)
   const perDoc = new Map<string, number>()
@@ -125,7 +139,7 @@ function merge(hits: Hit[]): Hit[] {
     .filter((h) => {
       const n = (perDoc.get(h.metadata.doc) ?? 0) + 1
       perDoc.set(h.metadata.doc, n)
-      return n <= PER_DOC
+      return n <= perDocMax
     })
 }
 

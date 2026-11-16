@@ -1024,6 +1024,25 @@ export async function attachmentContent(env: StorageEnv, actor: Actor, fileId: s
   return serveFile(env, file, file.name)
 }
 
+/**
+ * A mail attachment's text, like readText for Storage files: text files up to 1 MB, PDFs up to 25 MB through the
+ * same extraction search uses. Same access as downloading it (attachmentContext), so a connection or agent limited
+ * to some mailboxes reads only theirs.
+ */
+export async function readAttachmentText(env: StorageEnv, actor: Actor, fileId: string) {
+  const file = await attachmentContext(env, actor, fileId)
+  const kind = textKind(file.content_type ?? '', file.name)
+  if (!kind) throw new ApiError('not_text', `${file.name} isn't a text file or a PDF`)
+  const pdf = kind === 'pdf'
+  if (file.size_bytes > (pdf ? MAX_PDF_BYTES : MAX_TEXT_BYTES)) {
+    throw new ApiError('file_too_large', `${pdf ? 'PDFs over 25 MB' : 'Text files over 1 MB'} can only be downloaded`)
+  }
+  const res = await serveFile(env, file, file.name)
+  const text = pdf ? await extractText(env.AI, 'pdf', file.name, await res.arrayBuffer()) : await res.text()
+  const truncated = text.length > MAX_TEXT_BYTES
+  return { file: toAttachment(file), text: truncated ? text.slice(0, MAX_TEXT_BYTES) : text, truncated }
+}
+
 export async function attachmentDownloadUrl(env: StorageEnv, actor: Actor, fileId: string) {
   const file = await attachmentContext(env, actor, fileId)
   const bucket = await organizationBucket(env, file.organization_id)
