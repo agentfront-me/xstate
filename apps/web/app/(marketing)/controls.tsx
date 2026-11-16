@@ -4,7 +4,7 @@
 
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
-import { SIGNUP_URL } from '@/lib/urls'
+import { APP_HOME_URL, LOGIN_URL, SIGNUP_URL } from '@/lib/urls'
 
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme()
@@ -16,6 +16,33 @@ export function ThemeToggle() {
     <button type="button" className="theme-toggle" aria-label="Toggle theme" onClick={() => setTheme(dark ? 'light' : 'dark')}>
       {dark ? 'Light' : 'Dark'}
     </button>
+  )
+}
+
+/**
+ * Header links. The app sets a `signed_in=1` cookie on .xstate.com while someone is signed in (a hint only: no
+ * token, see apps/app/src/lib/core.ts). The cookie is only readable in the browser, so the server renders the
+ * signed-out links and they swap after load.
+ */
+export function HeaderActions() {
+  const [signedIn, setSignedIn] = useState(false)
+  useEffect(() => setSignedIn(/(?:^|; )signed_in=1(?:;|$)/.test(document.cookie)), [])
+  if (signedIn) {
+    return (
+      <a href={APP_HOME_URL} className="btn btn-solid">
+        Open app
+      </a>
+    )
+  }
+  return (
+    <>
+      <a href={LOGIN_URL} className="quiet">
+        Log in
+      </a>
+      <a href={SIGNUP_URL} className="btn btn-solid">
+        Get started
+      </a>
+    </>
   )
 }
 

@@ -8,7 +8,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script>
   try {
-    var t = localStorage.getItem('theme');
+    var m = document.cookie.match(/(?:^|; )theme=(light|dark)(?:;|$)/), t = m ? m[1] : localStorage.getItem('theme');
     if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
   } catch (e) {}
 </script>

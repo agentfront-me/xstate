@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-import { LOGIN_URL, SIGNUP_URL } from '@/lib/urls'
-import { Pricing, ThemeToggle } from './controls'
+import { SIGNUP_URL } from '@/lib/urls'
+import { HeaderActions, Pricing, ThemeToggle } from './controls'
 
 export const metadata: Metadata = {
   title: { absolute: 'xstate · Your Digital Real Estate' },
@@ -82,12 +82,7 @@ export default function Home() {
         </nav>
         <div className="header-actions">
           <ThemeToggle />
-          <a href={LOGIN_URL} className="quiet">
-            Log in
-          </a>
-          <a href={SIGNUP_URL} className="btn btn-solid">
-            Get started
-          </a>
+          <HeaderActions />
         </div>
       </header>
 

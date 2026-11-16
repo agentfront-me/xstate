@@ -59,8 +59,30 @@ export function writeJson(key: string, value: unknown): void {
   }
 }
 
+/**
+ * Sets (or, with null, deletes) a cookie that xstate.com and go.xstate.com both read: on .xstate.com in production,
+ * host-only in development (cookies ignore the port, so the localhost dev servers share it). Script-readable, so
+ * it must never hold anything secret.
+ */
+export function setSiteCookie(name: string, value: string | null, maxAgeSeconds: number): void {
+  const domain = /(^|\.)xstate\.com$/.test(location.hostname) ? '; domain=xstate.com' : ''
+  const secure = location.protocol === 'https:' ? '; secure' : ''
+  const pair = value === null ? `${name}=; max-age=0` : `${name}=${value}; max-age=${Math.max(0, Math.floor(maxAgeSeconds))}`
+  document.cookie = `${pair}; path=/; samesite=lax${domain}${secure}`
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Session and API
+//
+// The session token stays in this origin's localStorage and goes to the API as a Bearer header. The marketing site
+// only gets a `signed_in=1` hint cookie (no token, nothing secret) so it can offer "Open app" instead of "Log in".
+// It expires with the session. The desktop app (app://) has no cookies and no need for the hint.
+
+function setSignedInHint(s: Session | null): void {
+  if (desktop) return
+  const seconds = s ? (Date.parse(s.expiresAt) - Date.now()) / 1000 : 0
+  setSiteCookie('signed_in', seconds > 0 ? '1' : null, seconds)
+}
 
 export type Session = { token: string; expiresAt: string }
 
@@ -71,13 +93,19 @@ export function session(): Session | null {
 
 export function saveSession(s: Session): void {
   writeJson(SESSION_KEY, { token: s.token, expiresAt: s.expiresAt })
+  setSignedInHint(s)
 }
 
 export function signOut(): void {
   writeJson(SESSION_KEY, null)
+  setSignedInHint(null)
   writeJson(PROGRESS_KEY, null)
   location.assign('/login')
 }
+
+// Keep the hint in step on every page load: it covers sessions saved before the hint existed, and a token cleared
+// from storage some other way.
+setSignedInHint(session())
 
 export class ApiError extends Error {
   constructor(
@@ -146,14 +174,40 @@ async function request(method: string, path: string, body?: unknown, { file, ano
 export const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'Something went wrong. Try again.')
 
 // ---------------------------------------------------------------------------------------------------------------
-// Theme: 'light', 'dark' or 'system'. Stored under the same key the marketing site reads.
+// Theme: 'light', 'dark' or 'system' (no stored value).
+//
+// On the web the choice lives in a `theme` cookie on .xstate.com, so xstate.com and go.xstate.com share it (the
+// marketing site copies it into next-themes, see apps/web/app/layout.tsx). localStorage is per origin and can't be
+// shared. The desktop app runs from app://, which has no cookies, so it keeps using localStorage. Each page's
+// inline <script> in its index.html reads the same cookie, falling back to localStorage, before first paint.
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+const useCookie = !desktop
+
+function readThemeCookie(): string | null {
+  return document.cookie.match(/(?:^|; )theme=(light|dark)(?:;|$)/)?.[1] ?? null
+}
+
+function writeThemeCookie(choice: ThemeChoice): void {
+  setSiteCookie(THEME_KEY, choice === 'system' ? null : choice, 31536000)
+}
+
+// A choice saved in localStorage before the cookie existed moves to the cookie once, and the localStorage copy
+// goes away so it can't override a later change made on the other site.
+if (useCookie) {
+  try {
+    const old = localStorage.getItem(THEME_KEY)
+    if ((old === 'light' || old === 'dark') && !readThemeCookie()) writeThemeCookie(old)
+    localStorage.removeItem(THEME_KEY)
+  } catch {
+    // Nothing to move.
+  }
+}
 
 export function themeChoice(): ThemeChoice {
   try {
-    const value = localStorage.getItem(THEME_KEY)
+    const value = useCookie ? readThemeCookie() : localStorage.getItem(THEME_KEY)
     return value === 'light' || value === 'dark' ? value : 'system'
   } catch {
     return 'system'
@@ -162,7 +216,8 @@ export function themeChoice(): ThemeChoice {
 
 export function applyTheme(choice: ThemeChoice = themeChoice()): void {
   try {
-    if (choice === 'system') localStorage.removeItem(THEME_KEY)
+    if (useCookie) writeThemeCookie(choice)
+    else if (choice === 'system') localStorage.removeItem(THEME_KEY)
     else localStorage.setItem(THEME_KEY, choice)
   } catch {
     // Not remembered, still applied.

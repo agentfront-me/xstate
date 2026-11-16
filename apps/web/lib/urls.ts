@@ -4,3 +4,5 @@ export const APP_URL = process.env.NODE_ENV === 'development' ? 'http://localhos
 
 export const SIGNUP_URL = `${APP_URL}/signup`
 export const LOGIN_URL = `${APP_URL}/login`
+/** The signed-in dashboard. */
+export const APP_HOME_URL = `${APP_URL}/app/`

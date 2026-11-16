@@ -6,7 +6,7 @@
 <title>Sign in · xstate</title>
 <meta name="robots" content="noindex">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<script>try { if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}</script>
+<script>try { var m = document.cookie.match(/(?:^|; )theme=(light|dark)(?:;|$)/), t = m ? m[1] : localStorage.getItem('theme'); if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (e) {}</script>
 <script type="module" src="../onboarding/main.tsx"></script>
 </head>
 <body>

@@ -18,6 +18,8 @@ change how something works. Recent changes are listed [at the end](#changes).
   passwords can't be guessed at speed. Sign-ups are limited to 5 a minute from each network. Going over pauses
   attempts for the rest of the minute; accounts are never locked.
 - **Sessions** are signed tokens that expire after 7 days. In the mobile app they're kept in the device keychain.
+  On the web the token stays on go.xstate.com and is never put in a cookie. xstate.com only sees a `signed_in`
+  cookie that says you're signed in, so it can show "Open app"; it holds no token and grants no access.
 - **Invitations** use a long random link. We store only a hash of it, and it expires after 14 days. Sending a new
   invitation cancels the old link.
 
