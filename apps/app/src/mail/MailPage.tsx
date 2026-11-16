@@ -69,7 +69,7 @@ export function MailPage() {
   const domains = useMemo(() => (domainScope ? [domainScope] : account.domains), [domainScope, account.domains])
   const mailboxes = useMemo(() => allMailboxes.filter((mb) => inDomain(mb.address, domainScope)), [allMailboxes, domainScope])
   const [view, setViewState] = useState<View>(remembered)
-  const [composer, setComposer] = useState<{ forward: Message | null } | null>(null)
+  const [composer, setComposer] = useState<{ forward: Message | null; draft?: Message } | null>(null)
   const [debouncedQuery, setDebouncedQuery] = useState(view.query)
 
   useEffect(() => {
@@ -196,12 +196,31 @@ export function MailPage() {
   }
 
   const closeComposer = useCallback(() => setComposer(null), [])
+  /** After a draft was sent, saved or discarded: it has a new id or is gone, so lists and conversations reload. */
+  const draftChanged = useCallback(
+    (message: string) => {
+      toast(message)
+      setViewState((v) => (v.folder === 'drafts' ? { ...v, selected: null } : v))
+      void reloadFolders(client)
+      void reloadLists(client)
+      void client.invalidateQueries({ queryKey: ['mail', 'thread'] })
+    },
+    [client],
+  )
+
   const sent = useCallback(() => {
+    const wasDraft = !!composer?.draft
     setComposer(null)
+    if (wasDraft) return draftChanged('Sent')
     toast('Sent')
     void reloadFolders(client)
     if (remembered.folder === 'sent') void reloadLists(client)
-  }, [client])
+  }, [client, composer, draftChanged])
+
+  const saved = useCallback(() => {
+    setComposer(null)
+    draftChanged('Draft saved')
+  }, [draftChanged])
 
   const ownAddress = (mailboxId: string) => allMailboxes.find((mb) => mb.mailboxId === mailboxId)?.address ?? ''
 
@@ -258,6 +277,8 @@ export function MailPage() {
             onChange={(row, patch, message, leaves) => void change(row, patch, message, leaves)}
             onSeen={(row, seen) => void setSeen(row, seen)}
             onForward={(original) => setComposer({ forward: original })}
+            onEditDraft={(draft) => setComposer({ forward: null, draft })}
+            onDraftDone={(_draft, message) => draftChanged(message)}
           />
         ) : (
           <>
@@ -269,7 +290,17 @@ export function MailPage() {
           </>
         )}
       </div>
-      {composer && <Composer source={source} mailboxes={allMailboxes} forward={composer.forward} onClose={closeComposer} onSent={sent} />}
+      {composer && (
+        <Composer
+          source={source}
+          mailboxes={allMailboxes}
+          forward={composer.forward}
+          draft={composer.draft}
+          onClose={closeComposer}
+          onSent={sent}
+          onSaved={saved}
+        />
+      )}
     </section>
   )
 }

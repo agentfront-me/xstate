@@ -55,6 +55,8 @@ export type Attachment = {
 }
 export type Message = MessageSummary & {
   cc: Address[]
+  /** Only ever set on mail you wrote (a draft or a sent message). */
+  bcc: Address[]
   replyTo: Address[]
   sentAt: string | null
   messageId: string | null
@@ -351,6 +353,7 @@ function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Mess
   return {
     ...toSummary(e, mailboxId, folders),
     cc: addresses(e.cc),
+    bcc: addresses(e.bcc),
     replyTo: addresses(e.replyTo),
     sentAt: e.sentAt,
     messageId: e.messageId?.[0] ?? null,
@@ -398,6 +401,12 @@ export type SendInput = {
   forwardOf?: string
   /** Files from email_upload_attachment, plus (for a forward) any of the original's attachments to keep. */
   attachments?: { blobId: string; name: string; type: string }[]
+  /**
+   * A draft in this mailbox's Drafts that this message finishes: sending it, or saving a new version of it. The
+   * draft's threading headers carry over when no inReplyTo is given, and the draft is deleted once the new
+   * message exists. Its attachments are not taken along; pass the ones to keep in attachments.
+   */
+  draftId?: string
 }
 
 /**
@@ -419,6 +428,7 @@ export async function sendMessage(
     await reservation.release()
     throw err
   })
+  if (input.draftId) await dropDraft(env, accountId, input.draftId)
   if (original) {
     await jmap
       .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')
@@ -438,7 +448,14 @@ export async function saveDraft(
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
   const { accountId, draftsId, email } = await compose(env, actor, mailboxId, input, false)
-  return jmap.createDraft(env, accountId, draftsId, email)
+  const saved = await jmap.createDraft(env, accountId, draftsId, email)
+  if (input.draftId) await dropDraft(env, accountId, input.draftId)
+  return saved
+}
+
+/** Deletes the draft a message replaced. The new message already exists, so a failure here only leaves a copy. */
+async function dropDraft(env: EmailEnv, accountId: string, draftId: string) {
+  await jmap.destroyEmail(env, accountId, draftId).catch((err) => console.error('drafts: deleting the old draft failed', err))
 }
 
 /** The JMAP email for sendMessage and saveDraft, after the access, recipient and folder checks. */
@@ -490,6 +507,18 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
     if (input.inReplyTo && original.messageId?.length) {
       email.inReplyTo = original.messageId
       email.references = [...(original.references ?? []), ...original.messageId]
+    }
+  }
+
+  // Finishing a saved draft: it must still be a draft in this mailbox, and a reply keeps its place in the thread.
+  if (input.draftId) {
+    const draft = await jmap.getDraftHeaders(env, accountId, input.draftId)
+    if (!draft || !draft.mailboxIds[draftsId] || !draft.keywords.$draft) {
+      throw new EmailError('draft_not_found', 'That draft no longer exists. It may have been sent or deleted.', 404)
+    }
+    if (!email.inReplyTo && draft.inReplyTo?.length) {
+      email.inReplyTo = draft.inReplyTo
+      email.references = draft.references?.length ? draft.references : draft.inReplyTo
     }
   }
 

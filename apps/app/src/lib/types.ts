@@ -65,6 +65,8 @@ export type Draft = { agent: string; from: string; body: string }
 
 export type Message = MessageSummary & {
   cc: Address[]
+  /** Only on mail you wrote (a draft or a sent message); missing in the demo data. */
+  bcc?: Address[]
   replyTo?: Address[]
   text: string
   html: string | null

@@ -43,6 +43,7 @@ export type JmapBodyPart = {
 }
 export type JmapEmail = JmapEmailSummary & {
   cc: JmapAddress[] | null
+  bcc: JmapAddress[] | null
   replyTo: JmapAddress[] | null
   sentAt: string | null
   messageId: string[] | null
@@ -53,7 +54,7 @@ export type JmapEmail = JmapEmailSummary & {
 }
 
 const SUMMARY = ['id', 'threadId', 'mailboxIds', 'keywords', 'from', 'to', 'subject', 'preview', 'receivedAt', 'hasAttachment', 'size']
-const FULL = [...SUMMARY, 'cc', 'replyTo', 'sentAt', 'messageId', 'textBody', 'htmlBody', 'attachments', 'bodyValues']
+const FULL = [...SUMMARY, 'cc', 'bcc', 'replyTo', 'sentAt', 'messageId', 'textBody', 'htmlBody', 'attachments', 'bodyValues']
 const PART = ['partId', 'blobId', 'name', 'type', 'size', 'disposition', 'cid']
 /** Bodies over this size come back truncated; mail that long is rare and still readable as the raw message. */
 const MAX_BODY_BYTES = 1_000_000
@@ -475,6 +476,27 @@ export async function createDraft(env: StalwartEnv, accountId: string, draftsId:
   const created = (result!.created as Record<string, { id: string; threadId: string }> | undefined)?.d
   if (!created) throw setFailure('draft', (result!.notCreated as Record<string, SetError> | undefined)?.d)
   return { id: created.id, threadId: created.threadId }
+}
+
+export type DraftHeaders = {
+  id: string
+  mailboxIds: Record<string, true>
+  keywords: Record<string, true>
+  inReplyTo: string[] | null
+  references: string[] | null
+}
+
+/** What sending or replacing a saved draft needs from it, or null if it no longer exists. */
+export async function getDraftHeaders(env: StalwartEnv, accountId: string, emailId: string): Promise<DraftHeaders | null> {
+  const [result] = await mail(env, [
+    ['Email/get', { accountId, ids: [emailId], properties: ['id', 'mailboxIds', 'keywords', 'inReplyTo', 'references'] }],
+  ])
+  return ((result!.list as DraftHeaders[]) ?? [])[0] ?? null
+}
+
+/** Deletes a message for good (a draft that was sent or replaced). */
+export async function destroyEmail(env: StalwartEnv, accountId: string, emailId: string): Promise<void> {
+  await mail(env, [['Email/set', { accountId, destroy: [emailId] }]])
 }
 
 /** Adds a keyword ($answered, $forwarded) to a message; a missing message is ignored. */

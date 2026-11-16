@@ -1,5 +1,6 @@
-// The New mail window, also used to forward: a forward keeps the original's attachments and is sent from the
-// conversation's own mailbox.
+// The New mail window, also used to forward and to edit a saved draft. A forward keeps the original's attachments and
+// is sent from the conversation's own mailbox; a draft is sent or saved from the mailbox it is in, and either one
+// replaces it.
 
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
@@ -7,7 +8,7 @@ import { useAccount } from '../lib/account'
 import { errorMessage, isEmail } from '../lib/core'
 import type { MailboxFolders, Message } from '../lib/types'
 import { parseRecipients } from './format'
-import { FileChips, readyAttachments, useUploads } from './Files'
+import { FileChips, type PickedFile, readyAttachments, useUploads } from './Files'
 import { RecipientInput } from './RecipientInput'
 import type { MailSource } from './source'
 
@@ -16,8 +17,11 @@ type Props = {
   mailboxes: MailboxFolders[]
   /** The message to forward (the newest in its conversation), or none for a new message. */
   forward: Message | null
+  /** A saved draft to edit (its folder is Drafts). */
+  draft?: Message | null
   onClose: () => void
   onSent: () => void
+  onSaved: () => void
 }
 
 function forwardBody(m: Message) {
@@ -28,33 +32,67 @@ function forwardBody(m: Message) {
   )
 }
 
-export function Composer({ source, mailboxes, forward, onClose, onSent }: Props) {
-  const choices = forward ? mailboxes.filter((mb) => mb.mailboxId === forward.mailboxId) : mailboxes
+const joined = (list?: { email: string }[]) => (list ?? []).map((a) => a.email).join(', ')
+
+/** A draft's own attachments, shown like files picked here so they can be removed before sending. */
+const draftFiles = (draft: Message | null | undefined): PickedFile[] =>
+  (draft?.attachments ?? [])
+    .filter((a) => !a.inline)
+    .map((a) => ({ id: a.blobId, name: a.name, size: a.size, status: 'ready', attachment: { blobId: a.blobId, name: a.name, type: a.type, size: a.size } }))
+
+export function Composer({ source, mailboxes, forward, draft = null, onClose, onSent, onSaved }: Props) {
+  const fixed = forward ?? draft
+  const choices = fixed ? mailboxes.filter((mb) => mb.mailboxId === fixed.mailboxId) : mailboxes
   const [from, setFrom] = useState(choices[0]?.mailboxId ?? '')
   const account = useAccount()
   // Contact suggestions come from the API, so none in demo mode.
   const orgId = account.mode === 'live' ? account.org.id : null
-  const [to, setTo] = useState('')
-  const [cc, setCc] = useState('')
-  const [bcc, setBcc] = useState('')
-  const [showCc, setShowCc] = useState(false)
-  const [subject, setSubject] = useState(forward ? (/^fwd?:/i.test(forward.subject) ? forward.subject : `Fwd: ${forward.subject}`) : '')
-  const [body, setBody] = useState(forward ? forwardBody(forward) : '')
+  const [initial] = useState(() => ({
+    to: joined(draft?.to),
+    cc: joined(draft?.cc),
+    bcc: joined(draft?.bcc),
+    subject: draft ? draft.subject : forward ? (/^fwd?:/i.test(forward.subject) ? forward.subject : `Fwd: ${forward.subject}`) : '',
+    body: draft ? draft.text : forward ? forwardBody(forward) : '',
+    files: draftFiles(draft),
+  }))
+  const [to, setTo] = useState(initial.to)
+  const [cc, setCc] = useState(initial.cc)
+  const [bcc, setBcc] = useState(initial.bcc)
+  const [showCc, setShowCc] = useState(!!(initial.cc || initial.bcc))
+  const [subject, setSubject] = useState(initial.subject)
+  const [body, setBody] = useState(initial.body)
   const [error, setError] = useState('')
-  const [sending, setSending] = useState(false)
-  const uploads = useUploads(source)
+  const [busy, setBusy] = useState<'send' | 'save' | null>(null)
+  const uploads = useUploads(source, initial.files)
   const toInput = useRef<HTMLInputElement>(null)
   const ccInput = useRef<HTMLInputElement>(null)
   const kept = forward?.attachments.filter((a) => !a.inline) ?? []
 
+  const changed =
+    to !== initial.to ||
+    cc !== initial.cc ||
+    bcc !== initial.bcc ||
+    subject !== initial.subject ||
+    body !== initial.body ||
+    uploads.files.map((f) => f.id).join() !== initial.files.map((f) => f.id).join()
+
+  /** Closing an edited draft asks whether to keep the changes; anything else just closes. */
+  const close = () => {
+    if (busy) return
+    if (draft && changed && window.confirm('Save your changes to this draft?')) void save()
+    else onClose()
+  }
+  const closeRef = useRef(close)
+  closeRef.current = close
+
   useEffect(() => {
     toInput.current?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') closeRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
 
   useEffect(() => {
     if (showCc) ccInput.current?.focus()
@@ -76,7 +114,7 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
     }
     const ready = readyAttachments(uploads.files, kept.reduce((sum, a) => sum + a.size, 0))
     if (ready.error !== undefined) return setError(ready.error)
-    setSending(true)
+    setBusy('send')
     try {
       await source.send({
         mailboxId: from,
@@ -87,11 +125,43 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
         text: body,
         forwardOf: forward?.id,
         attachments: ready.attachments,
+        draftId: draft?.id,
       })
       onSent()
     } catch (err) {
       setError(errorMessage(err))
-      setSending(false)
+      setBusy(null)
+    }
+  }
+
+  /** Saves to Drafts, replacing the draft being edited. Recipients may be empty, but must be valid if given. */
+  const save = async () => {
+    setError('')
+    if (!from) return setError('Add an address first.')
+    const t = parseRecipients(to, isEmail)
+    const c = parseRecipients(cc, isEmail)
+    const b = parseRecipients(bcc, isEmail)
+    const invalid = [...t.invalid, ...c.invalid, ...b.invalid]
+    if (invalid.length) return setError(`Not a valid address: ${invalid.join(', ')}`)
+    const ready = readyAttachments(uploads.files, kept.reduce((sum, a) => sum + a.size, 0))
+    if (ready.error !== undefined) return setError(ready.error)
+    setBusy('save')
+    try {
+      await source.saveDraft({
+        mailboxId: from,
+        to: t.valid,
+        cc: c.valid,
+        bcc: b.valid,
+        subject: subject.trim(),
+        text: body,
+        forwardOf: forward?.id,
+        attachments: ready.attachments,
+        draftId: draft?.id,
+      })
+      onSaved()
+    } catch (err) {
+      setError(errorMessage(err))
+      setBusy(null)
     }
   }
 
@@ -99,13 +169,13 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
     <div
       className="scrim"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) close()
       }}
     >
       <form className="modal" role="dialog" aria-modal="true" aria-labelledby="compose-title" noValidate onSubmit={(e) => void submit(e)}>
         <div className="modal-head">
-          <span id="compose-title">{forward ? 'Forward' : 'New mail'}</span>
-          <button type="button" className="x-btn" onClick={onClose} aria-label="Close">
+          <span id="compose-title">{forward ? 'Forward' : draft ? 'Draft' : 'New mail'}</span>
+          <button type="button" className="x-btn" onClick={close} aria-label="Close">
             <Icon name="x" size={16} />
           </button>
         </div>
@@ -113,7 +183,7 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
           <label htmlFor="c-from">From</label>
           <select
             id="c-from"
-            disabled={!!forward}
+            disabled={!!fixed}
             value={from}
             onChange={(e) => {
               setFrom(e.target.value)
@@ -187,7 +257,11 @@ export function Composer({ source, mailboxes, forward, onClose, onSent }: Props)
           <span className="err" role="alert">
             {error}
           </span>
-          <button className="btn btn-primary" type="submit" disabled={sending} aria-busy={sending || undefined}>
+          <button type="button" className="btn" disabled={!!busy} aria-busy={busy === 'save' || undefined} onClick={() => void save()}>
+            {busy === 'save' && <span className="spinner" />}
+            Save draft
+          </button>
+          <button className="btn btn-primary" type="submit" disabled={!!busy} aria-busy={busy === 'send' || undefined}>
             <Icon name="send" size={14} />
             Send
           </button>

@@ -24,6 +24,8 @@ export type Outgoing = {
   inReplyTo?: string
   forwardOf?: string
   attachments?: Upload[]
+  /** The saved draft this finishes: sending deletes it, saving replaces it. */
+  draftId?: string
 }
 
 export type MailSource = {
@@ -37,6 +39,10 @@ export type MailSource = {
   /** An attachment to save, with the warning the file-type rules found in its bytes (or null). */
   download(message: Message, attachment: Attachment): Promise<{ blob: Blob; warning: string | null }>
   send(message: Outgoing): Promise<{ id: string; threadId: string }>
+  /** Saves to Drafts: a new draft, or a new version of message.draftId. */
+  saveDraft(message: Outgoing): Promise<{ id: string; threadId: string }>
+  /** Moves one draft to Trash (not the rest of its conversation). */
+  discardDraft(draft: Message): Promise<void>
   upload(mailboxId: string, file: File): Promise<Upload>
   clearDraft(summary: MessageSummary): void
 }
@@ -89,18 +95,25 @@ function liveSource(orgId: string): MailSource {
     },
 
     async send(message) {
-      const list = (emails?: string[]) => (emails ?? []).map((email) => ({ email }))
-      const { message: sent } = await api<{ message: { id: string; threadId: string } }>('POST', `/email/mailboxes/${message.mailboxId}/send`, {
-        to: list(message.to),
-        cc: list(message.cc),
-        bcc: list(message.bcc),
-        subject: message.subject,
-        text: message.text,
-        ...(message.inReplyTo && { inReplyTo: message.inReplyTo }),
-        ...(message.forwardOf && { forwardOf: message.forwardOf }),
-        ...(message.attachments?.length && { attachments: message.attachments }),
-      })
+      const { message: sent } = await api<{ message: { id: string; threadId: string } }>(
+        'POST',
+        `/email/mailboxes/${message.mailboxId}/send`,
+        outgoingBody(message),
+      )
       return sent
+    },
+
+    async saveDraft(message) {
+      const { draftId, inReplyTo, forwardOf, ...rest } = message
+      const base = `/email/mailboxes/${message.mailboxId}/drafts`
+      const { draft } = draftId
+        ? await api<{ draft: { id: string; threadId: string } }>('PUT', `${base}/${encodeURIComponent(draftId)}`, outgoingBody(rest))
+        : await api<{ draft: { id: string; threadId: string } }>('POST', base, outgoingBody({ ...rest, inReplyTo, forwardOf }))
+      return draft
+    },
+
+    async discardDraft(draft) {
+      await api('PATCH', `/email/mailboxes/${draft.mailboxId}/messages/${encodeURIComponent(draft.id)}`, { folder: 'trash', thread: false })
     },
 
     async upload(mailboxId, file) {
@@ -221,34 +234,27 @@ function demoSource(account: Account): MailSource {
 
     /** Adds a reply to the conversation, or a new message to Sent. */
     async send(message) {
-      const now = new Date().toISOString()
+      if (message.draftId) removeDemo(message.draftId)
       const id = message.inReplyTo
       const parent = id ? all().find((x) => x.id === id || x.replies.some((r) => r.id === id)) : undefined
-      const from = account.mailboxes.find((mb) => mb.id === message.mailboxId)?.address ?? ''
-      const sent: Message = {
-        id: `msg_${Date.now()}`,
-        mailboxId: message.mailboxId,
-        threadId: parent?.threadId ?? `msg_${Date.now()}`,
-        folder: 'sent',
-        from: [{ name: account.user.name, email: from }],
-        to: message.to.map((email) => ({ name: null, email })),
-        cc: (message.cc ?? []).map((email) => ({ name: null, email })),
-        subject: message.subject,
-        preview: message.text,
-        receivedAt: now,
-        seen: true,
-        pinned: false,
-        hasAttachment: !!message.attachments?.length,
-        threadSize: 1,
-        text: message.text,
-        html: null,
-        attachments: (message.attachments ?? []).map((a) => ({ ...a, size: a.size ?? 0, inline: false, cid: null })),
-      }
+      const sent = demoMessage(message, 'sent', parent?.threadId)
       if (parent) {
         parent.replies.push(sent)
         parent.seen = true
       } else all().push({ ...sent, draft: null, replies: [] })
       return { id: sent.id, threadId: sent.threadId }
+    },
+
+    async saveDraft(message) {
+      if (message.draftId) removeDemo(message.draftId)
+      const draft = demoMessage(message, 'drafts')
+      all().push({ ...draft, draft: null, replies: [] })
+      return { id: draft.id, threadId: draft.threadId }
+    },
+
+    async discardDraft(draft) {
+      const m = all().find((x) => x.id === draft.id)
+      if (m) m.folder = 'trash'
     },
 
     async upload(_mailboxId, file) {
@@ -259,6 +265,54 @@ function demoSource(account: Account): MailSource {
       const m = all().find((x) => x.id === summary.id)
       if (m) m.draft = null
     },
+  }
+
+  function removeDemo(id: string) {
+    const list = all()
+    const i = list.findIndex((x) => x.id === id)
+    if (i >= 0) list.splice(i, 1)
+  }
+
+  function demoMessage(message: Outgoing, folder: FolderRole, threadId?: string): Message {
+    const now = new Date().toISOString()
+    const id = `msg_${Date.now()}`
+    const from = account.mailboxes.find((mb) => mb.id === message.mailboxId)?.address ?? ''
+    return {
+      id,
+      mailboxId: message.mailboxId,
+      threadId: threadId ?? id,
+      folder,
+      from: [{ name: account.user.name, email: from }],
+      to: message.to.map((email) => ({ name: null, email })),
+      cc: (message.cc ?? []).map((email) => ({ name: null, email })),
+      subject: message.subject,
+      preview: message.text,
+      receivedAt: now,
+      seen: true,
+      pinned: false,
+      hasAttachment: !!message.attachments?.length,
+      threadSize: 1,
+      text: message.text,
+      html: null,
+      attachments: (message.attachments ?? []).map((a) => ({ ...a, size: a.size ?? 0, inline: false, cid: null })),
+      bcc: (message.bcc ?? []).map((email) => ({ name: null, email })),
+    }
+  }
+}
+
+/** The request body for sending or saving a message. */
+function outgoingBody(message: Omit<Outgoing, 'mailboxId'>) {
+  const list = (emails?: string[]) => (emails ?? []).map((email) => ({ email }))
+  return {
+    to: list(message.to),
+    cc: list(message.cc),
+    bcc: list(message.bcc),
+    subject: message.subject,
+    text: message.text,
+    ...(message.inReplyTo && { inReplyTo: message.inReplyTo }),
+    ...(message.forwardOf && { forwardOf: message.forwardOf }),
+    ...(message.attachments?.length && { attachments: message.attachments.map(({ blobId, name, type }) => ({ blobId, name, type })) }),
+    ...(message.draftId && { draftId: message.draftId }),
   }
 }
 

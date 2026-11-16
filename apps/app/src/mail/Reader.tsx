@@ -20,6 +20,10 @@ type Props = {
   onChange: (row: MessageSummary, patch: Patch, message: string, leavesList?: boolean) => void
   onSeen: (row: MessageSummary, seen: boolean) => void
   onForward: (original: Message) => void
+  /** Opens a saved draft in the composer. */
+  onEditDraft: (draft: Message) => void
+  /** A saved draft was sent or discarded. */
+  onDraftDone: (draft: Message, message: string) => void
 }
 
 export const threadKey = (row: MessageSummary) => ['mail', 'thread', row.mailboxId, row.threadId] as const
@@ -31,7 +35,7 @@ const replies = new Map<string, { text: string; files: PickedFile[] }>()
 const initialExpanded = (messages: Message[]) =>
   new Set(messages.flatMap((m, i) => (i === messages.length - 1 || !m.seen ? [i] : [])))
 
-export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onSeen, onForward }: Props) {
+export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onSeen, onForward, onEditDraft, onDraftDone }: Props) {
   const client = useQueryClient()
   const thread = useQuery({ queryKey: threadKey(row), queryFn: () => source.thread(row), staleTime: 30_000 })
   const messages = thread.data ?? []
@@ -110,16 +114,20 @@ export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onS
             </div>
           ) : (
             messages.map((m, i) => (
-              <MessageView
-                key={m.id}
-                message={m}
-                source={source}
-                open={open.has(i)}
-                last={i === messages.length - 1}
-                showImages={showImages}
-                onToggle={() => toggle(i)}
-                onShowImages={() => setShowImages(true)}
-              />
+              <div key={m.id}>
+                <MessageView
+                  message={m}
+                  source={source}
+                  open={open.has(i)}
+                  last={i === messages.length - 1}
+                  showImages={showImages}
+                  onToggle={() => toggle(i)}
+                  onShowImages={() => setShowImages(true)}
+                />
+                {m.folder === 'drafts' && source.canSend && (
+                  <DraftBar draft={m} source={source} onEdit={() => onEditDraft(m)} onDone={(message) => onDraftDone(m, message)} />
+                )}
+              </div>
             ))
           )}
           {latest?.draft && (
@@ -161,10 +169,69 @@ export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onS
           )}
         </article>
       </div>
-      {row.folder !== 'sent' && ready && (
+      {row.folder !== 'sent' && row.folder !== 'drafts' && ready && (
         <ReplyBox key={`${row.mailboxId}/${row.threadId}`} row={row} source={source} from={ownAddress} send={sendReply} handle={replyBox} />
       )}
     </>
+  )
+}
+
+/** Actions under a saved draft: open it to edit, send it as it is, or move it to Trash. */
+function DraftBar({ draft, source, onEdit, onDone }: { draft: Message; source: MailSource; onEdit: () => void; onDone: (message: string) => void }) {
+  const [busy, setBusy] = useState<'send' | 'discard' | null>(null)
+  const emails = (list?: { email: string }[]) => (list ?? []).map((a) => a.email)
+  const hasRecipients = draft.to.length + draft.cc.length + (draft.bcc?.length ?? 0) > 0
+
+  const run = async (what: 'send' | 'discard') => {
+    setBusy(what)
+    try {
+      if (what === 'send') {
+        await source.send({
+          mailboxId: draft.mailboxId,
+          to: emails(draft.to),
+          cc: emails(draft.cc),
+          bcc: emails(draft.bcc),
+          subject: draft.subject,
+          text: draft.text,
+          attachments: draft.attachments.filter((a) => !a.inline).map(({ blobId, name, type }) => ({ blobId, name, type })),
+          draftId: draft.id,
+        })
+        onDone('Sent')
+      } else {
+        await source.discardDraft(draft)
+        onDone('Draft moved to Trash')
+      }
+    } catch (err) {
+      toast(errorMessage(err))
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="draft-bar">
+      <span className="label">
+        <Icon name="file-pen" size={14} />
+        Draft
+      </span>
+      <span style={{ flex: 1 }} />
+      <button className="btn" disabled={!!busy} onClick={() => void run('discard')}>
+        {busy === 'discard' ? <span className="spinner" /> : <Icon name="trash" size={14} />}
+        Discard
+      </button>
+      <button className="btn" disabled={!!busy} onClick={onEdit}>
+        <Icon name="pencil" size={14} />
+        Edit
+      </button>
+      <button
+        className="btn btn-primary"
+        disabled={!!busy}
+        title={hasRecipients ? undefined : 'Add a recipient first'}
+        onClick={() => (hasRecipients ? void run('send') : onEdit())}
+      >
+        {busy === 'send' ? <span className="spinner" /> : <Icon name="send" size={14} />}
+        Send
+      </button>
+    </div>
   )
 }
 

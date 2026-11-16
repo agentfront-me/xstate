@@ -215,6 +215,8 @@ button.sender { width: 100%; text-align: left; }
 .draft-head .from { color: var(--text-muted); }
 .draft p { color: var(--text-hi); line-height: 1.6; }
 .draft .actions { display: flex; gap: 8px; }
+.draft-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 8px 10px 8px 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--card); }
+.draft-bar .label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .reply-wrap { padding: 12px 26px 14px; border-top: 1px solid var(--border); }
 .reply { max-width: 760px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); display: flex; flex-direction: column; }
 .reply:focus-within { border-color: var(--border-strong); }

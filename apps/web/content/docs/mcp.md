@@ -139,6 +139,7 @@ Read only, Draft only or Draft and send.
 | `email_update_message` | draft only | Change one message: mark it read or unread (seen), pin or unpin it (pinned, shown as flagged in mail apps), or move it to a folder (inbox, archive, junk, trash). |
 | `email_send` | draft and send | Send a message from a mailbox's address. |
 | `email_create_draft` | draft only | Save a message to a mailbox's Drafts without sending it, so a person can review and send it. |
+| `email_update_draft` | draft only | Replace a draft in a mailbox's Drafts with a new version. |
 | `email_get_sending_status` | read only | The organization's outbound sending limits, how many outside recipients it sent to in the last hour and day, and any active suspensions (a mailbox, or mailboxId null for the whole organization) with the reason. |
 | `storage_list_attachments` | read only | Attachments of the mail you can read, newest first, optionally for one mailbox, only "received" or "sent", or matching a name. |
 | `storage_get_attachment` | read only | Get one mail attachment: name, type, size, received or sent, its message and thread, and the mailbox. |

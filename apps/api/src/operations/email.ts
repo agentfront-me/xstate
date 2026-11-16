@@ -344,6 +344,11 @@ export const emailGetAttachment = defineOperation({
 
 const address = z.object({ email: z.email().max(254), name: z.string().trim().max(200).nullish() })
 const addresses = z.array(address).max(50)
+const uploads = z
+  .array(z.object({ blobId: z.string().min(1).max(256), name: z.string().min(1).max(255), type: z.string().min(1).max(255) }))
+  .max(20)
+const messageId = z.string().min(1).max(64)
+const toAddresses = (list: z.infer<typeof addresses> | undefined) => list?.map((a) => ({ email: a.email, name: a.name ?? null }))
 
 export const emailSend = defineOperation({
   name: 'email_send',
@@ -354,7 +359,8 @@ export const emailSend = defineOperation({
     'At most 50 recipients in total, and attachments (forwarded ones included) up to 25 MB in total, else ' +
     'attachments_too_large. Outside recipients are capped per mailbox (100 an hour, 500 a day) and per ' +
     'organization (400 an hour, 2,000 a day): past that it fails with send_limit_reached (429). A mailbox or ' +
-    'organization suspended for bounces or spam complaints gets sending_suspended (403).',
+    'organization suspended for bounces or spam complaints gets sending_suspended (403). To send a saved draft, ' +
+    'pass its id as draftId along with its fields (and the attachments to keep): the draft is deleted once sent.',
   input: z.object({
     mailboxId: id,
     to: addresses.default([]),
@@ -365,19 +371,17 @@ export const emailSend = defineOperation({
     html: z.string().max(2_000_000).optional(),
     inReplyTo: z.string().min(1).max(64).optional(),
     forwardOf: z.string().min(1).max(64).optional(),
-    attachments: z
-      .array(z.object({ blobId: z.string().min(1).max(256), name: z.string().min(1).max(255), type: z.string().min(1).max(255) }))
-      .max(20)
-      .optional(),
+    attachments: uploads.optional(),
+    draftId: messageId.optional(),
   }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/send', status: 201 },
   mcp: { scope: 'mail.send' },
   run: async ({ env, actor }, input) => ({
     message: await mailserver.sendMessage(env, actor, input.mailboxId, {
       ...input,
-      to: input.to.map((a) => ({ email: a.email, name: a.name ?? null })),
-      cc: input.cc?.map((a) => ({ email: a.email, name: a.name ?? null })),
-      bcc: input.bcc?.map((a) => ({ email: a.email, name: a.name ?? null })),
+      to: toAddresses(input.to)!,
+      cc: toAddresses(input.cc),
+      bcc: toAddresses(input.bcc),
     }),
   }),
 })
@@ -392,19 +396,52 @@ export const emailCreateDraft = defineOperation({
     mailboxId: id,
     to: addresses.default([]),
     cc: addresses.optional(),
+    bcc: addresses.optional(),
     subject: z.string().max(998).default(''),
     text: z.string().max(1_000_000),
     html: z.string().max(2_000_000).optional(),
     inReplyTo: z.string().min(1).max(64).optional(),
     forwardOf: z.string().min(1).max(64).optional(),
+    attachments: uploads.optional(),
   }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/drafts', status: 201 },
   mcp: { scope: 'mail.draft' },
   run: async ({ env, actor }, input) => ({
     draft: await mailserver.saveDraft(env, actor, input.mailboxId, {
       ...input,
-      to: input.to.map((a) => ({ email: a.email, name: a.name ?? null })),
-      cc: input.cc?.map((a) => ({ email: a.email, name: a.name ?? null })),
+      to: toAddresses(input.to)!,
+      cc: toAddresses(input.cc),
+      bcc: toAddresses(input.bcc),
+    }),
+  }),
+})
+
+export const emailUpdateDraft = defineOperation({
+  name: 'email_update_draft',
+  description:
+    "Replace a draft in a mailbox's Drafts with a new version. Pass every field, not just the changed ones: the " +
+    'old draft is deleted and the new one gets a new id, which this returns. A reply draft stays in its ' +
+    'conversation. Attachments are not carried over on their own; pass the ones to keep (their blobId, name and ' +
+    'type from email_get_thread). Needs write access to the mailbox.',
+  input: z.object({
+    mailboxId: id,
+    draftId: messageId,
+    to: addresses.default([]),
+    cc: addresses.optional(),
+    bcc: addresses.optional(),
+    subject: z.string().max(998).default(''),
+    text: z.string().max(1_000_000),
+    html: z.string().max(2_000_000).optional(),
+    attachments: uploads.optional(),
+  }),
+  http: { method: 'PUT', path: '/email/mailboxes/:mailboxId/drafts/:draftId' },
+  mcp: { scope: 'mail.draft' },
+  run: async ({ env, actor }, input) => ({
+    draft: await mailserver.saveDraft(env, actor, input.mailboxId, {
+      ...input,
+      to: toAddresses(input.to)!,
+      cc: toAddresses(input.cc),
+      bcc: toAddresses(input.bcc),
     }),
   }),
 })
@@ -450,5 +487,6 @@ export const emailOperations = [
   emailGetAttachment,
   emailSend,
   emailCreateDraft,
+  emailUpdateDraft,
   emailGetSendingStatus,
 ]
