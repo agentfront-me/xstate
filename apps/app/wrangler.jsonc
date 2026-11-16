@@ -1,6 +1,6 @@
 {
   // go.xstate.com: the dashboard (/app/), sign-up and sign-in (/signup/, /login/) and public file links (/s/), built
-  // by Vite into dist/. Static assets on Cloudflare Workers, no Worker script; public/_redirects sends / to /app/.
+  // by Vite into dist/. Static assets on Cloudflare Workers, no Worker script; / is the public front page (public/index.html).
   // `pnpm deploy` builds dist/ first. The marketing site and docs on xstate.com are apps/web.
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "xstate-app",

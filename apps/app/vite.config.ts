@@ -1,5 +1,5 @@
 // go.xstate.com: the dashboard (/app/), the sign-in pages (/login/, /signup/, /invite/, /connect/) and public file links (/s/), React built
-// by Vite from src/. Everything in public/ (brand files, _redirects) is copied as is. The output in dist/ is what
+// by Vite from src/. Everything in public/ (brand files, the front page index.html) is copied as is. The output in dist/ is what
 // Cloudflare serves (wrangler.jsonc) and what the desktop app bundles (apps/desktop, resources/web). The marketing
 // site and docs on xstate.com are a separate app (apps/web).
 //
@@ -15,8 +15,8 @@ const src = path.resolve(import.meta.dirname, 'src')
 const pub = path.resolve(import.meta.dirname, 'public')
 
 /**
- * Dev only: what Cloudflare's asset serving does in production. / redirects to /app/ (public/_redirects), /login
- * redirects to /login/ (html_handling: auto-trailing-slash), and pages in public/ are served from their index.html.
+ * Dev only: what Cloudflare's asset serving does in production. /login redirects to /login/ (html_handling:
+ * auto-trailing-slash), and pages in public/ are served from their index.html (/ is public/index.html).
  */
 function cloudflareLikeRouting(): Plugin {
   return {
@@ -24,10 +24,6 @@ function cloudflareLikeRouting(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        if (url.pathname === '/') {
-          res.writeHead(302, { Location: `/app/${url.search}` })
-          return res.end()
-        }
         const clean = url.pathname.replace(/\/+$/, '')
         const isPage = (dir: string) => fs.existsSync(path.join(dir, clean, 'index.html'))
         if (!url.pathname.endsWith('/') && !path.extname(url.pathname) && (isPage(src) || isPage(pub))) {

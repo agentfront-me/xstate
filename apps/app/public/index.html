@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xstate · Business email on your own domain</title>
+<meta name="description" content="xstate is business email on your own domain, with a calendar, file storage, AI search and agents. Sign in or create an account.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://go.xstate.com/">
+<!--
+  go.xstate.com/: the public front of the app. Signed-in people go straight to the dashboard (the session lives in
+  localStorage, src/lib/core.ts); everyone else, Paddle's domain review included, sees what xstate is, its prices
+  and its legal pages. The look follows xstate.com's home page (apps/web/app/(marketing)/marketing.css): zinc ink
+  and paper, 1px gridded panels, mono meta labels, regular-weight headings. Prices must match
+  docs/pricing-plan.md, the Paddle catalog and xstate.com.
+-->
+<script>
+try { if (localStorage.getItem('xstate.session')) location.replace('/app/' + location.search + location.hash) } catch (e) {}
+try { var m = document.cookie.match(/(?:^|; )theme=(light|dark)(?:;|$)/), t = m ? m[1] : localStorage.getItem('theme'); if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (e) {}
+</script>
+<style>
+:root { --ink: #18181b; --paper: #ffffff; --surface: #f4f4f5; --line: #e4e4e7; --muted: #66666e; --faint: #a1a1aa; --mono: ui-monospace, Menlo, monospace; color-scheme: light; }
+.dark { --ink: #ffffff; --paper: #18181b; --surface: #202023; --line: #3f3f46; --muted: #a1a1aa; --faint: #71717a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--ink); text-decoration: none; } a:hover { color: var(--muted); }
+h1, h2, h3, p { margin: 0; }
+
+.page { max-width: 1200px; margin: 0 auto; padding: 0 24px 64px; font-size: 14px; line-height: 1.5; }
+.mono { font-family: var(--mono); }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); } /* decoration only: too light for text (WCAG AA); text uses .muted */
+.small { font-size: 12px; }
+.btn { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); }
+.btn-solid { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn-solid:hover { color: var(--paper); opacity: 0.85; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Header */
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; border-bottom: 1px solid var(--line); }
+.site-header nav { display: flex; gap: 20px; font-size: 12px; }
+.site-header nav a, .header-actions a.quiet { color: var(--muted); }
+.site-header nav a:hover, .header-actions a.quiet:hover { color: var(--ink); }
+.header-actions { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.header-actions .btn-solid { padding: 6px 12px; }
+
+/* Gridded panels: 1px gaps on a line-coloured background draw the rules */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.grid > * { background: var(--paper); min-width: 0; }
+
+/* Hero */
+.hero { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); border-top: none; }
+.hero-copy { padding: 48px 32px; display: flex; flex-direction: column; gap: 20px; }
+.hero h1 { font-size: 32px; line-height: 1.15; font-weight: 400; letter-spacing: -0.02em; text-wrap: pretty; }
+.hero-copy > p { max-width: 48ch; text-wrap: pretty; }
+.hero-side { padding: 48px 32px; display: flex; flex-direction: column; justify-content: center; gap: 0; background: var(--surface) !important; }
+.hero-side .line { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.hero-side .line:first-child { border-top: 1px solid var(--line); }
+
+/* Sections */
+.section { margin-top: 56px; display: flex; flex-direction: column; gap: 16px; }
+.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.section-head h2 { font-size: 14px; font-weight: 400; }
+.card { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.card-meta { display: flex; justify-content: space-between; }
+.card h3 { font-size: 14px; font-weight: 400; }
+.card p { text-wrap: pretty; }
+
+/* Pricing: three plans side by side, one column on phones (never a 2 + 1 row with an empty cell). */
+.plans { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.plan { padding: 20px; display: flex; flex-direction: column; gap: 6px; }
+.plan-price { font-size: 20px; font-family: var(--mono); letter-spacing: -0.02em; }
+.plan ul { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.plan li { display: flex; gap: 8px; }
+.plan li::before { content: "—"; color: var(--faint); }
+.plan a { margin-top: 10px; align-self: flex-start; border: 1px solid var(--line); padding: 5px 10px; border-radius: 6px; font-size: 12px; }
+
+/* CTA */
+.cta { margin-top: 56px; border: 1px solid var(--line); background: var(--surface); padding: 32px; display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+.cta-copy { display: flex; flex-direction: column; gap: 6px; }
+.cta h2 { font-size: 20px; font-weight: 400; letter-spacing: -0.01em; }
+
+/* Footer */
+.site-footer { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 24px; display: flex; flex-direction: column; gap: 24px; font-size: 12px; }
+.footer-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 24px; }
+.footer-cols > div { display: flex; flex-direction: column; gap: 6px; }
+.footer-cols a { color: var(--muted); } .footer-cols a:hover { color: var(--ink); }
+.footer-base { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--muted); }
+
+@media (max-width: 720px) {
+  .site-header nav { display: none; }
+  .hero-copy, .hero-side { padding: 32px 20px; }
+  .plans { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="site-header">
+    <a href="https://xstate.com">xstate</a>
+    <nav aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://xstate.com/docs">Docs</a>
+    </nav>
+    <div class="header-actions">
+      <a class="quiet" href="/login/">Sign in</a>
+      <a class="btn btn-solid" href="/signup/">Create account</a>
+    </div>
+  </header>
+
+  <section class="grid hero" aria-labelledby="hero-h">
+    <div class="hero-copy">
+      <div class="small muted mono">go.xstate.com · The xstate app</div>
+      <h1 id="hero-h">Business email on your own domain.</h1>
+      <p class="muted">
+        Email for your whole team on a domain you own, with a calendar, file storage and AI search of all your mail.
+        Sign in to your workspace, or create one in a minute.
+      </p>
+      <div class="row">
+        <a href="/signup/" class="btn btn-solid">Create an account</a>
+        <a href="/login/" class="btn">Sign in</a>
+      </div>
+      <div class="small muted mono">Questions? hello@xstate.com</div>
+    </div>
+    <div class="hero-side">
+      <div class="line"><span>Your mail</span><a class="small mono muted" href="/app/">/app</a></div>
+      <div class="line"><span>Sign in</span><a class="small mono muted" href="/login/">/login</a></div>
+      <div class="line"><span>New workspace</span><a class="small mono muted" href="/signup/">/signup</a></div>
+      <div class="line"><span>About xstate</span><a class="small mono muted" href="https://xstate.com">xstate.com</a></div>
+    </div>
+  </section>
+
+  <section id="features" class="section" aria-labelledby="feat-h">
+    <div class="section-head">
+      <h2 id="feat-h">What you get</h2>
+      <span class="small muted mono">6 modules · 1 account</span>
+    </div>
+    <div class="grid">
+      <article class="card"><div class="card-meta small mono muted"><span>01</span><span>mail</span></div><h3>Email on your domain</h3><p class="small muted">Personal mailboxes, shared mailboxes and aliases for your whole team.</p></article>
+      <article class="card"><div class="card-meta small mono muted"><span>02</span><span>calendar</span></div><h3>Calendar</h3><p class="small muted">Shared calendars and invitations that work with everyone else's.</p></article>
+      <article class="card"><div class="card-meta small mono muted"><span>03</span><span>storage</span></div><h3>File storage</h3><p class="small muted">Keep and share your team's files and email attachments.</p></article>
+      <article class="card"><div class="card-meta small mono muted"><span>04</span><span>search</span></div><h3>AI search</h3><p class="small muted">Find any email by what it's about, not just the words in it.</p></article>
+      <article class="card"><div class="card-meta small mono muted"><span>05</span><span>agents</span></div><h3>Agents</h3><p class="small muted">Automate email work, running on your own AI key.</p></article>
+      <article class="card"><div class="card-meta small mono muted"><span>06</span><span>mcp</span></div><h3>Connected AI apps</h3><p class="small muted">Let apps like Claude read and act on your mail, with your permission.</p></article>
+    </div>
+  </section>
+
+  <section id="pricing" class="section" aria-labelledby="price-h">
+    <div class="section-head">
+      <h2 id="price-h">Pricing</h2>
+      <span class="small muted mono">USD · per person · annual saves 2 months</span>
+    </div>
+    <div class="grid plans">
+      <div class="plan">
+        <span>Free</span>
+        <span class="plan-price">$0</span>
+        <span class="small muted">forever</span>
+        <ul><li>Up to 5 people on 1 domain</li><li>5 GB per person</li><li>AI search of the last 90 days</li><li>Connected AI apps</li></ul>
+        <a href="/signup/">Start free</a>
+      </div>
+      <div class="plan">
+        <span>Pro</span>
+        <span class="plan-price">$6</span>
+        <span class="small muted">per person / month, or $5 billed yearly</span>
+        <ul><li>10 domains</li><li>30 GB per person, pooled</li><li>AI search of all your mail</li><li>Agents on your own AI key</li><li>Shared mailboxes free</li></ul>
+        <a href="/signup/?plan=pro">Start Pro</a>
+      </div>
+      <div class="plan">
+        <span>Team</span>
+        <span class="plan-price">$12</span>
+        <span class="small muted">per person / month, or $10 billed yearly</span>
+        <ul><li>Unlimited domains</li><li>200 GB per person, pooled</li><li>Longer search history</li><li>More agent runs and app calls</li><li>Support within 4 hours</li></ul>
+        <a href="/signup/?plan=team">Start Team</a>
+      </div>
+    </div>
+    <p class="small muted">Plus tax where it applies. Paid plans are sold by our reseller, Paddle. Cancel any time, with a full refund within 14 days of any payment.</p>
+  </section>
+
+  <section class="cta" aria-labelledby="cta-h">
+    <div class="cta-copy">
+      <h2 id="cta-h">Already using xstate?</h2>
+      <p class="muted">Sign in to read your mail and manage your workspace.</p>
+    </div>
+    <div class="row">
+      <a href="/login/" class="btn btn-solid">Sign in</a>
+      <a href="/signup/" class="btn">Create an account</a>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="footer-cols">
+      <div><span>xstate</span><span class="muted">Business email on your own domain.</span></div>
+      <div><span class="muted">Product</span><a href="https://xstate.com">xstate.com</a><a href="https://xstate.com/docs">Docs</a><a href="#pricing">Pricing</a></div>
+      <div><span class="muted">Legal</span><a href="https://xstate.com/docs/terms">Terms of Service</a><a href="https://xstate.com/docs/privacy">Privacy Policy</a><a href="https://xstate.com/docs/refunds">Refund Policy</a></div>
+      <div><span class="muted">Contact</span><a href="mailto:hello@xstate.com">hello@xstate.com</a></div>
+    </div>
+    <div class="footer-base"><span>xstate is operated by HireNinja LLC.</span><span class="mono">go.xstate.com</span></div>
+  </footer>
+</div>
+</body>
+</html>
