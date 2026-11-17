@@ -138,6 +138,12 @@ export async function idsByStalwartIds(db: D1Database, stalwartIds: string[]): P
 }
 
 /** Every mailbox id, for the hourly safety check. */
+/** Mailboxes whose mail the store holds (backend = 'store'), for jobs that look after them. */
+export async function heldByStore(db: D1Database): Promise<{ id: string; organization_id: string }[]> {
+  const { results } = await db.prepare(`SELECT id, organization_id FROM mailboxes WHERE backend = 'store'`).all<{ id: string; organization_id: string }>()
+  return results
+}
+
 export async function allIds(db: D1Database): Promise<string[]> {
   const { results } = await db.prepare('SELECT id FROM mailboxes ORDER BY created_at').all<{ id: string }>()
   return results.map((r) => r.id)

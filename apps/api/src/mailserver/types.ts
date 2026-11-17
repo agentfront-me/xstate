@@ -21,6 +21,8 @@ export type EmailEnv = Pick<
   | 'SCAN_MODE'
   | 'SCAN_URL'
   | 'MAILBOX_STORE'
+  // Live updates to the apps when mail changes in a mailbox the store holds (mailbox/store.ts).
+  | 'LIVE'
   // The organization's bucket, where mailboxes read from their store keep raw messages (mailbox/read.ts).
   | 'CLOUDFLARE_ACCOUNT_ID'
   | 'CLOUDFLARE_API_TOKEN'

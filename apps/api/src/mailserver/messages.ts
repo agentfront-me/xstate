@@ -2,7 +2,9 @@
 // only for its owner, shared and agent mailboxes for the people allowed in. Everything else is JMAP mail calls in
 // ./stalwart/mail, made with the admin key and the mailbox's Stalwart account id.
 
+import * as accessDb from '../db/mailbox-access'
 import * as eventsDb from '../db/email-events'
+import { announce } from '../live/announce'
 import type { MailboxRow } from '../db/mailboxes'
 import * as usersDb from '../db/users'
 import { checkName, inspectStream, type Safety } from '../security/attachments'
@@ -303,7 +305,11 @@ export async function updateMessage(
 ): Promise<void> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
   if (heldByStore(mailbox)) {
-    throw new EmailError('not_available', 'Marking, pinning and moving mail in this mailbox is not available yet', 409)
+    // The store holds this mailbox's mail: the change is made there (mailbox/store.ts update), then announced.
+    const result = await (await store(env, mailbox.id)).update({ id: messageId, ...input })
+    if (!result.found) throw new EmailError('message_not_found', 'Message not found', 404)
+    if (result.changed) await announceMailChange(env, mailbox)
+    return
   }
   let folderId: string | undefined
   if (input.folder) {
@@ -319,6 +325,12 @@ export async function updateMessage(
     return jmap.updateEmail(env, mailbox.stalwart_id, messageId, { pinned: input.pinned })
   }
   await jmap.updateEmail(env, mailbox.stalwart_id, messageId, { seen: input.seen, pinned: input.pinned, folderId })
+}
+
+/** Tells the people who can open the mailbox that its mail changed, so the apps reload it. Never fails the caller. */
+async function announceMailChange(env: EmailEnv, mailbox: MailboxRow): Promise<void> {
+  const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
+  if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId: mailbox.id }, userIds)
 }
 
 /**

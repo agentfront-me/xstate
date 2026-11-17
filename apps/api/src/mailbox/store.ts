@@ -23,6 +23,7 @@ import {
   type StoreRow,
 } from './query'
 import { subjectKey, ulid } from './inbound'
+import { planUpdate, type StoreUpdate } from './actions'
 
 /** Where the copy from the mail server stands. */
 export type StoreSync = {
@@ -170,7 +171,7 @@ export class MailboxStore extends Agent<Env> {
         }
       }
     }
-    addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER'])
+    addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER'])
     addColumns('placements', ['uid INTEGER'])
     addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
@@ -597,6 +598,62 @@ export class MailboxStore extends Agent<Env> {
       if (theirs.some((a) => people.has(a))) return c.thread_id as string
     }
     return null
+  }
+
+  /**
+   * Marks read or unread, pins, or moves (archive, inbox, junk, trash) a message or its conversation
+   * (email_update_message), in one transaction. Each changed message gets the next modseq; a moved one leaves its
+   * folder and gets a new uid in the target, as an IMAP move. `found` is false when the message isn't here.
+   */
+  update(u: StoreUpdate): { found: boolean; changed: number } {
+    if (this.meta('owner') !== 'store') throw new Error('This store does not hold its own mail')
+    return this.ctx.storage.transactionSync(() => {
+      const chosen = [...this.db.exec(`SELECT thread_id FROM messages WHERE id = ?`, u.id)][0] as { thread_id: string } | undefined
+      if (!chosen) return { found: false, changed: 0 }
+      const rows = [...this.db.exec(
+        `SELECT n, id, folder, seen, pinned FROM messages WHERE ${u.thread ? 'thread_id = ?' : 'id = ?'}`,
+        u.thread ? chosen.thread_id : u.id,
+      )].map((r) => ({ n: r.n as number, id: r.id as string, folder: r.folder as StoreFolderRole | null, seen: !!r.seen, pinned: !!r.pinned }))
+      const plan = planUpdate(rows, u) ?? []
+      const folderIds = this.ensureOwned()
+      const now = Math.floor(Date.now() / 1000)
+      for (const c of plan) {
+        const modseq = this.nextModseq()
+        const touched = new Set(([...this.db.exec(`SELECT folder_id FROM placements WHERE n = ?`, c.n)] as { folder_id: string }[]).map((p) => p.folder_id))
+        if (c.seen !== undefined) {
+          this.db.exec(`UPDATE messages SET seen = ? WHERE n = ?`, c.seen ? 1 : 0, c.n)
+          this.db.exec(`UPDATE placements SET seen = ? WHERE n = ?`, c.seen ? 1 : 0, c.n)
+        }
+        if (c.pinned !== undefined) this.db.exec(`UPDATE messages SET pinned = ? WHERE n = ?`, c.pinned ? 1 : 0, c.n)
+        if (c.folder) {
+          const target = folderIds.get(c.folder)
+          if (!target) throw new Error(`No ${c.folder} folder`)
+          const row = [...this.db.exec(`SELECT received_s, seen FROM messages WHERE n = ?`, c.n)][0] as { received_s: number; seen: number }
+          const uid = ([...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, target)][0] as { uid_next: number }).uid_next
+          this.db.exec(`DELETE FROM placements WHERE n = ?`, c.n)
+          this.db.exec(`INSERT INTO placements (folder_id, received_s, n, seen, uid) VALUES (?, ?, ?, ?, ?)`, target, row.received_s, c.n, row.seen, uid)
+          this.db.exec(`UPDATE folders SET uid_next = uid_next + 1 WHERE id = ?`, target)
+          this.db.exec(`UPDATE messages SET folder = ?, trashed_s = ? WHERE n = ?`, c.folder, c.folder === 'trash' ? now : null, c.n)
+          touched.add(target)
+        }
+        this.db.exec(`UPDATE messages SET modseq = ? WHERE n = ?`, modseq, c.n)
+        for (const folderId of touched) this.db.exec(`UPDATE folders SET highest_modseq = ? WHERE id = ?`, modseq, folderId)
+      }
+      return { found: true, changed: plan.length }
+    })
+  }
+
+  /**
+   * Deletes for good the messages that have been in Trash since before `before` (seconds), at most `limit` of them.
+   * Returns their raw copies' keys, for the caller to delete from the bucket.
+   */
+  purgeTrash(before: number, limit = 500): { purged: number; rawKeys: string[] } {
+    if (this.meta('owner') !== 'store') return { purged: 0, rawKeys: [] }
+    const ids = [...this.db.exec(`SELECT id FROM messages WHERE folder = 'trash' AND trashed_s < ? LIMIT ?`, before, limit)].map((r) => r.id as string)
+    if (!ids.length) return { purged: 0, rawKeys: [] }
+    const gone = this.remove(ids)
+    this.nextModseq()
+    return { purged: gone.removed, rawKeys: gone.rawKeys }
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

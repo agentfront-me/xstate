@@ -3,7 +3,7 @@ title: Privacy Policy
 description: What data xstate collects, why, who we share it with, and the choices you have.
 ---
 
-**Last updated:** November 16, 2026
+**Last updated:** November 18, 2026
 
 This policy explains how **HireNinja LLC** ("xstate", "we", "us") handles personal data when you use
 xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related services (the
@@ -127,7 +127,7 @@ We share personal data only as described here:
   | Provider | Purpose |
   | --- | --- |
   | Cloudflare, Inc. | Hosting, databases, file storage, queues, search indexing, AI embeddings, DNS and network security |
-  | Amazon Web Services, Inc. | Hosting the mail servers that store and deliver mailboxes; delivering outgoing email (Amazon SES), bounce and complaint handling |
+  | Amazon Web Services, Inc. | Hosting the mail servers that store and deliver mailboxes; delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email for domains on the new mail path (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days) |
   | Expo (650 Industries, Inc.), Apple, Google | Delivering push notifications to the mobile apps |
   | Paddle.com Market Ltd | Reseller and merchant of record for paid plans: checkout, payments, invoices and sales tax |
 

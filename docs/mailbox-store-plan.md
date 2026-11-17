@@ -691,7 +691,7 @@ through Amazon SES and briefly through S3 (deleted within seconds, 7 days at mos
 rule set and IAM user; add the Worker secrets; add the `pilot.xstate.com` MX record; verify `pilot.xstate.com` in
 SES if the parent domain's identity doesn't cover it for receiving.
 
-**Decided (2026-11-17):** pilot on `pilot.xstate.com`; a full mailbox refuses mail from step 4, not step 1.
+**Decided (2026-11-17):** pilot on `99events.com` (no mail on it before; `pilot.xstate.com` was set up first and removed), mailbox `hello@99events.com`; a full mailbox refuses mail from step 4, not step 1.
 
 #### Step 1 built (2026-11-17, uncommitted)
 
@@ -739,6 +739,111 @@ can be the active one.
    passes through Amazon SES and briefly through S3.
 
 Then the pilot tests listed under Testing, from an outside account (Gmail).
+
+**Done 2026-11-17 (steps 1–6):** queues created; deployed ("Start receiving emails using SES"), migration 0036
+applied; bucket `xstate-mail-inbound` (public access blocked, AES-256 at rest, 7-day lifecycle); topic
+`xstate-mail-inbound`, its HTTPS subscription confirmed by the webhook itself; IAM user `xstate-mail-inbound` with
+an inline policy for Get, Put and Delete on that bucket, its key stored straight into the two Worker secrets
+(never printed); rule set `xstate` with rule `inbound` (enabled, scanning on, S3 action under `inbound/`,
+publishing to the topic), active. One difference from the plan: the bucket and topic policies let SES in only for
+this account (`AWS:SourceAccount`). A condition naming the rule (`AWS:SourceArn`) made SES's own write test fail
+when the rule was created, even with a wildcard. Nothing is received until a domain's MX points at SES.
+
+**Pilot live (2026-11-17, 19:10 UTC):** `99events.com` (DNS on Cloudflare, no mail before) with `hello@99events.com`
+on the store; `pilot.xstate.com` was set up first and removed. The first message, from Gmail, sent 19:09:49 UTC,
+was in R2 at 19:10:11 (`01f315d9…/raw/01M7NENBKYTTCFBCV18TESAGXS.eml`, 6,189 bytes) with SES verdicts PASS (spam,
+virus, SPF), and the S3 copy was deleted, which the consumer does only after the store accepted it. `privacy.md`
+and `security.md` now say received mail passes through SES and S3.
+
+**Pilot tests (2026-11-17, 19:13 UTC),** sent through SES from `pilot-test@xstate.com`, checked in R2 and in the
+web app; a second store mailbox, `team@99events.com`, was added for the two-recipient test:
+
+| Test | Result |
+|---|---|
+| Reply (`In-Reply-To` the Gmail message) | Joined that conversation; the app shows both messages |
+| HTML only, with entities | Stored and read correctly (`café`, `&`); the app's message frame was sized 86 px for 119 px of content, so the last line was hidden: an existing viewer issue, not receiving |
+| One message to `hello@` and `team@` | One copy in each mailbox, each under its own id |
+| Unknown address `nobody@99events.com` | Dropped: nothing in R2, S3 copy deleted |
+| GTUBE | SES spam verdict FAIL → Junk (the app's Spam) |
+| 20 MB attachment (28.7 MB message) | Delivered in about 15 s; listed as `large-test.pdf`, 20.0 MB |
+| EICAR attachment | Never reached S3: SES accepted the send and no bounce came back, so it was most likely stopped on SES's sending side. The quarantine path is still untried with real mail (tried locally with a fake verdict) |
+
+Found: the web app marks a message read when it is opened, which a store-held mailbox refuses until step 2, so
+every open shows "Marking, pinning and moving mail in this mailbox is not available yet". Step 2 removes it.
+The domain shows "DNS records pending" in the app because domain verification still expects Stalwart's MX.
+
+#### Step 2: acting on mail in the store (approved and built 2026-11-18, uncommitted)
+
+**Goal:** everything the app and `email_update_message` do to received mail works for a store-held mailbox, with
+no Stalwart call: mark read and unread, pin and unpin, **archive**, move back to Inbox, Junk and Not junk, Trash and
+restore, for one message or a whole conversation. That removes the "not available yet" notice the app shows today
+when a message is opened (it marks it read).
+
+**Folders.** A store-held mailbox already has its six folders, Archive included, from its first delivery
+(`ensureOwned`, step 1). Archive is a real folder with its own counts and IMAP numbering, like Inbox. Stalwart
+mailboxes made Archive on first use; here it always exists, so archiving never has a "no Archive folder" case.
+
+**One store call per action** (`MailboxStore.update`), in one transaction:
+
+- `ids` (one message, or every message of a conversation with `thread`), and any of `seen`, `pinned`, `folder`
+  (`inbox`, `archive`, `junk`, `trash`; the same roles `email_update_message` takes today).
+- **Flags** (`seen`, `pinned`): change the rows and their placements' `seen`; each changed message gets the next
+  `modseq`, and its folder's `highest_modseq` rises.
+- **Moves** (`folder`): the message leaves its folder and gets a new `uid` in the target folder (an IMAP client sees
+  a move as expunge here, append there), plus a new `modseq`. As today, `thread` with `folder` moves only the
+  conversation's messages that are in the same folder as the chosen one, so archiving a conversation from the Inbox
+  doesn't pull its sent replies out of Sent.
+- Returns how many changed; the change token (`changeState`) moves with it.
+- `messages.folder` (the role lists read) and `placements` stay in step, as `setPlacements` does for shadow copies.
+
+**`mailserver/messages.ts`:** `updateMessage` calls the store for `backend = 'store'` instead of answering 409,
+then tells the organization's `LiveHub` so the mailbox reloads for whoever has it open (as mail sync does). The
+operation's inputs and results don't change, so the web app, mobile app, API and MCP need nothing new.
+
+**Trash:** messages in Trash for 30 days are deleted for good: their rows, search rows and raw copy in R2. The
+store's alarm runs it once a day. (Stalwart mailboxes keep whatever Stalwart does; there is no "delete forever"
+operation today, so none is added here.)
+
+**Junk and Not junk** are moves for now. Learning from them (the mailbox's sender list, spam layer 3) is step 4.
+
+**Not in step 2:** sending, replying and drafts (step 3: the reply box in a store-held mailbox still fails, since
+the message isn't on Stalwart); search by meaning and agent triggers (step 4).
+
+**Testing:** pure tests for which messages a conversation move touches; locally, every action on a store-held
+mailbox (read, unread, pin, archive, back to Inbox, junk, not junk, trash, restore), folder counts and the change
+token after each, and the 30-day Trash cleanup with a shortened time; then the same in the app on
+`hello@99events.com`.
+
+**Built:** `mailbox/actions.ts` (`planUpdate`: which messages a change touches, with tests), `MailboxStore.update`
+and `purgeTrash` (new column `messages.trashed_s`), `mailbox/trash.ts` (run by the hourly cron rather than an alarm
+in each store: the Worker deletes the raw copies, which needs the organization's bucket), and `updateMessage` in
+`mailserver/messages.ts` calling the store and announcing the change. Tried locally end to end: read a conversation
+(3), unread, pin (shows in Pinned), archive a conversation (3 to Archive, the pin kept), back to Inbox, Not junk and
+Junk, Trash and restore, a missing id (404); folder counts and the change token moved each time; the hourly run
+with the 30 days set to zero deleted the one message in Trash and its raw copy.
+
+#### Our own MX name (discussed 2026-11-17, deferred)
+
+Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's
+choice. The idea, kept for later: a host we own (such as `incoming.xstate.io`) whose A records copy SES's inbound
+addresses, kept in step by a Worker cron, so receiving could move off SES or to another region without customers
+changing their MX. Not a CNAME: an MX must name a host with its own addresses (RFC 2181). On 2026-11-17 SES's name
+answered with the same 3 IPv4 addresses on every lookup (TTL 60, no IPv6), so copying them is simple. What to be
+careful about:
+
+- **The DNS token.** Cloudflare tokens limit to a zone, not a record, so a token for `xstate.io` that leaked could
+  redirect every customer's mail and change every other record there. Better: the MX host in a zone of its own (a
+  domain bought only for this, on auto-renew, since letting it lapse stops all incoming mail).
+- **Not supported by AWS.** SES accepts mail on its addresses whatever name the sender looked up, but AWS documents
+  pointing MX at its hostname. If AWS changes the addresses, some senders reach a dead one for up to about 20
+  minutes (15-minute job, 5-minute TTL); senders retry, so mail is late, not lost.
+- **A stopped job** leaves the records as they were: safe unless SES's addresses change meanwhile. Log every run
+  and warn in the hourly check when our records differ from SES's.
+- **TLS.** Senders get SES's certificate for an amazonaws.com name: opportunistic TLS still encrypts, but customer
+  domains can't use MTA-STS in enforce mode or DANE until we run our own MX with a certificate for the name.
+- **What assumes `mx.xstate.io` today:** the domain setup records, domain verification's MX check, and the Domain
+  Connect template (onboarded by Cloudflare, so a change means resubmitting it).
+- It moves the switch from customers to us; it doesn't make leaving SES free.
 
 ### 3. Calendars
 

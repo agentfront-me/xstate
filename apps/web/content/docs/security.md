@@ -42,6 +42,12 @@ change how something works. Recent changes are listed [at the end](#changes).
   Links open in a new window.
 - **Proving mail is yours.** When you add a domain, xstate asks you to publish SPF and DKIM records, and
   recommends DMARC. Mail you send leaves through Amazon SES, signed with your domain's own DKIM key.
+- **Receiving through Amazon SES.** For domains moved to xstate's new mail path (being tried on one test domain
+  now), incoming mail is received by Amazon SES, which checks it for viruses and spam, saves it briefly in a
+  private Amazon S3 bucket that only SES can write to, and notifies xstate. xstate copies it into your
+  organization's own storage within seconds and deletes it from S3; anything left there is deleted after 7 days.
+  A message SES finds a virus in is never delivered. Mail for addresses that don't exist is dropped, not bounced,
+  so forged senders get no reply.
 - **A mailbox's own index.** To make lists and search fast, a mailbox can have its own index of its messages:
   senders, recipients, subjects, folders, flags and body text, with a copy of each whole message (attachments
   included) in your organization's own storage bucket, from which the message and its attachments can be opened.
@@ -158,7 +164,8 @@ A personal token lets your own server send email from mailboxes you can send fro
 - **Organization secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or
   roll them. They are for audience tracking and can't send email.
 - **Webhooks** xstate receives are checked before they're trusted. Mail-server events must carry a valid
-  HMAC-SHA256 signature, Amazon SES notifications must have a valid signature from AWS, and billing events from
+  HMAC-SHA256 signature, Amazon SES notifications (bounces, complaints and received mail) must have a valid
+  signature from AWS and come from xstate's own notification topics, and billing events from
   Paddle must come from one of Paddle's published addresses and carry a valid, recent HMAC-SHA256 signature.
 - **Payments** happen in Paddle's checkout, never on xstate's servers: xstate doesn't see or store card numbers.
   Only owners and admins can buy, change or cancel a plan, and connected AI apps and agents can't touch billing.
@@ -176,6 +183,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Domains on xstate's new mail path receive through Amazon SES, which scans each message
+  for viruses and spam; received mail passes briefly through a private Amazon S3 bucket before it reaches your
+  organization's storage. Being tried on one test domain.
 - **November 17, 2026:** A mailbox's own index can include a copy of each whole message in your organization's
   storage bucket, and messages and attachments can be opened from it, with the same access checks.
 - **November 17, 2026:** A mailbox can have its own index of its messages for faster lists and search, kept per
