@@ -17,9 +17,12 @@ Pick the addresses you want, such as `hello@` and your own name.
 
 ## 4. Verify the domain
 
-xstate shows the DNS records your domain needs. If your DNS is at a provider that supports Domain Connect, such as
-Cloudflare, one click writes them for you. Otherwise copy them into your DNS provider; xstate checks them
-automatically.
+xstate shows the DNS records your domain needs. Copy them into your DNS provider, or copy them all at once as a
+zone file, which most providers can import. xstate checks public DNS every few seconds and shows each record as it
+appears. Most domains are ready within a few minutes.
+
+One-click setup through Domain Connect is rolling out, starting with Cloudflare. When it is available for your
+domain, xstate shows a button that adds the records for you.
 
 ## 5. Connect an AI app
 

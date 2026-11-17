@@ -1,14 +1,17 @@
 import type { Metadata } from 'next'
+import { posts, releases } from '@/lib/blog'
 import { SIGNUP_URL } from '@/lib/urls'
-import { HeaderActions, Pricing, ThemeToggle } from './controls'
+import { Cta, SiteFooter, SiteHeader } from './chrome'
+import { Pricing } from './controls'
+import { PostList } from './post-list'
 
 export const metadata: Metadata = {
   title: { absolute: 'xstate · Your Digital Real Estate' },
   alternates: {
     types: {
-      'application/json': '/index.json',
       'text/plain': '/llms.txt',
       'application/feed+json': '/blog/feed.json',
+      'application/rss+xml': '/blog/rss.xml',
     },
   },
 }
@@ -16,9 +19,9 @@ export const metadata: Metadata = {
 const faqs = [
   ['Do I need to own a domain?', 'No. Connect one you own, buy one during setup, or start on a free you.xstate.email subdomain and move later.'],
   ['Which agents can read my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
-  ['How long does DNS take?', 'With Domain Connect (Cloudflare, GoDaddy, IONOS) records are written for you and verify in under a minute. Manual records usually verify within 15 minutes.'],
+  ['How long does DNS take?', 'Usually a few minutes after you add the records, though some DNS providers take longer to publish changes. xstate checks every few seconds and shows each record as it appears, so you can leave the page open. One-click setup through Domain Connect is rolling out, starting with Cloudflare.'],
   ['Can I export everything?', 'Yes. Mail as .mbox, data as JSON or CSV, sites as static files. Exports are available on every plan.'],
-  ['What does machine readable mean here?', 'Every public URL returns HTML by default and JSON or Markdown when asked via the Accept header. The site also publishes llms.txt, an OpenAPI document and schema.org data in each page.'],
+  ['What does machine readable mean here?', 'Pages are written for people and published for programs too. Every docs page has a Markdown version (add .md to its URL), blog posts and the changelog return Markdown or JSON when asked via the Accept header, and /llms.txt lists all of it for agents. Pages also carry schema.org data.'],
 ]
 
 const structuredData = {
@@ -46,52 +49,27 @@ const structuredData = {
 
 const features = [
   { id: 'F01', tag: 'email', title: 'Email on your domain', body: 'Addresses on a domain you own, with sending, receiving, aliases and catch-all.', points: ['hello@, support@, sales@ in one click', 'IMAP, SMTP and JMAP', 'Shared inboxes per address'] },
-  { id: 'F02', tag: 'dns', title: 'DNS that verifies itself', body: 'Records are written through Domain Connect where supported and checked automatically.', points: ['Cloudflare, GoDaddy, IONOS', 'Manual copy with live status', 'Send records to a developer'] },
+  { id: 'F02', tag: 'dns', title: 'DNS that checks itself', body: 'xstate shows the records your domain needs and checks public DNS every few seconds until they are in place.', points: ['Live status for each record', 'Copy them all as a zone file', 'Send the records to a developer'] },
   { id: 'F03', tag: 'agents', title: 'Agents with scoped access', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send', 'Only the mailboxes you pick', 'Disconnect in one click'] },
   { id: 'F04', tag: 'data', title: 'Data you can query', body: 'Mail, contacts and files are indexed into tables you and your agents can read.', points: ['SQL and JSON endpoints', 'Full-text search', 'Daily snapshots'] },
   { id: 'F05', tag: 'sites', title: 'Sites on the same domain', body: 'Publish static pages and forms at your root or any subdomain, no extra host.', points: ['Deploy from git or upload', 'Forms land in your inbox', 'Edge cache, free TLS'] },
-  { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Every public page serves HTML to people and JSON, Markdown or llms.txt to programs.', points: ['Content negotiation on every URL', 'OpenAPI document', 'Structured data on every page'] },
-]
-
-const quotes = [
-  { text: 'We moved three domains off a legacy host on a Friday afternoon. DNS verified before the coffee was ready.', who: 'Mara Ilic · Founder', site: 'ilic.studio' },
-  { text: 'Giving Claude read and draft on support@ but not send was exactly the control I wanted. The audit log sealed it.', who: 'Devon Park · Head of Ops', site: 'parkandco.io' },
-  { text: 'The JSON endpoints mean our agents and our dashboards read the same data. One source, no sync jobs.', who: 'Ines Okafor · Engineer', site: 'okafor.dev' },
-]
-
-const posts = [
-  { slug: 'content-negotiation', date: '2026-10-28', title: 'Why every page on xstate answers to Accept: application/json', summary: 'Content negotiation as the default, and what it took to get Markdown right.', read: '6 min' },
-  { slug: 'agent-permissions', date: '2026-10-14', title: 'Scoped tokens for agents: read, draft, send, label', summary: 'How the permission model works and why send is off by default.', read: '4 min' },
-  { slug: 'domain-connect', date: '2026-09-30', title: 'Domain Connect in practice', summary: 'What verifies in 48 seconds, what takes 15 minutes, and what to do about the rest.', read: '5 min' },
-  { slug: 'changelog-september', date: '2026-09-16', title: 'Changelog: catch-all, JMAP, MCP manifest', summary: 'Three releases in September.', read: '2 min' },
+  { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Pages are HTML for people, with Markdown and JSON versions for agents and scripts.', points: ['Markdown for every docs page', 'llms.txt index for agents', 'JSON and RSS feeds for the blog'] },
 ]
 
 export default function Home() {
+  const latest = releases[0]
   return (
     <div className="page">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
 
-      <header className="site-header">
-        <a href="/">xstate</a>
-        <nav aria-label="Primary">
-          <a href="#features">Features</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#blog">Blog</a>
-          <a href="#faq">FAQ</a>
-          <a href="/docs">Docs</a>
-        </nav>
-        <div className="header-actions">
-          <ThemeToggle />
-          <HeaderActions />
-        </div>
-      </header>
+      <SiteHeader />
 
       <section className="grid hero" aria-labelledby="hero-h">
         <div className="hero-copy">
           <div className="small muted mono">001 · Your Digital Real Estate</div>
           <h1 id="hero-h">Your domain, emails, data, agents and sites in one place.</h1>
           <p className="muted">
-            Point a domain at xstate and get a working inbox in under a minute. Connect Claude, Codex or Cursor to it with scoped permissions. Everything you own stays on a domain you control.
+            Point a domain at xstate and get a working inbox in minutes. Connect Claude, Codex or Cursor to it with scoped permissions. Everything you own stays on a domain you control.
           </p>
           <div className="row">
             <a href={SIGNUP_URL} className="btn btn-solid">
@@ -132,46 +110,28 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="quotes-h">
-        <div className="section-head">
-          <h2 id="quotes-h">From people who moved</h2>
-          <span className="small muted mono">3 of 212 reviews</span>
-        </div>
-        <div className="grid">
-          {quotes.map((q) => (
-            <blockquote className="quote" key={q.site}>
-              <p>{q.text}</p>
-              <footer className="small muted">
-                <span>{q.who}</span>
-                <span className="mono">{q.site}</span>
-              </footer>
-            </blockquote>
-          ))}
-        </div>
-      </section>
-
       <Pricing />
 
       <section id="blog" className="section" aria-labelledby="blog-h">
         <div className="section-head">
-          <h2 id="blog-h">Blog</h2>
-          <a href="/blog/feed.json" className="small muted mono">
-            feed.json ↗
-          </a>
+          <h2 id="blog-h">
+            <a href="/blog">Blog</a>
+          </h2>
+          <span className="feeds small muted mono">
+            <a href="/blog/feed.json">feed.json</a>
+            <a href="/blog/rss.xml">rss</a>
+          </span>
         </div>
-        <div className="posts">
-          {posts.map((p) => (
-            <a className="post" href={`/blog/${p.slug}`} key={p.slug}>
-              <time dateTime={p.date} className="small muted mono">
-                {p.date}
-              </time>
-              <span className="post-body">
-                <span>{p.title}</span>
-                <span className="small muted">{p.summary}</span>
-              </span>
-              <span className="read small faint mono">{p.read}</span>
+        <PostList posts={posts.slice(0, 3)} />
+        <div className="section-foot small mono">
+          {latest ? (
+            <a href={latest.url} className="muted">
+              Latest release · {latest.date} · {latest.title}
             </a>
-          ))}
+          ) : (
+            <span />
+          )}
+          <a href="/blog">All posts →</a>
         </div>
       </section>
 
@@ -179,11 +139,7 @@ export default function Home() {
         <div className="faq-intro">
           <h2 id="faq-h">Questions</h2>
           <p className="small muted">
-            Also answered at{' '}
-            <a href="/faq.json" className="mono">
-              /faq.json
-            </a>{' '}
-            and in the page&apos;s structured data.
+            Also in the page&apos;s structured data, for search engines and agents.
           </p>
         </div>
         <div className="faq-list">
@@ -202,70 +158,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="cta" aria-labelledby="cta-h">
-        <div className="cta-copy">
-          <h2 id="cta-h">Connect a domain. Inbox in under a minute.</h2>
-          <p className="small muted">No card on the free plan. Export everything, any time.</p>
-        </div>
-        <div className="row">
-          <a href={SIGNUP_URL} className="btn btn-solid">
-            Get started
-          </a>
-          <a href="/docs/api" className="btn">
-            API reference
-          </a>
-        </div>
-      </section>
-
-      <footer className="site-footer">
-        <div className="footer-cols">
-          <div>
-            <span style={{ fontSize: 14 }}>xstate</span>
-            <span className="muted">Your Digital Real Estate</span>
-          </div>
-          <div>
-            <span className="muted">Product</span>
-            <a href="/email">Email</a>
-            <a href="/agents">Agents</a>
-            <a href="/data">Data</a>
-            <a href="/sites">Sites</a>
-          </div>
-          <div>
-            <span className="muted">Developers</span>
-            <a href="/docs">Docs</a>
-            <a href="/docs/api">API reference</a>
-            <a href="/docs/mcp">MCP</a>
-            <a href="/status">Status</a>
-          </div>
-          <div>
-            <span className="muted">Company</span>
-            <a href="/blog">Blog</a>
-            <a href="#pricing">Pricing</a>
-            <a href="/changelog">Changelog</a>
-            <a href="mailto:hello@xstate.com">Contact</a>
-          </div>
-          <div>
-            <span className="muted">Legal</span>
-            <a href="/docs/privacy">Privacy</a>
-            <a href="/docs/terms">Terms</a>
-            <a href="/docs/refunds">Refunds</a>
-            <a href="/dpa">DPA</a>
-            <a href="/security">Security</a>
-          </div>
-        </div>
-        <div className="machine">
-          <span style={{ color: 'var(--ink)' }}>Machine readable</span>
-          <a href="/llms.txt">/llms.txt</a>
-          <a href="/index.json">/index.json</a>
-          <a href="/openapi.json">/openapi.json</a>
-          <a href="/sitemap.xml">/sitemap.xml</a>
-          <span className="note">Add Accept: application/json to any public URL</span>
-        </div>
-        <div className="footer-base">
-          <span>© 2026 xstate</span>
-          <span className="mono">status: all systems normal · 99.98% 90d</span>
-        </div>
-      </footer>
+      <Cta />
+      <SiteFooter />
     </div>
   )
 }

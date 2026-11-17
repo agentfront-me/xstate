@@ -2,6 +2,7 @@
 // meta.json files (see content/docs/meta.json); a page's title and description come from its frontmatter.
 import { loader } from 'fumadocs-core/source'
 import { defineDocs } from 'fumadocs-mdx/macro'
+import { llmsBlogSection } from './blog'
 
 const docs = defineDocs({ dir: 'content/docs' })
 
@@ -26,10 +27,10 @@ export function pageMarkdown(page: Page) {
   return `# ${page.data.title}${intro}\n\n${body}\n`
 }
 
-/** /llms.txt: one line per page, linking to its Markdown. */
+/** /llms.txt: one line per docs page and blog post, linking to its Markdown. */
 export function llmsIndex() {
   const lines = source
     .getPages()
     .map((p) => `- [${p.data.title}](https://xstate.com${markdownUrl(p)})${p.data.description ? `: ${p.data.description}` : ''}`)
-  return `# xstate\n\n> Email, data, agents and sites on your own domain.\n\n## Docs\n\n${lines.join('\n')}\n`
+  return `# xstate\n\n> Email, data, agents and sites on your own domain.\n\n## Docs\n\n${lines.join('\n')}\n\n${llmsBlogSection()}`
 }
