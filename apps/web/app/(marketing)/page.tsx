@@ -52,12 +52,12 @@ const structuredData = {
 }
 
 const features = [
-  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with shared inboxes and a calendar for every mailbox. Set up in minutes.', points: ['hello@, support@, sales@ in one click', 'DNS records checked for you, live', 'Works with Apple Mail, Outlook and any mail app'] },
-  { id: 'F02', tag: 'files', title: 'Storage and files, next to your mail', body: 'Personal and shared spaces for your team\'s files, with every attachment one click away. Open and edit files right in the browser.', points: ['Save any attachment to Storage in one click', 'Edit Markdown and CSV, mark up PDFs', 'Earlier versions kept, links to share when you want'] },
-  { id: 'F03', tag: 'search', title: 'Search that understands your mail', body: 'Every email body and attachment is indexed by meaning, so you can ask in your own words and get the passages that answer it.', points: ['A vector index of every email and attachment', 'PDF and text attachments included', 'Your AI apps and agents search the same index'] },
-  { id: 'F04', tag: 'agents', title: 'Agents run your campaigns', body: 'The agent reads each contact and your past emails with them, then writes a message for that person alone. You approve every email before it goes out, until you choose to let it send.', points: ['No templates or merge fields to keep up', 'Runs on a schedule, from a webhook or when someone replies', 'Replies land in your inbox, ready for a follow-up'] },
-  { id: 'F05', tag: 'api', title: 'Transactional email from the same platform', body: 'Send receipts, password resets and alerts from billing@ or support@ on your domain with one API request. Replies land in that mailbox, not in a noreply@ nobody reads.', points: ['No separate email service to sign up for', 'Tokens send only from the mailboxes you pick', 'Safe retries and a delivery status for every email'] },
-  { id: 'F06', tag: 'audience', title: 'Track your audience and events in one place', body: 'Add one snippet to your website to see every visitor, lead and customer: the pages they view and the events you track, next to the emails you have exchanged with them.', points: ['Page views tracked on their own, custom events in one line', 'Segments built from what people do', 'Agents use the same profiles to write each campaign email'] },
+  { id: 'F01', tag: 'email', title: 'Email on your own domain', body: 'Addresses on a domain you own, with shared inboxes and a calendar for every mailbox. Set up in minutes.', points: ['hello@ and support@ in one click', 'DNS records checked for you, live', 'Works with Apple Mail and Outlook'] },
+  { id: 'F02', tag: 'files', title: 'Files next to your mail', body: 'Personal and shared spaces for your team\'s files. Save any attachment in one click and edit files in the browser.', points: ['Edit Markdown and CSV files', 'Mark up PDFs in the browser', 'Earlier versions and share links'] },
+  { id: 'F03', tag: 'search', title: 'Search that understands you', body: 'Every email and attachment is indexed by meaning. Ask in your own words and find the passage you need.', points: ['Emails and attachments indexed', 'PDF and text files included', 'Your AI apps search it too'] },
+  { id: 'F04', tag: 'agents', title: 'Agents run your campaigns', body: 'The agent reads each contact and your past emails, then writes them a personal email. You approve it.', points: ['No templates or merge fields', 'Runs on a schedule or a webhook', 'Replies land in your inbox'] },
+  { id: 'F05', tag: 'api', title: 'Transactional email API', body: 'Send receipts, resets and alerts from billing@ or support@ with one API call. Replies land in that mailbox.', points: ['No separate email service', 'Scoped to mailboxes you pick', 'Safe retries and delivery status'] },
+  { id: 'F06', tag: 'audience', title: 'Your audience in one place', body: 'Add one snippet to your website to see every visitor, lead and customer, and each page they view.', points: ['Custom events in one line', 'Segments from what people do', 'Agents use the same profiles'] },
 ]
 
 export default function Home() {
@@ -103,7 +103,7 @@ export default function Home() {
                 <span>{f.tag}</span>
               </div>
               <h3>{f.title}</h3>
-              <p className="small muted">{f.body}</p>
+              <p className="muted">{f.body}</p>
               <ul>
                 {f.points.map((p) => (
                   <li key={p}>{p}</li>
@@ -156,7 +156,7 @@ export default function Home() {
                   <span className="fq-minus">−</span>
                 </span>
               </summary>
-              <p className="small muted">{a}</p>
+              <p className="muted">{a}</p>
             </details>
           ))}
         </div>

@@ -47,7 +47,7 @@ export function SiteFooter() {
       <div className="footer-cols">
         <div>
           <span style={{ fontSize: 14 }}>xstate</span>
-          <span className="muted">Your Digital Real Estate</span>
+          <span className="muted">Business email for the AI-native team</span>
         </div>
         <div>
           <span className="muted">Product</span>

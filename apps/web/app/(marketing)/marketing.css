@@ -45,9 +45,9 @@
 
 .mk .card { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
 .mk .card-meta { display: flex; justify-content: space-between; }
-.mk .card h3 { font-size: 14px; font-weight: 400; }
+.mk .card h3 { font-size: 16px; font-weight: 400; }
 .mk .card p { text-wrap: pretty; }
-.mk .card ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.mk .card ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .mk .card li { display: flex; gap: 8px; }
 .mk .card li::before { content: "—"; color: var(--faint); }
 
