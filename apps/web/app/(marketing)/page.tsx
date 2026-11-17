@@ -70,10 +70,10 @@ export default function Home() {
 
       <section className="grid hero" aria-labelledby="hero-h">
         <div className="hero-copy">
-          <div className="small muted mono">001 · Business email for teams that work with AI</div>
-          <h1 id="hero-h">Business email your AI can work in, on your own domain.</h1>
+          <div className="small muted mono">001 · Business email for the AI-native team</div>
+          <h1 id="hero-h">Email on your domain, for your team and agents.</h1>
           <p className="muted">
-            Email, calendar and files for your team, free for up to 5 people. Connect Claude, Codex or Cursor and choose exactly what each one may read, draft or send.
+            Email, calendar and storage on your own domain. Connect Claude, ChatGPT or Cursor to automate your workflows and rules. Free for up to 5 mailboxes.
           </p>
           <div className="row">
             <a href={SIGNUP_URL} className="btn btn-solid">
