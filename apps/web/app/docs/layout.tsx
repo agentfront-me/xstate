@@ -8,7 +8,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <DocsLayout
       tree={source.getPageTree()}
       nav={{ title: 'xstate', url: '/' }}
-      links={[{ text: 'Get started', url: SIGNUP_URL, external: true }]}
+      links={[{ text: 'Start free', url: SIGNUP_URL, external: true }]}
     >
       {children}
     </DocsLayout>

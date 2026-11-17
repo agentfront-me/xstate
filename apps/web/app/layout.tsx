@@ -12,8 +12,8 @@ const themeCookieScript = `try {
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://xstate.com'),
-  title: { default: 'xstate · Your Digital Real Estate', template: '%s · xstate' },
-  description: 'Email, calendar, files and AI agents on your own domain.',
+  title: { default: 'xstate · Free business email with AI agents, on your own domain', template: '%s · xstate' },
+  description: 'Business email, calendar and files on your own domain, free for up to 5 people. Connect Claude, Codex or Cursor and choose what each one may do.',
   icons: { icon: '/favicon.svg', apple: '/brand/apple-touch-icon.png' },
   openGraph: { images: '/brand/og-image.png' },
 }

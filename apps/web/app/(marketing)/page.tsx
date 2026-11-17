@@ -6,7 +6,7 @@ import { Pricing } from './controls'
 import { PostList } from './post-list'
 
 export const metadata: Metadata = {
-  title: { absolute: 'xstate · Your Digital Real Estate' },
+  title: { absolute: 'xstate · Free business email with AI agents, on your own domain' },
   alternates: {
     types: {
       'text/plain': '/llms.txt',
@@ -19,9 +19,11 @@ export const metadata: Metadata = {
 const faqs = [
   ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own. Buying one during setup and a free xstate subdomain are coming.'],
   ['Which agents can read my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
-  ['How long does DNS take?', 'Usually a few minutes after you add the records, though some DNS providers take longer to publish changes. xstate checks every few seconds and shows each record as it appears, so you can leave the page open. One-click setup through Domain Connect is rolling out, starting with Cloudflare.'],
+  ['How is this different from Google Workspace?', 'xstate is built for working with AI. Each AI app you connect gets its own access, limited to the mailboxes you pick and the actions you tick. Search by meaning across mail, attachments and files is included, and the free plan covers up to 5 people.'],
+  ['Can I move from Gmail or Google Workspace?', 'Yes. An administrator authorizes the import once, and xstate copies your mail, calendars, contacts and Drive files, then keeps the copy up to date until you switch your domain over.'],
+  ['Do you use my mail to train AI?', 'No. We do not use your content to train AI models, for advertising or for profiling, and our staff do not read it unless you ask us to. Agents use the AI provider and key your organization chooses.'],
+  ['How long does DNS take?', 'Usually a few minutes. xstate checks every few seconds and ticks off each record as it appears.'],
   ['Can I take my data with me?', 'Yes. Your mail stays reachable over IMAP, so any mail app can copy it out, and files in Storage download as they are. Contacts export as CSV.'],
-  ['What does machine readable mean here?', 'Pages are written for people and published for programs too. Every docs page has a Markdown version (add .md to its URL), blog posts and the changelog return Markdown or JSON when asked via the Accept header, and /llms.txt lists all of it for agents. Pages also carry schema.org data.'],
 ]
 
 const structuredData = {
@@ -33,7 +35,7 @@ const structuredData = {
       name: 'xstate',
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
-      description: 'Email, calendar, files and AI agents on your own domain.',
+      description: 'Business email, calendar and files on your own domain, with AI agents you control.',
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },
         { '@type': 'Offer', name: 'Pro', price: '6', priceCurrency: 'USD' },
@@ -48,12 +50,12 @@ const structuredData = {
 }
 
 const features = [
-  { id: 'F01', tag: 'email', title: 'Email on your domain', body: 'Addresses on a domain you own, with sending, receiving, aliases and shared inboxes.', points: ['hello@, support@, sales@ in one click', 'IMAP, SMTP and JMAP', 'Shared inboxes per address'] },
+  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with aliases, shared inboxes and a calendar for every mailbox.', points: ['hello@, support@, sales@ in one click', 'Invitations and replies from the same account', 'IMAP, SMTP and JMAP'] },
   { id: 'F02', tag: 'dns', title: 'DNS that checks itself', body: 'xstate shows the records your domain needs and checks public DNS every few seconds until they are in place.', points: ['Live status for each record', 'Copy them all as a zone file', 'Send the records to a developer'] },
-  { id: 'F03', tag: 'agents', title: 'Agents with scoped access', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send', 'Only the mailboxes you pick', 'Disconnect in one click'] },
+  { id: 'F03', tag: 'agents', title: 'Nothing goes out without your permission', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send: you tick which', 'Only the mailboxes you pick', 'Disconnect in one click'] },
   { id: 'F04', tag: 'search', title: 'Search across mail and files', body: 'Ask a question and get the passages that answer it, from your mail, attachments and files.', points: ['Search by meaning, in any language', 'PDFs and attachments included', 'Agents search the same index'] },
-  { id: 'F05', tag: 'calendar', title: 'A calendar for every mailbox', body: 'Schedule, invite and reply from the same account as your mail, on the same domain.', points: ['Day, week and month views', 'Invitations and replies', 'Import from Google Workspace'] },
-  { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Pages are HTML for people, with Markdown and JSON versions for agents and scripts.', points: ['Markdown for every docs page', 'llms.txt index for agents', 'JSON and RSS feeds for the blog'] },
+  { id: 'F05', tag: 'files', title: 'Storage for every mailbox', body: 'Save attachments, share files with your team and keep earlier versions.', points: ['Save attachments in one click', 'Personal and shared spaces', 'AI apps get no access, read, or read and change'] },
+  { id: 'F06', tag: 'import', title: 'Move from Google Workspace', body: 'Bring your mail, calendars, contacts and Drive files across in one import, kept in sync until you switch.', points: ['One authorization for the whole domain', 'Mail, calendars, contacts and Drive', 'Switch your domain when the copy is done'] },
 ]
 
 export default function Home() {
@@ -66,20 +68,20 @@ export default function Home() {
 
       <section className="grid hero" aria-labelledby="hero-h">
         <div className="hero-copy">
-          <div className="small muted mono">001 · Your Digital Real Estate</div>
-          <h1 id="hero-h">Email, calendar, files and AI agents on your own domain.</h1>
+          <div className="small muted mono">001 · Business email for teams that work with AI</div>
+          <h1 id="hero-h">Business email your AI can work in, on your own domain.</h1>
           <p className="muted">
-            Point a domain at xstate and get a working inbox in minutes. Connect Claude, Codex or Cursor to it with scoped permissions. Everything you own stays on a domain you control.
+            Email, calendar and files for your team, free for up to 5 people. Connect Claude, Codex or Cursor and choose exactly what each one may read, draft or send.
           </p>
           <div className="row">
             <a href={SIGNUP_URL} className="btn btn-solid">
-              Connect a domain
+              Start free
             </a>
             <a href="/docs/quickstart" className="btn">
               Read the quickstart
             </a>
           </div>
-          <div className="small faint mono">curl -s https://xstate.com/llms.txt</div>
+          <div className="small faint mono">Bring a domain you own · Set up in minutes</div>
         </div>
         <div className="hero-art">
           <HeroArt />
@@ -139,7 +141,7 @@ export default function Home() {
         <div className="faq-intro">
           <h2 id="faq-h">Questions</h2>
           <p className="small muted">
-            Also in the page&apos;s structured data, for search engines and agents.
+            Something else? Email <a href="mailto:hello@xstate.com">hello@xstate.com</a>.
           </p>
         </div>
         <div className="faq-list">
@@ -263,7 +265,7 @@ function HeroArt() {
         <Dot path="M324,180 L 420,180 C 436,180 440,234 456,234" dur="2.2s" begin="5.4s" muted />
       </g>
       <text x="280" y="348" textAnchor="middle" fill="var(--muted)" fontSize="11" opacity="0">
-        Your agent works inside your domain. Nothing leaves without you.
+        Your agent works inside your domain. Nothing goes out without your permission.
         <Fade begin="3.2s" dur="0.6s" />
       </text>
     </svg>

@@ -40,7 +40,7 @@ export function HeaderActions() {
         Log in
       </a>
       <a href={SIGNUP_URL} className="btn btn-solid">
-        Get started
+        Start free
       </a>
     </>
   )
@@ -58,8 +58,8 @@ const rows: [string, string, string, string][] = [
   ['Shared addresses and aliases', '5', 'unlimited, no seat charge', 'unlimited, no seat charge'],
   ['Storage', '5 GB per person', '30 GB per person, pooled', '200 GB per person, pooled'],
   ['Mail covered by AI search', 'last 90 days', '50,000 emails per person', '200,000 emails per person'],
-  ['Connected AI apps (tool calls a day)', '200 per person', '2,000 per person', '10,000 per person'],
-  ['Agents (your own AI key)', 'not included', '10 agents, 500 runs per person a month', 'unlimited, 2,000 runs per person a month'],
+  ['AI app actions a day', '200 per person', '2,000 per person', '10,000 per person'],
+  ['Agents (bring your own Anthropic or OpenAI key)', '—', '10 agents, 500 runs per person a month', 'unlimited, 2,000 runs per person a month'],
   ['Outside recipients a day', '100 per mailbox', '500 per mailbox', '1,000 per mailbox'],
   ['File version history', '5 versions, 30 days', '5 versions, 30 days', '100 versions, 1 year'],
   ['Support', 'docs', 'email, 1 business day', 'email, 4 hours'],
@@ -90,7 +90,7 @@ export function Pricing() {
                 <div className="plan">
                   <span className="plan-name">Free</span>
                   <span className="plan-price">$0</span>
-                  <span className="muted">forever</span>
+                  <span className="muted">no card needed</span>
                   <a href={SIGNUP_URL}>Start free</a>
                 </div>
               </th>
@@ -100,7 +100,7 @@ export function Pricing() {
                     <span className="plan-name">{p.name}</span>
                     {/* Annual: ten months' price spread over twelve. */}
                     <span className="plan-price">${annual ? Math.round((p.monthly * 10) / 12) : p.monthly}</span>
-                    <span className="muted">{annual ? 'per user / month, billed yearly' : 'per user / month'}</span>
+                    <span className="muted">{annual ? 'per person / month, billed yearly' : 'per person / month'}</span>
                     <a href={`${SIGNUP_URL}?plan=${p.plan}`}>Start {p.name}</a>
                   </div>
                 </th>
@@ -119,7 +119,7 @@ export function Pricing() {
           </tbody>
         </table>
       </div>
-      <p className="small faint">Prices in USD per person. Shared mailboxes are free. Tax added at checkout where required. Sold by our reseller, Paddle.</p>
+      <p className="small faint">Prices in USD per person. Shared mailboxes are free. Tax added at checkout where required. Payments are handled by Paddle, our reseller.</p>
     </section>
   )
 }

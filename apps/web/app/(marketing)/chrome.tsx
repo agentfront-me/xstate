@@ -31,7 +31,7 @@ export function Cta() {
       </div>
       <div className="row">
         <a href={SIGNUP_URL} className="btn btn-solid">
-          Get started
+          Start free
         </a>
         <a href="/docs/quickstart" className="btn">
           Read the quickstart
@@ -60,7 +60,7 @@ export function SiteFooter() {
           <span className="muted">Developers</span>
           <a href="/docs">Docs</a>
           <a href="/docs/mcp">Connect AI apps</a>
-          <a href="/docs/transactional-email">Email API</a>
+          <a href="/docs/transactional-email">API reference</a>
           <a href="/llms.txt">llms.txt</a>
         </div>
         <div>
@@ -73,7 +73,7 @@ export function SiteFooter() {
           <a href="/docs/privacy">Privacy</a>
           <a href="/docs/terms">Terms</a>
           <a href="/docs/refunds">Refunds</a>
-          <a href="/docs/security">Security</a>
+          <a href="/docs/security">Security overview</a>
         </div>
       </div>
       <div className="machine">
