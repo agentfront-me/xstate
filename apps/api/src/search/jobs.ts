@@ -8,8 +8,15 @@
 
 import * as searchDb from '../db/search'
 import { indexEmails, indexFile, removeDocument, type EmailIndexEnv } from './indexer'
+import { copyRaw, storeEmails, type ShadowEnv } from '../mailbox/shadow'
 
-export type SearchJob = { kind: 'index'; fileId: string } | { kind: 'index-emails'; mailboxId: string; emailIds: string[] }
+export type SearchJob =
+  | { kind: 'index'; fileId: string }
+  | { kind: 'index-emails'; mailboxId: string; emailIds: string[] }
+  // Copying messages into a mailbox's store (mailbox/shadow.ts). It rides on this queue: same shape of work, and
+  // no second queue to run.
+  | { kind: 'store-emails'; mailboxId: string; emailIds: string[] }
+  | { kind: 'store-raw'; mailboxId: string; emailIds: string[] }
 
 /** Files per hourly run, so a backfill of a big organization spreads over a few hours without starving mail sync. */
 const BACKFILL_PER_HOUR = 500
@@ -53,7 +60,7 @@ export function enqueueEmails(env: Pick<Env, 'SEARCH_INDEX'>, mailboxId: string,
 const retryDelay = (attempts: number) => Math.min(60 * attempts, 600) + Math.floor(Math.random() * 60)
 
 /** Queue consumer. The same file queued twice in one batch is indexed once. */
-export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv): Promise<void> {
+export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv & ShadowEnv): Promise<void> {
   const byFile = new Map<string, Message<SearchJob>[]>()
   for (const message of batch.messages) {
     if (message.body.kind !== 'index') continue
@@ -79,6 +86,28 @@ export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv
       message.ack()
     } catch (err) {
       console.error(`search-index-emails: mailbox ${message.body.mailboxId} failed`, err)
+      message.retry({ delaySeconds: retryDelay(message.attempts) })
+    }
+  }
+  for (const message of batch.messages) {
+    if (message.body.kind !== 'store-emails') continue
+    try {
+      const stored = await storeEmails(env, message.body.mailboxId, message.body.emailIds)
+      if (stored) console.log('mailbox-store-copy', JSON.stringify({ mailboxId: message.body.mailboxId, stored }))
+      message.ack()
+    } catch (err) {
+      console.error(`mailbox-store-copy: mailbox ${message.body.mailboxId} failed`, err)
+      message.retry({ delaySeconds: retryDelay(message.attempts) })
+    }
+  }
+  for (const message of batch.messages) {
+    if (message.body.kind !== 'store-raw') continue
+    try {
+      const copied = await copyRaw(env, message.body.mailboxId, message.body.emailIds)
+      if (copied.stored || copied.skipped) console.log('mailbox-store-raw', JSON.stringify(copied))
+      message.ack()
+    } catch (err) {
+      console.error(`mailbox-store-raw: mailbox ${message.body.mailboxId} failed`, err)
       message.retry({ delaySeconds: retryDelay(message.attempts) })
     }
   }

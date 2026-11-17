@@ -10,6 +10,7 @@ import { purgeDeletedFiles } from '../storage/purge'
 import { notifyNewMail } from '../push/new-mail'
 import { announce } from '../live/announce'
 import * as accessDb from '../db/mailbox-access'
+import { checkStore, syncStore } from '../mailbox/shadow'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -44,6 +45,18 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
       } catch (err) {
         console.error(`new-mail-push: mailbox ${mailboxId} failed`, err)
       }
+    }
+    // The mailbox store's shadow copy, also on its own, with its own saved state.
+    try {
+      const copied = await syncStore(env, mailboxId)
+      if (copied && (copied.first || copied.queued || copied.stored || copied.placed || copied.removed || copied.rawQueued)) console.log('mailbox-store', JSON.stringify(copied))
+      // Once an hour, compare the store's counts with the mail server's and say where they differ.
+      if (copied && messages.some((m) => m.body.reason === 'hourly')) {
+        const check = await checkStore(env, mailboxId)
+        if (check) console.log('mailbox-store-check', JSON.stringify({ ...check, ok: !check.differences.length, differences: check.differences.slice(0, 10) }))
+      }
+    } catch (err) {
+      console.error(`mailbox-store: mailbox ${mailboxId} failed`, err)
     }
     try {
       const result = await syncMailbox(env, mailboxId)

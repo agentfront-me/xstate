@@ -20,6 +20,7 @@ export type EmailEnv = Pick<
   | 'SES_MODE'
   | 'SCAN_MODE'
   | 'SCAN_URL'
+  | 'MAILBOX_STORE'
 > & { SCAN_SECRET?: string }
 
 export type Domain = {

@@ -10,6 +10,8 @@ import { refuseVirus } from '../security/refuse'
 import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
+import { store } from '../mailbox/stub'
+import type { StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
 import { reserveSend } from './sending'
 import * as jmap from './stalwart/mail'
@@ -143,9 +145,32 @@ export async function listMessages(
   organizationId: string,
   input: ListMessagesInput,
 ): Promise<{ messages: (MessageSummary | CompactSummary)[]; nextCursor: string | null }> {
-  const mailboxes = await mailboxesFor(env, actor, organizationId, input.mailboxId)
-  const folders = await jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id))
+  const readable = await mailboxesFor(env, actor, organizationId, input.mailboxId)
+  // Mailboxes whose lists are answered by their own store (mailbox/store.ts); the rest ask Stalwart.
+  const stored = readable.filter((m) => m.store_mode === 'read')
+  const mailboxes = readable.filter((m) => m.store_mode !== 'read')
   const text = (v: string | undefined) => v?.trim() || undefined
+  const [folders, fromStores] = await Promise.all([
+    jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id)),
+    Promise.all(
+      stored.map(async (m) => {
+        const stub = await store(env, m.id)
+        const page = await stub.list({
+          folder: input.folder,
+          unreadOnly: input.unreadOnly,
+          text: text(input.query),
+          from: text(input.from),
+          to: text(input.to),
+          subject: text(input.subject),
+          after: input.after,
+          before: earliest(input.cursor, input.before),
+          hasAttachment: input.hasAttachment,
+          limit: input.limit,
+        })
+        return { more: page.more, messages: page.messages.map((row) => fromStore(row, m.id)) }
+      }),
+    ),
+  ])
 
   const queries = mailboxes.flatMap((m): { accountId: string; query: jmap.EmailQuery }[] => {
     const list = folders.get(m.stalwart_id) ?? []
@@ -171,14 +196,20 @@ export async function listMessages(
   })
 
   const found = await jmap.queryEmails(env, queries)
-  const all = mailboxes.flatMap((m) =>
-    (found.get(m.stalwart_id) ?? []).map((e) => toSummary(e, m.id, folders.get(m.stalwart_id) ?? [])),
-  )
+  const all = [
+    ...mailboxes.flatMap((m) => (found.get(m.stalwart_id) ?? []).map((e) => toSummary(e, m.id, folders.get(m.stalwart_id) ?? []))),
+    ...fromStores.flatMap((s) => s.messages),
+  ]
   all.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
   const page = all.slice(0, input.limit)
-  const more = all.length > input.limit || [...found.values()].some((list) => list.length === input.limit)
+  const more = all.length > input.limit || [...found.values()].some((list) => list.length === input.limit) || fromStores.some((s) => s.more)
   const nextCursor = more && page.length ? page[page.length - 1]!.receivedAt : null
   return { messages: input.compact ? page.map(compactSummary) : page, nextCursor }
+}
+
+/** A row from a mailbox's store as the summary the API returns. */
+function fromStore(row: StoreListRow, mailboxId: string): MessageSummary {
+  return { ...row, mailboxId, preview: previewText(row.preview, PREVIEW_MAX) }
 }
 
 /** The earlier of two times, either of which may be missing. */

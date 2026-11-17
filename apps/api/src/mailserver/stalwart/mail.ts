@@ -359,6 +359,42 @@ export async function getEmailFolders(env: StalwartEnv, accountId: string, ids: 
   return (result!.list as { id: string; mailboxIds: Record<string, true> }[]) ?? []
 }
 
+export type JmapStoreEmail = JmapEmailSummary & Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValues'> & {
+  /** The raw message, for downloadBlob. */
+  blobId: string
+}
+
+/** Messages with everything the mailbox store keeps: the summary fields and the body text. Missing ids are left out. */
+export async function getStoreEmails(env: StalwartEnv, accountId: string, ids: string[], maxBodyBytes: number): Promise<JmapStoreEmail[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [
+    [
+      'Email/get',
+      {
+        accountId,
+        ids,
+        properties: [...SUMMARY, 'blobId', 'textBody', 'htmlBody', 'bodyValues'],
+        bodyProperties: ['partId', 'type'],
+        fetchTextBodyValues: true,
+        fetchHTMLBodyValues: true,
+        maxBodyValueBytes: maxBodyBytes,
+      },
+    ],
+  ])
+  return (result!.list as JmapStoreEmail[]) ?? []
+}
+
+/** Which folders each message sits in and its flags. Missing ids are left out. */
+export async function getEmailPlacements(
+  env: StalwartEnv,
+  accountId: string,
+  ids: string[],
+): Promise<{ id: string; mailboxIds: Record<string, true>; keywords: Record<string, true> }[]> {
+  if (!ids.length) return []
+  const [result] = await mail(env, [['Email/get', { accountId, ids, properties: ['id', 'mailboxIds', 'keywords'] }]])
+  return (result!.list as { id: string; mailboxIds: Record<string, true>; keywords: Record<string, true> }[]) ?? []
+}
+
 /** Sender and arrival time of messages in several accounts, in as few requests as the call limit allows. */
 export async function getEmailHeads(
   env: StalwartEnv,

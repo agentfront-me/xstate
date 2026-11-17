@@ -95,6 +95,8 @@ export { AgentStore } from './agents/store'
 export { AgentRun } from './agents/run'
 // One per organization: live-updates sockets for the apps. See live/hub.ts.
 export { LiveHub } from './live/hub'
+// One per mailbox: its message index, a shadow copy of Stalwart for now (mailbox/store.ts).
+export { MailboxStore } from './mailbox/store'
 
 export default {
   // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) is this same Worker; everything else is the API.

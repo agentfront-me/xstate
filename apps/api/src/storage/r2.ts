@@ -124,6 +124,13 @@ export async function getObject(env: R2Env, bucket: string, key: string): Promis
   return res.status === 404 ? null : res
 }
 
+/** `length` bytes of an object from `start`, or null if it doesn't exist. */
+export async function getObjectRange(env: R2Env, bucket: string, key: string, start: number, length: number): Promise<Uint8Array | null> {
+  if (length <= 0) return new Uint8Array(0)
+  const res = await send(env, objectUrl(env, bucket, key), { headers: { Range: `bytes=${start}-${start + length - 1}` } })
+  return res.status === 404 ? null : new Uint8Array(await res.arrayBuffer())
+}
+
 /** Size and type, or null if it doesn't exist. */
 export async function headObject(env: R2Env, bucket: string, key: string) {
   const res = await send(env, objectUrl(env, bucket, key), { method: 'HEAD' })
