@@ -13,7 +13,7 @@ const themeCookieScript = `try {
 export const metadata: Metadata = {
   metadataBase: new URL('https://xstate.com'),
   title: { default: 'xstate · Your Digital Real Estate', template: '%s · xstate' },
-  description: 'Your domain, emails, data, agents and sites in one place.',
+  description: 'Email, calendar, files and AI agents on your own domain.',
   icons: { icon: '/favicon.svg', apple: '/brand/apple-touch-icon.png' },
   openGraph: { images: '/brand/og-image.png' },
 }

@@ -33,8 +33,8 @@ export function Cta() {
         <a href={SIGNUP_URL} className="btn btn-solid">
           Get started
         </a>
-        <a href="/docs/api" className="btn">
-          API reference
+        <a href="/docs/quickstart" className="btn">
+          Read the quickstart
         </a>
       </div>
     </section>
@@ -51,23 +51,21 @@ export function SiteFooter() {
         </div>
         <div>
           <span className="muted">Product</span>
-          <a href="/email">Email</a>
-          <a href="/agents">Agents</a>
-          <a href="/data">Data</a>
-          <a href="/sites">Sites</a>
+          <a href="/#features">Features</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/docs/quickstart">Quickstart</a>
+          <a href="/changelog">Changelog</a>
         </div>
         <div>
           <span className="muted">Developers</span>
           <a href="/docs">Docs</a>
-          <a href="/docs/api">API reference</a>
-          <a href="/docs/mcp">MCP</a>
-          <a href="/status">Status</a>
+          <a href="/docs/mcp">Connect AI apps</a>
+          <a href="/docs/transactional-email">Email API</a>
+          <a href="/llms.txt">llms.txt</a>
         </div>
         <div>
           <span className="muted">Company</span>
           <a href="/blog">Blog</a>
-          <a href="/#pricing">Pricing</a>
-          <a href="/changelog">Changelog</a>
           <a href="mailto:hello@xstate.com">Contact</a>
         </div>
         <div>
@@ -75,8 +73,7 @@ export function SiteFooter() {
           <a href="/docs/privacy">Privacy</a>
           <a href="/docs/terms">Terms</a>
           <a href="/docs/refunds">Refunds</a>
-          <a href="/dpa">DPA</a>
-          <a href="/security">Security</a>
+          <a href="/docs/security">Security</a>
         </div>
       </div>
       <div className="machine">
@@ -89,7 +86,6 @@ export function SiteFooter() {
       </div>
       <div className="footer-base">
         <span>© 2026 xstate</span>
-        <span className="mono">status: all systems normal · 99.98% 90d</span>
       </div>
     </footer>
   )

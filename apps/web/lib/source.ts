@@ -32,5 +32,5 @@ export function llmsIndex() {
   const lines = source
     .getPages()
     .map((p) => `- [${p.data.title}](https://xstate.com${markdownUrl(p)})${p.data.description ? `: ${p.data.description}` : ''}`)
-  return `# xstate\n\n> Email, data, agents and sites on your own domain.\n\n## Docs\n\n${lines.join('\n')}\n\n${llmsBlogSection()}`
+  return `# xstate\n\n> Email, calendar, files and AI agents on your own domain.\n\n## Docs\n\n${lines.join('\n')}\n\n${llmsBlogSection()}`
 }

@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 }
 
 const faqs = [
-  ['Do I need to own a domain?', 'No. Connect one you own, buy one during setup, or start on a free you.xstate.email subdomain and move later.'],
+  ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own. Buying one during setup and a free xstate subdomain are coming.'],
   ['Which agents can read my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['How long does DNS take?', 'Usually a few minutes after you add the records, though some DNS providers take longer to publish changes. xstate checks every few seconds and shows each record as it appears, so you can leave the page open. One-click setup through Domain Connect is rolling out, starting with Cloudflare.'],
-  ['Can I export everything?', 'Yes. Mail as .mbox, data as JSON or CSV, sites as static files. Exports are available on every plan.'],
+  ['Can I take my data with me?', 'Yes. Your mail stays reachable over IMAP, so any mail app can copy it out, and files in Storage download as they are. Contacts export as CSV.'],
   ['What does machine readable mean here?', 'Pages are written for people and published for programs too. Every docs page has a Markdown version (add .md to its URL), blog posts and the changelog return Markdown or JSON when asked via the Accept header, and /llms.txt lists all of it for agents. Pages also carry schema.org data.'],
 ]
 
@@ -33,7 +33,7 @@ const structuredData = {
       name: 'xstate',
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
-      description: 'Your domain, emails, data, agents and sites in one place.',
+      description: 'Email, calendar, files and AI agents on your own domain.',
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },
         { '@type': 'Offer', name: 'Pro', price: '6', priceCurrency: 'USD' },
@@ -48,11 +48,11 @@ const structuredData = {
 }
 
 const features = [
-  { id: 'F01', tag: 'email', title: 'Email on your domain', body: 'Addresses on a domain you own, with sending, receiving, aliases and catch-all.', points: ['hello@, support@, sales@ in one click', 'IMAP, SMTP and JMAP', 'Shared inboxes per address'] },
+  { id: 'F01', tag: 'email', title: 'Email on your domain', body: 'Addresses on a domain you own, with sending, receiving, aliases and shared inboxes.', points: ['hello@, support@, sales@ in one click', 'IMAP, SMTP and JMAP', 'Shared inboxes per address'] },
   { id: 'F02', tag: 'dns', title: 'DNS that checks itself', body: 'xstate shows the records your domain needs and checks public DNS every few seconds until they are in place.', points: ['Live status for each record', 'Copy them all as a zone file', 'Send the records to a developer'] },
   { id: 'F03', tag: 'agents', title: 'Agents with scoped access', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send', 'Only the mailboxes you pick', 'Disconnect in one click'] },
-  { id: 'F04', tag: 'data', title: 'Data you can query', body: 'Mail, contacts and files are indexed into tables you and your agents can read.', points: ['SQL and JSON endpoints', 'Full-text search', 'Daily snapshots'] },
-  { id: 'F05', tag: 'sites', title: 'Sites on the same domain', body: 'Publish static pages and forms at your root or any subdomain, no extra host.', points: ['Deploy from git or upload', 'Forms land in your inbox', 'Edge cache, free TLS'] },
+  { id: 'F04', tag: 'search', title: 'Search across mail and files', body: 'Ask a question and get the passages that answer it, from your mail, attachments and files.', points: ['Search by meaning, in any language', 'PDFs and attachments included', 'Agents search the same index'] },
+  { id: 'F05', tag: 'calendar', title: 'A calendar for every mailbox', body: 'Schedule, invite and reply from the same account as your mail, on the same domain.', points: ['Day, week and month views', 'Invitations and replies', 'Import from Google Workspace'] },
   { id: 'F06', tag: 'api', title: 'Human and machine readable', body: 'Pages are HTML for people, with Markdown and JSON versions for agents and scripts.', points: ['Markdown for every docs page', 'llms.txt index for agents', 'JSON and RSS feeds for the blog'] },
 ]
 
@@ -67,7 +67,7 @@ export default function Home() {
       <section className="grid hero" aria-labelledby="hero-h">
         <div className="hero-copy">
           <div className="small muted mono">001 · Your Digital Real Estate</div>
-          <h1 id="hero-h">Your domain, emails, data, agents and sites in one place.</h1>
+          <h1 id="hero-h">Email, calendar, files and AI agents on your own domain.</h1>
           <p className="muted">
             Point a domain at xstate and get a working inbox in minutes. Connect Claude, Codex or Cursor to it with scoped permissions. Everything you own stays on a domain you control.
           </p>
@@ -191,13 +191,13 @@ function Box({ x, y, w, h, label, begin }: { x: number; y: number; w: number; h:
   )
 }
 
-/** Claude connects to xstate, which holds the domain's email, data, sites and agents, and talks to the world. */
+/** Claude connects to xstate, which holds the domain's email, calendar, files and agents, and talks to the world. */
 function HeroArt() {
   return (
     <svg
       viewBox="0 0 560 360"
       role="img"
-      aria-label="Claude connects to xstate, which holds your domain, email, data, sites and agents, and talks to your customers, team and visitors."
+      aria-label="Claude connects to xstate, which holds your domain's email, calendar, files and agents, and talks to your customers, team and visitors."
       fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
       fontSize="12"
     >
@@ -221,8 +221,8 @@ function HeroArt() {
       </g>
       <g fill="var(--ink)" textAnchor="middle">
         <Box x={162} y={86} w={90} h={32} label="Email" begin="1.7s" />
-        <Box x={308} y={86} w={90} h={32} label="Data" begin="1.9s" />
-        <Box x={162} y={242} w={90} h={32} label="Sites" begin="2.1s" />
+        <Box x={308} y={86} w={90} h={32} label="Files" begin="1.9s" />
+        <Box x={162} y={242} w={90} h={32} label="Calendar" begin="2.1s" />
         <Box x={308} y={242} w={90} h={32} label="Agents" begin="2.3s" />
         <g fill="none" stroke="var(--faint)" opacity="0">
           <Fade begin="2.4s" />
