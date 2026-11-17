@@ -89,6 +89,9 @@ when the law requires it. Automated systems scan mail for spam and malware.
 - **Search.** To power search, we create text embeddings of your files and email bodies using an AI model
   that runs on our own cloud infrastructure (Cloudflare Workers AI). The embeddings are stored separately for
   each organization and are deleted when the source item is deleted.
+- **Mailbox index.** For faster lists and search, we may also keep an index of a mailbox's messages (senders,
+  recipients, subjects, folders, flags and body text) on our cloud infrastructure (Cloudflare), separately for each
+  mailbox. It is deleted when the message or the mailbox is deleted.
 - **Agents.** Agents use AI providers your organization chooses, such as Anthropic or OpenAI, with your
   organization's own API key. When an agent runs, we send that provider the agent's instructions and the data
   the agent reads (for example, an email it is replying to). The provider processes it under its agreement with

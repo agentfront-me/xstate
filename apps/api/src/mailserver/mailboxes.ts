@@ -6,6 +6,7 @@ import { EmailError, withRollback } from './errors'
 import { syncMemberGroups } from './sharing'
 import type { BucketEnv } from '../storage/buckets'
 import { deleteMailboxFolder } from '../storage/files'
+import { store } from '../mailbox/stub'
 import * as stalwart from './stalwart/accounts'
 import { toMailbox, type Actor, type EmailEnv, type Mailbox, type MailboxKind } from './types'
 import { generatePassword, normalizeLocalPart, validatePassword, validateQuota } from './validation'
@@ -148,6 +149,13 @@ export async function deleteMailbox(env: EmailEnv & BucketEnv, actor: Actor, mai
   await deleteMailboxFolder(env, mailbox.organization_id, mailbox.id).catch((err) =>
     console.error(`storage: deleting R2 folder of mailbox ${mailbox.id} failed`, err),
   )
+  // The mailbox's own store (mailbox/store.ts), if it has one: its index of the messages goes with it. Its raw
+  // copies are inside the R2 folder deleted above.
+  if (mailbox.store_mode !== 'off') {
+    await store(env, mailbox.id)
+      .then((stub) => stub.destroy())
+      .catch((err) => console.error(`mailbox-store: deleting the store of mailbox ${mailbox.id} failed`, err))
+  }
   await mailboxesDb.remove(env.DB, mailbox.id).run()
 
   if (mailbox.kind === 'shared') await Promise.all(memberIds.map((memberId) => syncMemberGroups(env, memberId)))
