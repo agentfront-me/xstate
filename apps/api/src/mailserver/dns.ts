@@ -111,6 +111,7 @@ function matches(record: Omit<DnsRecord, 'found'>, published: string): boolean {
  * domain whose MX still points at the old name keeps working and counts as set up.
  */
 const LEGACY_MX_HOSTS: Record<string, string> = { 'mx.xstate.com': 'mx.xstate.io' }
+const MX_HOST = 'mx.xstate.io'
 
 /** `10 mx.xstate.com.` → `10 mx.xstate.io`: the MX data with any legacy host replaced by its current name. */
 function mxHost(value: string): string {
@@ -136,6 +137,15 @@ function spfIncludes(published: string, expected: string): boolean {
 /** The TXT values at a name, joined from their quoted strings; empty when there are none. */
 export async function resolveTxt(name: string): Promise<string[]> {
   return ((await resolve(name, 'TXT')) ?? []).map(joinTxt)
+}
+
+/**
+ * The domain's MX hosts that aren't xstate's (lowercase, no trailing dot): where mail goes today and will stop going
+ * once our MX replaces them.
+ */
+export async function otherMxHosts(domain: string): Promise<string[]> {
+  const hosts = ((await resolve(domain, 'MX')) ?? []).map((data) => hostname(data).split(/\s+/)[1] ?? '').filter(Boolean)
+  return [...new Set(hosts.filter((host) => host !== MX_HOST && !LEGACY_MX_HOSTS[host]))]
 }
 
 /** The record data for a name and type, or null when the name doesn't exist (NXDOMAIN). */

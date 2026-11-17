@@ -11,7 +11,7 @@ import { Back, useCopied } from './ui'
 
 const NUMBERS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']
 
-type Connect = { applyUrl: string; name: string; note: string; primary: boolean }
+type Connect = { applyUrl: string; name: string; note: string; primary: boolean; warning: string | null }
 
 /** One copyable line of a DNS record: a label, the text, and a copy button. Clicking the text copies too. */
 function RecordField({ label, text }: { label: string; text: string }) {
@@ -113,11 +113,12 @@ export function VerifyStep({
     if (status.current === 'verified') return
     let cancelled = false
     const web = /^https?:$/.test(location.protocol)
-    // The Domain Connect template only allows returns to xstate.com (syncRedirectDomain), so on go.xstate.com
-    // the provider sends people to xstate.com/signup, which redirects back here with the query intact.
-    const back = location.hostname === 'go.xstate.com' ? 'https://xstate.com' : location.origin
-    const query = web ? `?redirectUri=${encodeURIComponent(`${back}/signup`)}` : ''
-    api<{ applyUrl?: string | null; provider?: string | null }>('GET', `/email/domains/${domainId}/domain-connect${query}`)
+    // The template's syncRedirectDomain allows returns to go.xstate.com and xstate.com, which both serve /signup.
+    const query = web ? `?redirectUri=${encodeURIComponent(`${location.origin}/signup`)}` : ''
+    api<{ applyUrl?: string | null; provider?: string | null; replacesMx?: string[] }>(
+      'GET',
+      `/email/domains/${domainId}/domain-connect${query}`,
+    )
       .then((result) => {
         if (cancelled || !result?.applyUrl || status.current === 'verified') return
         const name = result.provider ?? provider?.name ?? 'your DNS provider'
@@ -129,7 +130,12 @@ export function VerifyStep({
               ? `${name} didn't add the records. Try again, or add them yourself below.`
               : `${name} couldn't add the records (${r.error}). Try again, or add them yourself below.`
             : `${name} is adding your records. We'll confirm as soon as they show up in DNS.`
-        setConnect({ applyUrl: result.applyUrl, name, note, primary: !(r && !r.error) })
+        // Approving replaces the domain's MX records, so mail stops reaching its current server right away.
+        const hosts = result.replacesMx ?? []
+        const warning = hosts.length
+          ? `Email for ${domain} will stop going to ${hosts.join(', ')} as soon as you approve, and start arriving in xstate.`
+          : null
+        setConnect({ applyUrl: result.applyUrl, name, note, primary: !(r && !r.error), warning })
       })
       .catch(() => {
         // One-click setup is optional; the records below still work.
@@ -193,6 +199,7 @@ export function VerifyStep({
           <div className="panel-section">
             <div className="hi">Set up in one click</div>
             <div className="small muted">{connect.note}</div>
+            {connect.warning && <div className="small">{connect.warning}</div>}
             <a
               className={`btn${connect.primary ? ' btn-primary' : ''}`}
               href={connect.applyUrl}

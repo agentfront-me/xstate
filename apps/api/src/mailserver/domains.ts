@@ -3,7 +3,7 @@ import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
-import { checkRecords, essentialRecords, isTestDomain, lookupDomain, resolveTxt, type DnsProvider, type DnsRecord } from './dns'
+import { checkRecords, essentialRecords, isTestDomain, lookupDomain, otherMxHosts, resolveTxt, type DnsProvider, type DnsRecord } from './dns'
 import * as domainConnect from './domain-connect'
 import * as ses from './ses'
 import * as stalwart from './stalwart/domains'
@@ -189,6 +189,9 @@ export async function checkOwnership(env: EmailEnv, domain: domainsDb.DomainRow)
  * one-click setup isn't available: turned off (DOMAIN_CONNECT_ENABLED), a .test domain, SES's DKIM tokens not
  * issued yet, or the provider doesn't support Domain Connect or hasn't onboarded our template.
  *
+ * The DMARC record is applied only when the domain has none (see domainConnect.groupIds). `replacesMx` lists the
+ * domain's current mail hosts, which approving replaces, so the app can say mail will stop going there.
+ *
  * `redirectUri` is where the provider sends the browser back to (with `state` set to the domain id, and `error` if
  * it failed or was cancelled). It must be on one of APP_ORIGINS; anything else is dropped, because a signed link
  * would otherwise let anyone use our signature for an open redirect.
@@ -198,10 +201,10 @@ export async function domainConnectUrl(
   actor: Actor,
   domainId: string,
   redirectUri?: string,
-): Promise<{ applyUrl: string | null; provider: string | null }> {
+): Promise<{ applyUrl: string | null; provider: string | null; replacesMx: string[] }> {
   const { domain } = await domainContext(env, actor, domainId, 'read')
-  const none = { applyUrl: null, provider: null }
-  if (!domainConnect.domainConnectEnabled(env) || isTestDomain(env, domain.name)) return none
+  const none = { applyUrl: null, provider: null, replacesMx: [] }
+  if (!domainConnect.domainConnectEnabled(env, domain.name) || isTestDomain(env, domain.name)) return none
   const tokens = domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : []
   if (tokens.length !== 3) return none
 
@@ -210,17 +213,19 @@ export async function domainConnectUrl(
     if (!txt) return none
     const settings = await domainConnect.fetchSettings(txt, domain.name)
     if (!settings?.urlSyncUX || !(await domainConnect.supportsTemplate(settings))) return none
+    const [dmarc, replacesMx] = await Promise.all([resolveTxt(`_dmarc.${domain.name}`), otherMxHosts(domain.name)])
     const redirect = redirectUri && allowedRedirect(env, redirectUri) ? redirectUri : undefined
     const applyUrl = await domainConnect.buildApplyUrl({
       urlSyncUX: settings.urlSyncUX,
       domain: domain.name,
       variables: { dkim1: tokens[0]!, dkim2: tokens[1]!, dkim3: tokens[2]! },
+      groupIds: domainConnect.groupIds(dmarc),
       redirectUri: redirect,
       state: redirect && domain.id,
       keyHost: env.DOMAIN_CONNECT_KEY_HOST!,
       privateKey: env.DOMAIN_CONNECT_PRIVATE_KEY!,
     })
-    return { applyUrl, provider: settings.providerDisplayName ?? settings.providerName ?? null }
+    return { applyUrl, provider: settings.providerDisplayName ?? settings.providerName ?? null, replacesMx }
   } catch (err) {
     // Discovery is a convenience: if the provider is unreachable, the records table still works.
     console.error(`domain connect: ${domain.name} failed`, err)

@@ -76,8 +76,9 @@ export const emailDomainConnectUrl = defineOperation({
   name: 'email_domain_connect_url',
   description:
     "Get a one-click setup link (Domain Connect) that adds the domain's mail records at its DNS provider, e.g. " +
-    'Cloudflare, after the owner signs in there and approves. Returns { applyUrl, provider }, with applyUrl null ' +
-    'when the provider does not support it yet; then the records from email_verify_domain must be added by hand. ' +
+    'Cloudflare, after the owner signs in there and approves. Returns { applyUrl, provider, replacesMx }, with ' +
+    'applyUrl null when the provider does not support it yet; then the records from email_verify_domain must be ' +
+    'added by hand. replacesMx lists the mail servers the domain uses now: approving moves mail away from them. ' +
     'redirectUri (optional, must be on an xstate app origin) is where the provider sends the browser back to.',
   input: z.object({ domainId: id, redirectUri: z.string().url().max(2048).optional() }),
   http: { method: 'GET', path: '/email/domains/:domainId/domain-connect' },

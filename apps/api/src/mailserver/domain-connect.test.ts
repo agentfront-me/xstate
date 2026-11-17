@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
-import { buildApplyUrl, fetchSettings, publicKeyRecords, sign, supportsTemplate } from './domain-connect.ts'
+import { buildApplyUrl, domainConnectEnabled, fetchSettings, groupIds, publicKeyRecords, sign, supportsTemplate } from './domain-connect.ts'
 
 const TEST_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC64citjxgzYrt2
@@ -97,6 +97,49 @@ describe('buildApplyUrl', () => {
     const url = await buildApplyUrl({ ...input, redirectUri: undefined, state: undefined })
     const keys = [...new URL(url).searchParams.keys()]
     assert.deepEqual(keys, ['domain', 'dkim1', 'dkim2', 'dkim3', 'key', 'sig'])
+  })
+})
+
+describe('groupIds', () => {
+  it('applies the DMARC group only when the domain has no DMARC record', () => {
+    assert.deepEqual(groupIds([]), ['mail', 'dmarc'])
+    assert.deepEqual(groupIds(['google-site-verification=abc']), ['mail', 'dmarc'])
+    assert.deepEqual(groupIds(['v=DMARC1; p=none']), ['mail'])
+    assert.deepEqual(groupIds([' v=dmarc1;p=quarantine']), ['mail'])
+    assert.deepEqual(groupIds(['v=DMARC10; p=none']), ['mail', 'dmarc'])
+  })
+
+  it('signs groupId with the rest of the query, before key and sig', async () => {
+    const url = await buildApplyUrl({ ...input, groupIds: ['mail', 'dmarc'] })
+    const query = url.slice(url.indexOf('?') + 1, url.indexOf('&key='))
+    assert.match(query, /&dkim3=cccc3333&groupId=mail%2Cdmarc&redirect_uri=/)
+    const sig = new URL(url).searchParams.get('sig')!
+    const key = await crypto.subtle.importKey(
+      'spki',
+      Buffer.from(TEST_PUBLIC_KEY, 'base64'),
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    )
+    assert.ok(await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, Buffer.from(sig, 'base64'), new TextEncoder().encode(query)))
+  })
+})
+
+describe('domainConnectEnabled', () => {
+  const env = { DOMAIN_CONNECT_ENABLED: 'true', DOMAIN_CONNECT_PRIVATE_KEY: 'k', DOMAIN_CONNECT_KEY_HOST: '_dck1' }
+
+  it('needs the switch, the key and the key host', () => {
+    assert.equal(domainConnectEnabled(env, 'example.com'), true)
+    assert.equal(domainConnectEnabled({ ...env, DOMAIN_CONNECT_ENABLED: 'false' }, 'example.com'), false)
+    assert.equal(domainConnectEnabled({ ...env, DOMAIN_CONNECT_PRIVATE_KEY: '' }, 'example.com'), false)
+  })
+
+  it('limits it to the test domains while there are any', () => {
+    const testing = { ...env, DOMAIN_CONNECT_TEST_DOMAINS: 'asif.co, other.test' }
+    assert.equal(domainConnectEnabled(testing, 'asif.co'), true)
+    assert.equal(domainConnectEnabled(testing, 'ASIF.CO'), true)
+    assert.equal(domainConnectEnabled(testing, 'example.com'), false)
+    assert.equal(domainConnectEnabled({ ...env, DOMAIN_CONNECT_TEST_DOMAINS: '' }, 'example.com'), true)
   })
 })
 

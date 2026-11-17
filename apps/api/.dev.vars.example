@@ -48,6 +48,8 @@ CLOUDFLARE_API_TOKEN=
 # Make a pair with scripts/domain-connect-key.sh; production: wrangler secret put DOMAIN_CONNECT_PRIVATE_KEY
 DOMAIN_CONNECT_ENABLED=false
 DOMAIN_CONNECT_KEY_HOST=_dck1
+# Comma-separated domains that get one-click setup while the template is in test mode; empty = all.
+DOMAIN_CONNECT_TEST_DOMAINS=
 # PKCS#8 RSA private key, the base64 body on one line (no BEGIN/END lines).
 DOMAIN_CONNECT_PRIVATE_KEY=
 

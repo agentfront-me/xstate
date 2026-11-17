@@ -10,6 +10,10 @@
 export const PROVIDER_ID = 'xstate.io'
 export const SERVICE_ID = 'mail'
 
+/** The template's record groups: MX, SPF and DKIM are always applied; DMARC only when the domain has none. */
+export const MAIL_GROUP = 'mail'
+export const DMARC_GROUP = 'dmarc'
+
 export type DomainConnectEnv = {
   /** "true" once the template is merged and onboarded. Anything else turns one-click setup off. */
   DOMAIN_CONNECT_ENABLED?: string
@@ -17,6 +21,11 @@ export type DomainConnectEnv = {
   DOMAIN_CONNECT_PRIVATE_KEY?: string
   /** Host under syncPubKeyDomain (xstate.io) where the public key's TXT records live, e.g. "_dck1". */
   DOMAIN_CONNECT_KEY_HOST?: string
+  /**
+   * While the provider has the template in test mode (it works only for our own account), a comma-separated list of
+   * the domains that get one-click setup. Empty: every domain does. Clear it once the template is live.
+   */
+  DOMAIN_CONNECT_TEST_DOMAINS?: string
 }
 
 /** A DNS provider's Domain Connect settings (`GET {host}/v2/{domain}/settings`). */
@@ -30,8 +39,22 @@ export type DomainConnectSettings = {
   urlAPI?: string
 }
 
-export function domainConnectEnabled(env: DomainConnectEnv): boolean {
-  return env.DOMAIN_CONNECT_ENABLED === 'true' && !!env.DOMAIN_CONNECT_PRIVATE_KEY && !!env.DOMAIN_CONNECT_KEY_HOST
+export function domainConnectEnabled(env: DomainConnectEnv, domain: string): boolean {
+  if (env.DOMAIN_CONNECT_ENABLED !== 'true' || !env.DOMAIN_CONNECT_PRIVATE_KEY || !env.DOMAIN_CONNECT_KEY_HOST) return false
+  const testDomains = (env.DOMAIN_CONNECT_TEST_DOMAINS ?? '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean)
+  return !testDomains.length || testDomains.includes(domain.toLowerCase())
+}
+
+/**
+ * The template groups to apply, given the TXT values at `_dmarc.<domain>`. A domain that already has a DMARC record
+ * keeps it: some providers (Cloudflare) would add ours as a second record, and receivers treat two as no policy.
+ */
+export function groupIds(dmarcTxt: string[]): string[] {
+  const hasDmarc = dmarcTxt.some((v) => /^v=DMARC1(;|\s|$)/i.test(v.trim()))
+  return hasDmarc ? [MAIL_GROUP] : [MAIL_GROUP, DMARC_GROUP]
 }
 
 /**
@@ -65,6 +88,8 @@ export type ApplyUrlInput = {
   domain: string
   /** Template variables, e.g. { dkim1: '…', dkim2: '…', dkim3: '…' }. */
   variables: Record<string, string>
+  /** Template groups to apply; all of them when left out. */
+  groupIds?: string[]
   redirectUri?: string
   state?: string
   keyHost: string
@@ -73,11 +98,12 @@ export type ApplyUrlInput = {
 
 /**
  * `{urlSyncUX}/v2/domainTemplates/providers/{providerId}/services/{serviceId}/apply?domain=…&<variables>
- * &redirect_uri=…&state=…&key=…&sig=…`. The signature is RSA-SHA256 (PKCS#1 v1.5) over the URL-encoded query
+ * &groupId=…&redirect_uri=…&state=…&key=…&sig=…`. The signature is RSA-SHA256 (PKCS#1 v1.5) over the URL-encoded query
  * string without `key` and `sig`, base64; `key` and `sig` are appended after it, `sig` last.
  */
 export async function buildApplyUrl(input: ApplyUrlInput): Promise<string> {
   const params = new URLSearchParams({ domain: input.domain, ...input.variables })
+  if (input.groupIds?.length) params.set('groupId', input.groupIds.join(','))
   if (input.redirectUri) params.set('redirect_uri', input.redirectUri)
   if (input.state) params.set('state', input.state)
   // encodeURIComponent rather than URLSearchParams.toString(), which writes spaces as "+".

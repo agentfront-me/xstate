@@ -38,12 +38,14 @@
     // Outside production only: one shared bucket for every organization instead of a bucket each, so local dev
     // needs no bucket-creating token (an R2 token scoped to this bucket is enough). Empty in production.
     "R2_BUCKET": "",
-    // One-click DNS setup (Domain Connect, docs/domain-connect/). Keep "false" until the template is merged into
-    // github.com/Domain-Connect/Templates and Cloudflare has onboarded it; until then onboarding shows only the
-    // records table. Apply links are signed with DOMAIN_CONNECT_PRIVATE_KEY, whose public key is published as TXT
-    // at <DOMAIN_CONNECT_KEY_HOST>.xstate.io (the template's syncPubKeyDomain).
-    "DOMAIN_CONNECT_ENABLED": "false",
+    // One-click DNS setup (Domain Connect, docs/domain-connect/). Apply links are signed with
+    // DOMAIN_CONNECT_PRIVATE_KEY, whose public key is published as TXT at <DOMAIN_CONNECT_KEY_HOST>.xstate.io (the
+    // template's syncPubKeyDomain). Cloudflare onboarded the template on 2026-11-17 in test mode: it works only for
+    // our own Cloudflare account, so DOMAIN_CONNECT_TEST_DOMAINS limits the button to asif.co. Set it to "" once
+    // Cloudflare puts the template live, and every domain gets it.
+    "DOMAIN_CONNECT_ENABLED": "true",
     "DOMAIN_CONNECT_KEY_HOST": "_dck1",
+    "DOMAIN_CONNECT_TEST_DOMAINS": "asif.co",
     // Where links in xstate's own emails point (invites: <APP_URL>/invite/#token). Local dev sets it in .dev.vars.
     "APP_URL": "https://go.xstate.com",
     // xstate's own mail (invites) is sent from this mailbox, which has to exist in xstate's organization. Empty:
@@ -183,7 +185,7 @@
   // PADDLE_API_KEY / PADDLE_WEBHOOK_SECRET: the live Paddle API key (pdl_live_…, "xstate production API", expires
   // 2027-11-16: make a new one before then) and the secret of the notification destination
   // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.
-  // DOMAIN_CONNECT_PRIVATE_KEY (optional until DOMAIN_CONNECT_ENABLED is "true"): RSA key that signs Domain
+  // DOMAIN_CONNECT_PRIVATE_KEY (set in production; without it there is no one-click setup): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {
     "required": [
