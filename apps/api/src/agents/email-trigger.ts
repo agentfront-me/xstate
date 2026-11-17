@@ -93,6 +93,24 @@ export async function processMailbox(env: Env, mailboxId: string): Promise<{ fir
   return result
 }
 
+/**
+ * Offers one message of a mailbox whose mail the store holds (mailbox/events.ts) to the mailbox's email triggers,
+ * with the same rules, loop guard and AI filter as Stalwart mail. Each trigger claims the message first in its
+ * agent's store, so a retried event never starts a second run.
+ */
+export async function offerStoredEmail(env: Env, mailbox: MailboxRow, email: TriggerEmail): Promise<{ fired: number; skipped: number }> {
+  const result = { fired: 0, skipped: 0 }
+  for (const trigger of await db.emailTriggersFor(env.DB, mailbox.id)) {
+    const s = await store(env, trigger.agent_id)
+    if (!(await s.claimTriggerEmail(trigger.id, mailbox.id, email.id))) continue
+    const config = emailConfig.parse(JSON.parse(trigger.config))
+    const outcome = await fireForEmail(env, trigger, s, mailbox, config, email)
+    if (outcome === 'started') result.fired++
+    else if (outcome === 'skipped') result.skipped++
+  }
+  return result
+}
+
 async function fireForEmail(
   env: Env,
   trigger: TriggerRow,

@@ -108,7 +108,8 @@
       { "binding": "MIGRATION", "queue": "xstate-migration" },
       { "binding": "PUSH", "queue": "xstate-push" },
       { "binding": "STORE_COPY", "queue": "xstate-mailbox-store" },
-      { "binding": "MAIL_IN", "queue": "xstate-mail-in" }
+      { "binding": "MAIL_IN", "queue": "xstate-mail-in" },
+      { "binding": "MAIL_EVENTS", "queue": "xstate-mail-events" }
     ],
     "consumers": [
       { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
@@ -129,7 +130,11 @@
       // Mail received through SES for mailboxes whose mail the store holds (mailbox/receive.ts). 4 a batch, handled
       // one at a time, since a message can be 40 MB. After 5 tries a job waits in the dead-letter queue, and the
       // message in S3 for 7 days. Create once: wrangler queues create xstate-mail-in, and xstate-mail-in-dlq
-      { "queue": "xstate-mail-in", "max_batch_size": 4, "max_batch_timeout": 1, "max_retries": 5, "dead_letter_queue": "xstate-mail-in-dlq" }
+      { "queue": "xstate-mail-in", "max_batch_size": 4, "max_batch_timeout": 1, "max_retries": 5, "dead_letter_queue": "xstate-mail-in-dlq" },
+      // New-mail events for mailboxes the store holds (mailbox/events.ts): attachments filed, mail indexed for search,
+      // received mail offered to agents. 4 a batch, one message read at a time. Create once: wrangler queues create
+      // xstate-mail-events, and xstate-mail-events-dlq
+      { "queue": "xstate-mail-events", "max_batch_size": 4, "max_batch_timeout": 2, "max_retries": 8, "dead_letter_queue": "xstate-mail-events-dlq" }
     ]
   },
   // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.

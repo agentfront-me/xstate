@@ -8,21 +8,24 @@ import * as mailboxesDb from '../db/mailboxes'
 import { organizationBucket, storageConfigured, type BucketEnv } from '../storage/buckets'
 import { deleteObject, listKeys } from '../storage/r2'
 import { TRASH_DAYS } from './actions'
+import { queueMailEvent } from './events'
 import { ulidTime } from './inbound'
 import { store } from './stub'
 
 /** Attachments uploaded for a message that was never sent are deleted after this long. */
 const UPLOAD_HOURS = 24
 
-export async function purgeHeldTrash(env: BucketEnv & Pick<Env, 'MAILBOX_STORE'>): Promise<{ mailboxes: number; purged: number; uploads: number }> {
+export async function purgeHeldTrash(env: BucketEnv & Pick<Env, 'MAILBOX_STORE' | 'MAIL_EVENTS'>): Promise<{ mailboxes: number; purged: number; uploads: number }> {
   const result = { mailboxes: 0, purged: 0, uploads: 0 }
   if (!storageConfigured(env)) return result
   const before = Math.floor(Date.now() / 1000) - TRASH_DAYS * 24 * 3600
   for (const mailbox of await mailboxesDb.heldByStore(env.DB)) {
     result.mailboxes++
     const bucket = await organizationBucket(env, mailbox.organization_id)
-    const { purged, rawKeys } = await (await store(env, mailbox.id)).purgeTrash(before)
+    const { purged, rawKeys, ids } = await (await store(env, mailbox.id)).purgeTrash(before)
     result.purged += purged
+    // Their files and search documents go too (./events.ts).
+    await queueMailEvent(env, { kind: 'removed', mailboxId: mailbox.id, ids })
     for (const key of rawKeys) await deleteObject(env, bucket, key).catch((err) => console.error(`trash: deleting ${key} failed`, err))
     result.uploads += await purgeUploads(env, bucket, mailbox.id)
   }

@@ -14,6 +14,7 @@ import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
 import { readableText } from '../mailbox/compare'
+import { queueMailEvent } from '../mailbox/events'
 import { draftInStore, sendFromStore, uploadToStore } from '../mailbox/outbound'
 import { answeredByStore, heldByStore, parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
 import { store } from '../mailbox/stub'
@@ -309,6 +310,7 @@ export async function updateMessage(
     // The store holds this mailbox's mail: the change is made there (mailbox/store.ts update), then announced.
     const result = await (await store(env, mailbox.id)).update({ id: messageId, ...input })
     if (!result.found) throw new EmailError('message_not_found', 'Message not found', 404)
+    if (result.moved) await queueMailEvent(env, { kind: 'moved', mailboxId: mailbox.id, ids: result.changedIds })
     if (result.changed) await announceMailChange(env, mailbox)
     return
   }

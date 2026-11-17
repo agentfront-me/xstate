@@ -1,7 +1,10 @@
 // The Vectorize side of Storage search: embeddings, and writing and deleting a document's vectors.
 //
 // One namespace per organization (its id), so a query can never cross organizations whatever its filter says.
-// Vector ids are `<doc id>:<chunk>`; the metadata carries the passage and the coarse scope search filters on.
+// Vector ids are `<doc id>:<chunk>`, hashed when that passes Vectorize's 64 bytes (./vector-id.ts); the metadata
+// carries the document id, the passage and the coarse scope search filters on.
+
+import { vectorId } from './vector-id.ts'
 
 export const EMBEDDING_MODEL = '@cf/baai/bge-m3'
 /** Texts per Workers AI call. */
@@ -69,7 +72,7 @@ export function documentRows(
   extra: DocMetadata = {},
 ): VectorizeVector[] {
   return vectors.map((values, i) => ({
-    id: `${doc}:${i}`,
+    id: vectorId(doc, i),
     values,
     namespace: organizationId,
     metadata: { ...scope, ...extra, doc, text: chunks[i]!, pos: String(i) } satisfies ChunkMetadata,
@@ -118,6 +121,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** Deletes a document's vectors by id. Deleting an id that is already gone succeeds, so this is safe to repeat. */
 export async function deleteDocument(env: VectorEnv, doc: string, chunks: number): Promise<void> {
-  const ids = Array.from({ length: chunks }, (_, i) => `${doc}:${i}`)
+  const ids = Array.from({ length: chunks }, (_, i) => vectorId(doc, i))
   for (let i = 0; i < ids.length; i += DELETE_BATCH) await index(env).deleteByIds(ids.slice(i, i + DELETE_BATCH))
 }

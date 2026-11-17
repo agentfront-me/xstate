@@ -21,7 +21,7 @@ import { encodeSafety, inspectStream } from '../security/attachments'
 import { refreshEmailFolders, removeEmails } from '../search/indexer'
 import { enqueueEmails, enqueueIndex } from '../search/jobs'
 
-export type SyncEnv = BucketEnv & Pick<Env, 'STALWART_URL' | 'STALWART_API_KEY' | 'SEARCH_INDEX' | 'AI' | 'SEARCH' | 'SEARCH_DEV'>
+export type SyncEnv = BucketEnv & Pick<Env, 'STALWART_URL' | 'STALWART_API_KEY' | 'SEARCH_INDEX' | 'AI' | 'SEARCH' | 'SEARCH_DEV' | 'MAILBOX_STORE'>
 
 /** Inline parts smaller than this (signature logos, tracking pixels) aren't worth a file of their own. */
 const SMALL_INLINE_BYTES = 20_000

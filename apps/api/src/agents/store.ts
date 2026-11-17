@@ -68,6 +68,9 @@ export class AgentStore extends Agent<Env> {
       trigger_id TEXT NOT NULL, at TEXT NOT NULL, outcome TEXT NOT NULL, run_id TEXT, detail TEXT NOT NULL)`
     this.sql`CREATE INDEX IF NOT EXISTS trigger_events_by ON trigger_events (trigger_id, at)`
     this.sql`CREATE TABLE IF NOT EXISTS trigger_schedules (trigger_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, at TEXT NOT NULL)`
+    // Messages an email trigger has already been offered, for mailboxes whose mail the store holds (mailbox/events.ts):
+    // a retried event must not start a second run.
+    this.sql`CREATE TABLE IF NOT EXISTS trigger_emails (trigger_id TEXT NOT NULL, mailbox_id TEXT NOT NULL, email_id TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (trigger_id, mailbox_id, email_id))`
     this.sql`CREATE TABLE IF NOT EXISTS memory (
       id TEXT PRIMARY KEY, subject TEXT NOT NULL, fact TEXT NOT NULL, source_run TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`
     this.sql`CREATE INDEX IF NOT EXISTS memory_subject ON memory (subject, updated_at)`
@@ -247,6 +250,19 @@ export class AgentStore extends Agent<Env> {
 
   // -------------------------------------------------------------------------------------------------------------
   // Trigger events: what each trigger received and what came of it (newest first, a few per trigger)
+
+  /**
+   * Claims a message for an email trigger: true the first time, false when it was offered before. Old claims go
+   * after 30 days, long after any retry.
+   */
+  claimTriggerEmail(triggerId: string, mailboxId: string, emailId: string): boolean {
+    const before = this.sql<{ n: number }>`SELECT COUNT(*) AS n FROM trigger_emails WHERE trigger_id = ${triggerId} AND mailbox_id = ${mailboxId} AND email_id = ${emailId}`[0]!.n
+    if (before) return false
+    const now = new Date()
+    this.sql`INSERT INTO trigger_emails (trigger_id, mailbox_id, email_id, at) VALUES (${triggerId}, ${mailboxId}, ${emailId}, ${now.toISOString()})`
+    this.sql`DELETE FROM trigger_emails WHERE at < ${new Date(now.getTime() - 30 * 24 * 3600_000).toISOString()}`
+    return true
+  }
 
   logTriggerEvent(triggerId: string, outcome: string, runId: string | null, detail: unknown) {
     this.sql`INSERT INTO trigger_events (trigger_id, at, outcome, run_id, detail)

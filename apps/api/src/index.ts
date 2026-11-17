@@ -17,6 +17,7 @@ import { consumePush, type PushJob } from './push/send'
 import { consumeStore, type MailboxStoreJob } from './mailbox/jobs'
 import type { InboundJob } from './mailbox/inbound'
 import { consumeInbound } from './mailbox/receive'
+import { consumeMailEvents, type MailEvent } from './mailbox/events'
 import { cors } from 'hono/cors'
 import { tokensHourly } from './auth/api-tokens'
 import { emailsHourly } from './emails/service'
@@ -113,6 +114,7 @@ export default {
   // PUSH jobs: notifications to the mobile app (push/send.ts).
   // STORE_COPY jobs: copying mail into mailbox stores (mailbox/jobs.ts).
   // MAIL_IN jobs: mail received through SES, delivered into mailbox stores (mailbox/receive.ts).
+  // MAIL_EVENTS jobs: new, moved and removed mail in store-held mailboxes, for filing, search and agents.
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
@@ -126,7 +128,9 @@ export default {
               ? consumeStore(batch as MessageBatch<MailboxStoreJob>, env)
               : batch.queue === 'xstate-mail-in'
                 ? consumeInbound(batch as MessageBatch<InboundJob>, env)
-                : consume(batch as MessageBatch<MailSyncJob>, env),
+                : batch.queue === 'xstate-mail-events'
+                  ? consumeMailEvents(batch as MessageBatch<MailEvent>, env)
+                  : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>
@@ -156,4 +160,4 @@ export default {
         }),
       ]),
     ),
-} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob | InboundJob>
+} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob | InboundJob | MailEvent>

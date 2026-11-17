@@ -927,8 +927,89 @@ recipients saw `hello@99events.com` without "99events". The request now leaves i
 message's own From header; tried directly with the AWS CLI: `From: 99events <hello@99events.com>` arrived intact,
 DKIM and DMARC still passing.
 
-Still to try: a reply from Gmail to the draft-test message joining its conversation in xstate (needs the person
-to reply in Gmail; the Gmail connector here can't read that account).
+The From fix deployed ("Made some minor fix"). Then the Gmail reply to the draft-test message ("Hello, how are you
+doing?", 00:55 local) joined its conversation in `hello@99events.com`, matched through SES's Message-ID; a reply
+written in the app's reply box went back to Gmail ("Reply sent") and the conversation shows all three in order.
+Step 3 works end to end on real mail.
+
+#### Step 4a: new-mail events for search, attachments and agents (approved and built 2026-11-18, uncommitted)
+
+**Goal:** mail in a store-held mailbox reaches everything that reads Stalwart mail today: search by meaning
+(`email_search` and the app's search), attachment records (`files`, so Storage's mail views, `storage_*` tools and
+attachment search work), and agents' email triggers. Today `jobs/mail-sync.ts` does all three by walking Stalwart's
+change log, which store-held mailboxes don't have, so none of their mail is indexed, filed or seen by agents.
+
+**One event per change, on a new queue.** `xstate-mail-events` (binding `MAIL_EVENTS`, with a dead-letter queue,
+as the plan's AI agents section names it). The store's writers queue an event after the change is stored:
+
+| Event | Queued by | Meaning |
+|---|---|---|
+| `new` (mailbox, message ids, `in` or `out`) | `receive.ts` after a delivery; `outbound.ts` after a Sent copy (not drafts) | A message to file, index and, if received, offer to agents |
+| `moved` (mailbox, message ids) | `updateMessage` for store-held mailboxes | Search documents record the folder; nothing is re-embedded |
+| `removed` (mailbox, message ids) | the Trash purge, a replaced or sent draft | Its files and search documents go |
+
+A separate queue, not more work in the receiving consumer: delivery stays fast and never retries because the model
+or Vectorize failed, and each consumer step retries on its own. Every step is safe to repeat, as mail sync's are.
+
+**The consumer** (`mailbox/events.ts`), for `new`:
+
+1. **Attachments to `files`.** For each file part the store recorded (its position in the raw copy), as mail sync
+   does for a Stalwart attachment: claim a `files` row first (`part_id` is the part's start, so a retry finds it),
+   apply the file-type rules (blocked: marked, never copied), copy the part's decoded bytes from the raw copy (a
+   range read) to the usual file key, record size and hash, and queue it for search. Inline images under 20 KB are
+   skipped, as now. `source` is `received` or `sent`.
+2. **Search.** The message is queued for search as today (`enqueueEmails`); `indexEmails` reads a store-held
+   mailbox's message from its raw copy (our parser, footer removed) and its folder from the store, instead of
+   asking Stalwart. Same documents (`email:<mailbox>:<id>`), so `email_search` needs nothing new.
+3. **Agents** (received mail in the Inbox only, as now). For each email trigger on the mailbox, the same rules,
+   loop guard (Auto-Submitted, Precedence, list headers, no-reply senders, the mailbox's own mail) and AI filter
+   decide, with the message read from its raw copy instead of Stalwart's `getTriggerEmails`. A trigger fires once
+   per message: the agent's store records the message id before starting the run, so a retried event doesn't start
+   a second one. The Stalwart change-log cursor isn't used for these mailboxes.
+
+`moved` updates the search documents' folder (from the store); `removed` marks the messages' `files` rows deleted
+(the hourly purge removes their objects and vectors, as for Stalwart mail) and removes their search documents.
+
+**Mail already there.** The pilot's existing messages (a few dozen) were never filed or indexed. The hourly search
+job queues a `new` event for every message of a store-held mailbox once (a flag in the store's meta), then never
+again.
+
+**Attachments are still copied, not read in place.** The plan's target is one copy, read by position from the raw
+message. Storage's downloads (presigned URLs) and "save to Storage" (an object copy) both work on a file's own R2
+object, and neither can point at a range of another object without rework. For now a store-held mailbox keeps a
+copy per attachment, as Stalwart mailboxes do today; reading in place comes with phase 4, when copied mail's
+separate copies are removed anyway.
+
+**Not in 4a:** virus scanning of received attachments (4c, which hooks into the same event), spam layers (4b), the
+delivery log (4d), calendar invitations (phase 3).
+
+**Testing:** pure tests for the trigger email built from a parsed message (loop-guard headers kept); locally, a fake
+delivery producing `files` rows, search documents in the dev index, and a trigger event (an agent on the test
+mailbox, loop guard and rules); then the pilot: `email_search` finds pilot mail and its attachments, the 20 MB PDF
+shows in Storage's mail attachments, moving a message updates its search folder, and an agent on
+`hello@99events.com` fires once for a new message from Gmail.
+
+**Built:** `mailbox/events.ts` (the queue job, the consumer, the hourly catch-up), `mailbox/trigger-email.ts` (a
+store-held message in the shape agents' triggers read, with tests), `offerStoredEmail` in `agents/email-trigger.ts`
+with a `trigger_emails` claim table in each agent's store, `indexEmails` and `refreshEmailFolders` reading store-held
+mail from the raw copies and the store, producers in `receive.ts`, `outbound.ts`, `updateMessage` and the Trash
+purge, and the parser keeping each header's first value. Old mail caught up is filed and indexed but not offered to
+agents (`offer: false`), which would otherwise answer weeks-old mail.
+
+**Found while testing: Vectorize ids over 64 bytes.** A passage's id was `<doc>:<n>`; a store-held message's doc is
+`email:<mailbox uuid>:<26-character ULID>`, 71 bytes with the passage number, and Vectorize refuses ids over 64. No
+store-held mail could have been indexed. Fixed in `search/vector-id.ts`: ids that fit keep the old form (every
+vector already stored stays valid), longer ones become `h:<128-bit hash of the doc>:<n>`; the doc id in metadata and
+D1 is unchanged, so results and deletes work as before. Tests included.
+
+**Local test, end to end** (the local agent "Inbox Helper" on `dev@acme.test`, switched to the store): a customer
+email with a PDF was filed (`files` row ready, `part_id` `store:<start>`), indexed, and offered to the agent, which
+fired and replied through the store's sending path (fake SES), its Sent copy then indexed in Sent; a mailing-list
+email was skipped by the loop guard; archiving moved the search document's folder to `archive`; Trash with the purge
+marked the file deleted and removed the document; the hourly catch-up queued the mailbox's four earlier messages
+once, filed nothing twice and offered nothing to the agent.
+
+**Before pushing:** create the queues `xstate-mail-events` and `xstate-mail-events-dlq`.
 
 #### Our own MX name (discussed 2026-11-17, deferred)
 

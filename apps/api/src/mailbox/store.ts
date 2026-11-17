@@ -96,6 +96,19 @@ export type StoreDelivery = {
   verdicts: Record<string, string>
 }
 
+/** A message as the new-mail events read it (`rows`). */
+export type StoreEventRow = {
+  id: string
+  threadId: string
+  folder: StoreFolderRole | null
+  subject: string
+  from: StoreAddress[]
+  receivedAt: string
+  rawKey: string | null
+  hasAttachment: boolean
+  draft: boolean
+}
+
 /** The message a reply or forward answers, as `replySource` gives it. */
 export type StoreReplySource = {
   id: string
@@ -619,11 +632,11 @@ export class MailboxStore extends Agent<Env> {
    * (email_update_message), in one transaction. Each changed message gets the next modseq; a moved one leaves its
    * folder and gets a new uid in the target, as an IMAP move. `found` is false when the message isn't here.
    */
-  update(u: StoreUpdate): { found: boolean; changed: number } {
+  update(u: StoreUpdate): { found: boolean; changed: number; changedIds: string[]; moved: boolean } {
     if (this.meta('owner') !== 'store') throw new Error('This store does not hold its own mail')
     return this.ctx.storage.transactionSync(() => {
       const chosen = [...this.db.exec(`SELECT thread_id FROM messages WHERE id = ?`, u.id)][0] as { thread_id: string } | undefined
-      if (!chosen) return { found: false, changed: 0 }
+      if (!chosen) return { found: false, changed: 0, changedIds: [], moved: false }
       const rows = [...this.db.exec(
         `SELECT n, id, folder, seen, pinned FROM messages WHERE ${u.thread ? 'thread_id = ?' : 'id = ?'}`,
         u.thread ? chosen.thread_id : u.id,
@@ -653,7 +666,8 @@ export class MailboxStore extends Agent<Env> {
         this.db.exec(`UPDATE messages SET modseq = ? WHERE n = ?`, modseq, c.n)
         for (const folderId of touched) this.db.exec(`UPDATE folders SET highest_modseq = ? WHERE id = ?`, modseq, folderId)
       }
-      return { found: true, changed: plan.length }
+      const ids = new Map(rows.map((r) => [r.n, r.id]))
+      return { found: true, changed: plan.length, changedIds: plan.map((c) => ids.get(c.n)!), moved: plan.some((c) => !!c.folder) }
     })
   }
 
@@ -661,13 +675,13 @@ export class MailboxStore extends Agent<Env> {
    * Deletes for good the messages that have been in Trash since before `before` (seconds), at most `limit` of them.
    * Returns their raw copies' keys, for the caller to delete from the bucket.
    */
-  purgeTrash(before: number, limit = 500): { purged: number; rawKeys: string[] } {
-    if (this.meta('owner') !== 'store') return { purged: 0, rawKeys: [] }
+  purgeTrash(before: number, limit = 500): { purged: number; rawKeys: string[]; ids: string[] } {
+    if (this.meta('owner') !== 'store') return { purged: 0, rawKeys: [], ids: [] }
     const ids = [...this.db.exec(`SELECT id FROM messages WHERE folder = 'trash' AND trashed_s < ? LIMIT ?`, before, limit)].map((r) => r.id as string)
-    if (!ids.length) return { purged: 0, rawKeys: [] }
+    if (!ids.length) return { purged: 0, rawKeys: [], ids: [] }
     const gone = this.remove(ids)
     this.nextModseq()
-    return { purged: gone.removed, rawKeys: gone.rawKeys }
+    return { purged: gone.removed, rawKeys: gone.rawKeys, ids }
   }
 
   /**
@@ -705,6 +719,43 @@ export class MailboxStore extends Agent<Env> {
     const gone = this.remove([id])
     this.nextModseq()
     return gone.rawKeys
+  }
+
+  /** What the new-mail events (./events.ts) need of each message; ones that are gone are left out. */
+  rows(ids: string[]): StoreEventRow[] {
+    const out: StoreEventRow[] = []
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const chunk = ids.slice(i, i + IN_CHUNK)
+      const rows = this.db.exec(
+        `SELECT id, thread_id, folder, subject, from_json, received_s, raw_key, has_attachment, is_draft FROM messages WHERE id IN (${chunk.map(() => '?').join(', ')})`,
+        ...chunk,
+      )
+      for (const r of rows) {
+        out.push({
+          id: r.id as string,
+          threadId: r.thread_id as string,
+          folder: r.folder as StoreFolderRole | null,
+          subject: r.subject as string,
+          from: JSON.parse(r.from_json as string) as StoreAddress[],
+          receivedAt: fromSeconds(r.received_s as number),
+          rawKey: r.raw_key as string | null,
+          hasAttachment: !!r.has_attachment,
+          draft: !!r.is_draft,
+        })
+      }
+    }
+    return out
+  }
+
+  /** Every message's id, oldest first, for the one-time catch-up of mail that arrived before events existed. */
+  allIds(): string[] {
+    return [...this.db.exec(`SELECT id FROM messages ORDER BY n`)].map((r) => r.id as string)
+  }
+
+  /** Whether the one-time catch-up ran (`set` marks it done). Only stores that hold their own mail use it. */
+  caughtUp(set = false): boolean {
+    if (set) this.setMeta('events_caught_up', '1')
+    return this.meta('owner') !== 'store' || this.meta('events_caught_up') === '1'
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

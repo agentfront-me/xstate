@@ -12,6 +12,7 @@ import { announce } from '../live/announce'
 import * as accessDb from '../db/mailbox-access'
 import { checkStore, syncStore } from '../mailbox/shadow'
 import { purgeHeldTrash } from '../mailbox/trash'
+import { catchUpHeld } from '../mailbox/events'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -105,6 +106,9 @@ export async function hourly(env: Env): Promise<void> {
   // Mailboxes whose mail the store holds: messages in Trash for 30 days are deleted for good.
   const trash = await purgeHeldTrash(env).catch((err) => (console.error('store-trash failed', err), null))
   if (trash?.purged || trash?.uploads) console.log('store-trash', JSON.stringify(trash))
+  // Their mail from before new-mail events existed: filed, indexed (once per mailbox).
+  const caught = await catchUpHeld(env).catch((err) => (console.error('mail-events catch-up failed', err), null))
+  if (caught?.queued) console.log('mail-events catch-up', JSON.stringify(caught))
   if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
   // The virus scanner on the mail server: down, or its signatures have stopped updating.
   const scanner = await scannerHealth(env)

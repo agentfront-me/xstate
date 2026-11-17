@@ -26,6 +26,8 @@ export type ParsedMessage = {
   /** The readable body: the plain-text part, or the HTML part as text. */
   text: string
   html: string | null
+  /** Each header's first value by lowercase name, decoded: what rules and the agents' loop guard read. */
+  headers: Record<string, string>
 }
 
 type PostalAddress = { name?: string; address?: string; group?: PostalAddress[] }
@@ -53,7 +55,14 @@ export async function parseRaw(raw: Uint8Array): Promise<ParsedMessage> {
     references: mail.references ?? null,
     text: readableText(mail.text, mail.html, htmlToText),
     html: mail.html ?? null,
+    headers: firstHeaders(mail.headers as { key: string; value: string }[] | undefined),
   }
+}
+
+function firstHeaders(list: { key: string; value: string }[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const h of list ?? []) out[h.key.toLowerCase()] ??= h.value
+  return out
 }
 
 /** The parts kept as files rather than read as text, in order: the attachments the raw copy records (./shadow.ts). */

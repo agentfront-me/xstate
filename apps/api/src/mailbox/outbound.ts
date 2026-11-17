@@ -14,6 +14,7 @@ import { checkName, inspectStream, type Safety } from '../security/attachments'
 import { organizationBucket } from '../storage/buckets'
 import { deleteObject, getObject, putObject } from '../storage/r2'
 import { addressList, buildMessage, type OutFile, type OutMessage } from './compose'
+import { queueMailEvent } from './events'
 import { previewOf, ulid } from './inbound'
 import { decodePart, type PartEncoding } from './mime'
 import { fileParts } from './parse'
@@ -74,6 +75,7 @@ export async function sendFromStore(env: OutboundEnv, mailbox: MailboxRow, input
     await putObject(env, bucket, rawKey(mailbox.id, id), copy, { contentType: 'message/rfc822', metadata: { 'email-id': id, 'ses-id': sesId } })
     const stored = await stub.deliver(own(prepared, { id, raw: copy, sesId, messageId: sesMessageId(env, sesId), folder: 'sent', mailbox, checked }))
     kept = { id, threadId: stored.threadId }
+    await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'out' })
   }
   await afterWriting(env, mailbox, prepared, input)
   if (prepared.original) await stub.markOriginal(prepared.original.id, input.inReplyTo ? 'answered' : 'forwarded')

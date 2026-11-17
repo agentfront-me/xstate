@@ -16,6 +16,7 @@ import { stripFooter } from '../mailserver/footer'
 import { notifyDelivered } from '../push/new-mail'
 import { organizationBucket } from '../storage/buckets'
 import { deleteObject, putObject } from '../storage/r2'
+import { queueMailEvent } from './events'
 import { messageIds, previewOf, ulid, type InboundJob } from './inbound'
 import { decodePart } from './mime'
 import { fileParts, parseRaw, partName, type ParsedMessage } from './parse'
@@ -148,6 +149,8 @@ async function deliverTo(
     return { mailboxId: mailbox.id, id: stored.id, folder: stored.folder, duplicate: true }
   }
 
+  // Filing, search and agents, on their own queue (./events.ts).
+  await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'in' })
   // The apps: a live update for whoever has the mailbox open, and "new email" on phones.
   const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
   if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId: mailbox.id }, userIds)
