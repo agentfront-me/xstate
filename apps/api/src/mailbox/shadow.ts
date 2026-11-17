@@ -33,7 +33,7 @@ const PER_JOB = 50
  * Raise this to make every store copy its mailbox again from the start: after a change to what the store keeps
  * or how it is filled.
  */
-export const COPY_VERSION = 1
+export const COPY_VERSION = 2
 
 /** Raw messages per queued copy job: each is a download and an upload. */
 const RAW_PER_JOB = 10
@@ -204,7 +204,8 @@ async function firstCopy(env: ShadowEnv, mailbox: MailboxRow, folders: JmapFolde
     const page = await jmap.queryAllEmails(env, accountId, position, PER_JOB)
     await enqueueCopy(env, mailbox.id, page.ids)
     result.queued += page.ids.length
-    if (position + PER_JOB >= page.total || !page.ids.length) break
+    // A short page is the last one. Not page.total: the first production run got none and stopped after one page.
+    if (page.ids.length < PER_JOB) break
   }
   // Saved last: a run that fails part-way queues everything again, which is harmless.
   await stub.setSync(state, COPY_VERSION)

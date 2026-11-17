@@ -313,7 +313,8 @@ export async function queryEmailsWithAttachments(env: StalwartEnv, accountId: st
   const [result] = await mail(env, [
     [
       'Email/query',
-      { accountId, filter: { hasAttachment: true }, sort: [{ property: 'receivedAt', isAscending: false }], position, limit },
+      // calculateTotal: without it the server sends no total, and a caller paging by it stops after one page.
+      { accountId, filter: { hasAttachment: true }, sort: [{ property: 'receivedAt', isAscending: false }], position, limit, calculateTotal: true },
     ],
   ])
   return { ids: (result!.ids as string[]) ?? [], total: Number(result!.total ?? 0) }
@@ -322,7 +323,7 @@ export async function queryEmailsWithAttachments(env: StalwartEnv, accountId: st
 /** Ids of every message in the account, newest first, a page at a time (for search's first pass over a mailbox). */
 export async function queryAllEmails(env: StalwartEnv, accountId: string, position: number, limit: number) {
   const [result] = await mail(env, [
-    ['Email/query', { accountId, sort: [{ property: 'receivedAt', isAscending: false }], position, limit }],
+    ['Email/query', { accountId, sort: [{ property: 'receivedAt', isAscending: false }], position, limit, calculateTotal: true }],
   ])
   return { ids: (result!.ids as string[]) ?? [], total: Number(result!.total ?? 0) }
 }

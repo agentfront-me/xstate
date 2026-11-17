@@ -483,6 +483,13 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   windows-1252 body; 7 file parts found, 5 matched to `files` rows (the other 2 are 100-byte inline logos the
   attachment sync skips on purpose), 4 read back by range and identical; deleting a message removed its copy.
 
+- **First production run (2026-11-17, asif@xstate.com, 564 messages):** the first copy queued only 50 messages.
+  `Email/query` sends no `total` unless `calculateTotal` is set, so the paging loop stopped after one page; the
+  local test mailboxes had fewer than 50 messages and never reached a second page. Fixed: the copy now pages until
+  a short page, both first-pass queries ask for the total (the attachment sync and search first passes had the same
+  loop; production search was complete anyway, because that mail arrived as changes), and `COPY_VERSION` is 2 so
+  the store copies again.
+
 Differences from the plan above, for now:
 
 - **The separate attachment copies stay.** Downloads, scanning and search still read them; the positions are
