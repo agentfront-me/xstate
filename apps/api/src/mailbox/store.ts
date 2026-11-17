@@ -122,7 +122,12 @@ export class MailboxStore extends Agent<Env> {
     // Headers by trigram, so part of an address, a domain or a subject matches. Bodies by word, without positions:
     // a tenth of the size, at the cost of exact phrases (spike findings in the plan).
     sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS headers_fts USING fts5(sender, recipients, subject, tokenize='trigram', content='', contentless_delete=1)`)
-    sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5(subject, body, tokenize='unicode61 remove_diacritics 2', detail='none', content='', contentless_delete=1)`)
+    // Words are reduced to their English stem (porter), as Stalwart's search does, so "workspace" also finds
+    // "workspaces". A store made before stemming has its word index rebuilt: dropped here, refilled by the recopy
+    // that the COPY_VERSION change in ./shadow.ts starts.
+    const textIndex = [...sql.exec(`SELECT sql FROM sqlite_master WHERE name = 'text_fts'`)][0]?.sql as string | undefined
+    if (textIndex && !textIndex.includes('porter')) sql.exec(`DROP TABLE text_fts`)
+    sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5(subject, body, tokenize='porter unicode61 remove_diacritics 2', detail='none', content='', contentless_delete=1)`)
   }
 
   private get db() {

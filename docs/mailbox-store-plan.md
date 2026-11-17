@@ -498,7 +498,15 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   HTML-to-text conversion now decodes character references such as `&#847;`, which it left as written before; that
   also improves search and agents on HTML-only mail today. `COPY_VERSION` is 3 so the store copies again. The recopy (11:04 UTC) brought the differences down to 1: the same
   email, now read from its HTML by us while Stalwart's text for it is empty. So `plainText` (what search, agents
-  and the store read today) now uses the HTML part too when the plain part is blank, and `COPY_VERSION` is 4.
+  and the store read today) now uses the HTML part too when the plain part is blank, and `COPY_VERSION` is 4. After that deploy (12:07 UTC): 567 of 567 messages matching in every folder, all raw
+  copies made, 29 of 29 range reads identical, and **no parsing differences**.
+- **Read mode on real mail (2026-11-17, 12:10 UTC, asif@xstate.com):** inbox and all-folders lists identical to
+  Stalwart's, rows, order and cursor. `from: google.com` found 5 messages where Stalwart finds none. A text search
+  for "workspace" also found a Slack email whose links contain the word (our index splits links into words;
+  Stalwart's doesn't) and missed an AppSumo email that only says "workspaces": Stalwart stems English words, the
+  store didn't. The word index now stems too (`porter`), and stores made before are rebuilt (`COPY_VERSION` 5). A
+  store that is being recopied answers lists only partly, so a mailbox in `read` mode goes back to `shadow` before
+  a deploy that raises `COPY_VERSION`, and returns to `read` after the check.
 
 Differences from the plan above, for now:
 
