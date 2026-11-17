@@ -17,6 +17,7 @@ import { isAdmin, readableMailboxes } from '../mailserver/access'
 import { stripFooter } from '../mailserver/footer'
 import * as jmap from '../mailserver/stalwart/mail'
 import { store } from '../mailbox/stub'
+import { answeredByStore } from '../mailbox/read'
 import type { MailboxRow } from '../db/mailboxes'
 import { atLeast, hiddenAbove, inTrash, mailScopes, roleOn, searchScopes, type Reader, type SearchFilter } from '../storage/roles'
 import { hasMailFilter, matchesMail, type MailFilter } from './mail-filter'
@@ -190,7 +191,7 @@ class Checker {
     private env: SearchEnv,
     private actor: Actor,
     private reader: Reader,
-    private mailboxes: Map<string, Pick<MailboxRow, 'id' | 'address' | 'stalwart_id' | 'store_mode'>>,
+    private mailboxes: Map<string, Pick<MailboxRow, 'id' | 'address' | 'stalwart_id' | 'store_mode' | 'backend'>>,
     private options: { folderId: string | undefined; mail: MailFilter | undefined; mailOnly: boolean },
   ) {}
 
@@ -236,10 +237,10 @@ class Checker {
       byMailbox.set(r.mailbox!.id, ids)
     }
     // Mailboxes read from their own store answer from it; the rest ask Stalwart.
-    const fromStore = [...byMailbox].filter(([mailboxId]) => this.mailboxes.get(mailboxId)?.store_mode === 'read')
+    const fromStore = [...byMailbox].filter(([mailboxId]) => { const m = this.mailboxes.get(mailboxId); return !!m && answeredByStore(m) })
     const accounts = [...byMailbox].flatMap(([mailboxId, ids]) => {
       const mailbox = this.mailboxes.get(mailboxId)
-      return mailbox && mailbox.store_mode !== 'read' ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
+      return mailbox && !answeredByStore(mailbox) ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
     })
     const [heads, storeHeads] = await Promise.all([
       jmap.getEmailHeads(this.env, accounts),

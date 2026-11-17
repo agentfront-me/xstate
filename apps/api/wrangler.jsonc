@@ -68,6 +68,11 @@
     // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
     "SCAN_MODE": "log",
     "SCAN_URL": "https://mx.xstate.io/_scan",
+    // Receiving through SES (mailbox/receive.ts, docs/mailbox-store-plan.md phase 2): the SNS topic whose notifications
+    // /webhooks/ses-inbound accepts. Empty: receiving is off and the endpoint answers 404. Needs the
+    // MAIL_INBOUND_ACCESS_KEY_ID and MAIL_INBOUND_SECRET_ACCESS_KEY secrets. Setup: docs/mailbox-store-plan.md,
+    // "Step 1 setup". Nothing is received until the SES receipt rule is active.
+    "SES_INBOUND_TOPIC_ARN": "arn:aws:sns:us-east-2:881901370832:xstate-mail-inbound",
     // Billing through Paddle (billing/, docs/pricing-plan.md). The client-side token (live_…) is public: it only
     // opens checkout. PADDLE_PRICES maps plans to the live catalog's price ids, printed by
     // `node scripts/paddle-catalog.mjs`. Local dev uses the sandbox, set in .dev.vars.
@@ -102,7 +107,8 @@
       { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" },
       { "binding": "MIGRATION", "queue": "xstate-migration" },
       { "binding": "PUSH", "queue": "xstate-push" },
-      { "binding": "STORE_COPY", "queue": "xstate-mailbox-store" }
+      { "binding": "STORE_COPY", "queue": "xstate-mailbox-store" },
+      { "binding": "MAIL_IN", "queue": "xstate-mail-in" }
     ],
     "consumers": [
       { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
@@ -119,7 +125,11 @@
       // Copying mail into mailbox stores (mailbox/jobs.ts), apart from search so a big copy can't hold it up. Every
       // raw copy is a download from Stalwart, so concurrency here (times RAW_PARALLEL in mailbox/shadow.ts) is the
       // load on the mail server. Create once: wrangler queues create xstate-mailbox-store
-      { "queue": "xstate-mailbox-store", "max_batch_size": 4, "max_batch_timeout": 2, "max_retries": 10, "max_concurrency": 4 }
+      { "queue": "xstate-mailbox-store", "max_batch_size": 4, "max_batch_timeout": 2, "max_retries": 10, "max_concurrency": 4 },
+      // Mail received through SES for mailboxes whose mail the store holds (mailbox/receive.ts). 4 a batch, handled
+      // one at a time, since a message can be 40 MB. After 5 tries a job waits in the dead-letter queue, and the
+      // message in S3 for 7 days. Create once: wrangler queues create xstate-mail-in, and xstate-mail-in-dlq
+      { "queue": "xstate-mail-in", "max_batch_size": 4, "max_batch_timeout": 1, "max_retries": 5, "dead_letter_queue": "xstate-mail-in-dlq" }
     ]
   },
   // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.
@@ -190,6 +200,9 @@
   // string (openssl rand -base64 48). Changing it makes every stored secret key unreadable, so set it once.
   // SCAN_SECRET (optional while SCAN_MODE is "off"): shared with the scan service on the mail server
   // (apps/scanner/deploy/README.md). Not in "required" so deploys work before the scanner exists.
+  // MAIL_INBOUND_ACCESS_KEY_ID / MAIL_INBOUND_SECRET_ACCESS_KEY (optional until receiving is on): IAM user
+  // xstate-mail-inbound, allowed only to read, write (the quarantine copy) and delete in the S3 bucket SES saves
+  // received mail to.
   // PADDLE_API_KEY / PADDLE_WEBHOOK_SECRET: the live Paddle API key (pdl_live_…, "xstate production API", expires
   // 2027-11-16: make a new one before then) and the secret of the notification destination
   // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.

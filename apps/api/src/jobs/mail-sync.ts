@@ -30,6 +30,11 @@ export async function consume(batch: MessageBatch<MailSyncJob>, env: Env): Promi
     byMailbox.set(message.body.mailboxId, list)
   }
   for (const [mailboxId, messages] of byMailbox) {
+    // A mailbox whose mail the store holds receives through SES (mailbox/receive.ts): nothing to sync from Stalwart.
+    if ((await mailboxesDb.find(env.DB, mailboxId))?.backend === 'store') {
+      for (const m of messages) m.ack()
+      continue
+    }
     // Agents' email triggers first, on their own: a storage sync failure mustn't hold up replies, nor the other way.
     try {
       const agents = await processMailbox(env, mailboxId)

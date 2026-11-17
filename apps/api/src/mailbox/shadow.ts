@@ -69,7 +69,7 @@ export type StoreSyncResult = {
 /** Brings one mailbox's store up to date. Null when the mailbox doesn't use the store. */
 export async function syncStore(env: ShadowEnv, mailboxId: string): Promise<StoreSyncResult | null> {
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
-  if (!mailbox || mailbox.store_mode === 'off') return null
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store') return null
   const result: StoreSyncResult = { mailboxId, first: false, queued: 0, stored: 0, placed: 0, removed: 0, rawQueued: 0 }
   const accountId = mailbox.stalwart_id
   const stub = await store(env, mailbox.id)
@@ -145,7 +145,7 @@ export type RawCopyResult = { mailboxId: string; stored: number; skipped: number
 export async function copyRaw(env: ShadowEnv, mailboxId: string, emailIds: string[]): Promise<RawCopyResult> {
   const result: RawCopyResult = { mailboxId, stored: 0, skipped: 0, bytes: 0, attachments: 0, matched: 0, differing: 0 }
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
-  if (!mailbox || mailbox.store_mode === 'off' || !mailbox.store_raw || !storageConfigured(env)) return result
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store' || !mailbox.store_raw || !storageConfigured(env)) return result
   const accountId = mailbox.stalwart_id
   const bucket = await organizationBucket(env, mailbox.organization_id)
   const emails = await jmap.getStoreEmails(env, accountId, emailIds, MAX_INDEXED_CHARS)
@@ -242,7 +242,7 @@ export async function storeEmails(
   known?: { mailbox: MailboxRow; folders: JmapFolder[] },
 ): Promise<number> {
   const mailbox = known?.mailbox ?? (await mailboxesDb.find(env.DB, mailboxId))
-  if (!mailbox || mailbox.store_mode === 'off') return 0
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store') return 0
   const accountId = mailbox.stalwart_id
   const folders = known?.folders ?? (await jmap.getFolders(env, [accountId])).get(accountId) ?? []
   const stub = await store(env, mailbox.id)
@@ -312,7 +312,7 @@ export type StoreCheck = {
 /** Compares the store's per-folder counts with the mail server's. Null when the mailbox doesn't use the store. */
 export async function checkStore(env: ShadowEnv, mailboxId: string): Promise<StoreCheck | null> {
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
-  if (!mailbox || mailbox.store_mode === 'off') return null
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store') return null
   const folders = (await jmap.getFolders(env, [mailbox.stalwart_id])).get(mailbox.stalwart_id) ?? []
   const stub = await store(env, mailbox.id)
   const counts = await stub.counts()

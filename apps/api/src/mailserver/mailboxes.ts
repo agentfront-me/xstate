@@ -151,7 +151,7 @@ export async function deleteMailbox(env: EmailEnv & BucketEnv, actor: Actor, mai
   )
   // The mailbox's own store (mailbox/store.ts), if it has one: its index of the messages goes with it. Its raw
   // copies are inside the R2 folder deleted above.
-  if (mailbox.store_mode !== 'off') {
+  if (mailbox.store_mode !== 'off' || mailbox.backend === 'store') {
     await store(env, mailbox.id)
       .then((stub) => stub.destroy())
       .catch((err) => console.error(`mailbox-store: deleting the store of mailbox ${mailbox.id} failed`, err))

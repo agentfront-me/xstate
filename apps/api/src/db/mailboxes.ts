@@ -2,6 +2,7 @@
 
 export type MailboxKind = 'personal' | 'shared' | 'agent'
 export type StoreMode = 'off' | 'shadow' | 'read'
+export type MailBackend = 'stalwart' | 'store'
 
 /** A mailbox with its primary address and a JSON array of alias addresses. */
 export type MailboxRow = {
@@ -18,6 +19,11 @@ export type MailboxRow = {
   store_mode: StoreMode
   /** 1 to also copy each raw message into the organization's bucket and record where its attachments sit. */
   store_raw: number
+  /**
+   * Which side holds the mail: 'stalwart', or 'store' (mail arrives through SES into the mailbox store and nothing
+   * syncs from Stalwart; docs/mailbox-store-plan.md, phase 2). Set by hand for the pilot.
+   */
+  backend: MailBackend
   created_at: string
   updated_at: string
   address: string
@@ -26,7 +32,7 @@ export type MailboxRow = {
 }
 
 const SELECT = `
-  SELECT m.id, m.organization_id, m.kind, m.display_name, m.quota_bytes, m.stalwart_id, m.store_mode, m.store_raw, m.created_at, m.updated_at,
+  SELECT m.id, m.organization_id, m.kind, m.display_name, m.quota_bytes, m.stalwart_id, m.store_mode, m.store_raw, m.backend, m.created_at, m.updated_at,
          a.address, a.domain_id,
          (SELECT json_group_array(x.address) FROM addresses x WHERE x.mailbox_id = m.id AND x.is_primary = 0) AS aliases
   FROM mailboxes m JOIN addresses a ON a.mailbox_id = m.id AND a.is_primary = 1`

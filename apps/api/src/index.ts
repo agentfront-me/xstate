@@ -9,11 +9,14 @@ import { finalHourly } from './migration/final'
 import { migrationHourly } from './migration/watchdog'
 import { consumeMigration, consumeMigrationDead, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
+import { handleSesInbound } from './jobs/ses-inbound'
 import { handlePaddleWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
 import { consumeStore, type MailboxStoreJob } from './mailbox/jobs'
+import type { InboundJob } from './mailbox/inbound'
+import { consumeInbound } from './mailbox/receive'
 import { cors } from 'hono/cors'
 import { tokensHourly } from './auth/api-tokens'
 import { emailsHourly } from './emails/service'
@@ -76,6 +79,8 @@ app.route('/v1', v1)
 app.post('/webhooks/stalwart', handleStalwartWebhook)
 // Amazon SES bounces and complaints, delivered by SNS (signed by SNS; not part of the public /v1 API).
 app.post('/webhooks/ses', handleSesWebhook)
+// Mail received through SES for store-held mailboxes, delivered by SNS (signed; mailbox/receive.ts).
+app.post('/webhooks/ses-inbound', handleSesInbound)
 // Paddle subscription events (signed with PADDLE_WEBHOOK_SECRET; billing/webhook.ts).
 app.post('/webhooks/paddle', handlePaddleWebhook)
 // Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
@@ -107,6 +112,7 @@ export default {
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
   // PUSH jobs: notifications to the mobile app (push/send.ts).
   // STORE_COPY jobs: copying mail into mailbox stores (mailbox/jobs.ts).
+  // MAIL_IN jobs: mail received through SES, delivered into mailbox stores (mailbox/receive.ts).
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
@@ -118,7 +124,9 @@ export default {
             ? consumePush(batch as MessageBatch<PushJob>, env)
             : batch.queue === 'xstate-mailbox-store'
               ? consumeStore(batch as MessageBatch<MailboxStoreJob>, env)
-              : consume(batch as MessageBatch<MailSyncJob>, env),
+              : batch.queue === 'xstate-mail-in'
+                ? consumeInbound(batch as MessageBatch<InboundJob>, env)
+                : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>
@@ -148,4 +156,4 @@ export default {
         }),
       ]),
     ),
-} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob>
+} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob | InboundJob>

@@ -80,8 +80,9 @@ Worker ──▶ MAIL_IN queue ──▶ consumer:
 
 - **Recipients come from the envelope** (the recipients SES reports), never from the To and Cc headers, or mail
   sent by Bcc and to mailing lists would be lost.
-- **Verdicts:** SES's virus verdict FAIL rejects the message in the receipt rule. The spam, SPF, DKIM and DMARC
-  verdicts feed the spam score (see [Spam](#spam)).
+- **Verdicts:** a receipt rule can't act on SES's verdicts without a Lambda, so the consumer refuses a message whose
+  virus verdict is FAIL (quarantined in S3 for 7 days). The spam, SPF, DKIM and DMARC verdicts feed the spam score
+  (see [Spam](#spam)).
 - **SES already has every customer domain** as a verified identity (Easy DKIM, `mailserver/ses.ts`), which receiving
   requires. SES allows 10,000 identities per region by default; the limit can be raised.
 - **Retries:** the queue retries with backoff, with a dead-letter queue. A message stays in S3 until it is safely in
@@ -564,6 +565,180 @@ and forwarding (the original's attachments come from Stalwart).
 
 Receiving and sending through SES, drafts, attachments with scanning, spam layers 1–3, the delivery log, push, live
 updates and agent events. Pilot on an internal domain that has no existing mail to move.
+
+Built in four steps, each usable on the pilot before the next: **1. receiving**; 2. acting on mail in the store
+(read, pin, move, delete, folder counts, the change token); 3. sending and drafts through SES; 4. scanning, spam
+layers 2–3, the delivery log, search indexing and agent events.
+
+#### Step 1: receiving (designed and approved 2026-11-17)
+
+**Goal:** mail sent to a pilot mailbox arrives through SES, is kept in R2 and the mailbox's store, and shows up in
+the web app, with Stalwart never seeing it. Pilot: a new subdomain, `pilot.xstate.com`, with one or two mailboxes.
+It has no existing mail and nobody depends on it. The pilot mailbox can be read and searched (word search) but not
+yet marked read, moved or replied to from xstate (steps 2 and 3); that is fine for a few days of testing.
+
+**Which side owns a mailbox.** D1 migration 0036 adds `mailboxes.backend` (`stalwart` | `store`, default
+`stalwart`). `store` means the mailbox store holds the mail and nothing syncs from Stalwart: mail sync skips it,
+and every read the app makes (lists, threads, attachments, folders and counts, the change token) goes to the
+store. `store_mode` stays for mailboxes still on Stalwart. A `store` mailbox keeps its (empty) Stalwart account
+until step 3, because sending still goes through Stalwart until then. Pilot mailboxes get `backend = 'store'` by
+hand; the switch for a whole domain is phase 4.
+
+**AWS (us-east-2), set up once:**
+
+| Piece | Setting |
+|---|---|
+| S3 bucket `xstate-mail-inbound` | Private; a bucket policy lets only SES put objects, for this account; lifecycle deletes objects after 7 days |
+| SNS topic `xstate-mail-inbound` | HTTPS subscription to `https://api.xstate.com/webhooks/ses-inbound` |
+| Receipt rule set `xstate` (active), rule `inbound` | No recipient filter, so it covers every verified domain whose MX points at SES (the spike found a rule's recipient list doesn't cover subdomains, and listing every customer domain doesn't scale); spam and virus scanning on; one S3 action to `xstate-mail-inbound` under `inbound/`, publishing to the topic |
+| IAM user `xstate-mail-inbound` | `s3:GetObject` and `s3:DeleteObject` on that bucket only. Its keys become Worker secrets `MAIL_INBOUND_ACCESS_KEY_ID` and `MAIL_INBOUND_SECRET_ACCESS_KEY` |
+| MX for `pilot.xstate.com` | `10 inbound-smtp.us-east-2.amazonaws.com` (Cloudflare DNS) |
+
+Only one receipt rule set can be active per region; none is active today, because Stalwart receives over its own
+SMTP. A rule cannot act on SES's verdicts by itself (that takes a Lambda), so a message SES marks as a virus is
+still saved to S3; the consumer refuses it (below). This corrects [Receiving](#receiving), which said the rule
+rejects it.
+
+**The webhook** (`POST /webhooks/ses-inbound`, `jobs/ses-inbound.ts`): verifies the SNS signature with the existing
+`jobs/sns.ts`, accepts only the inbound topic's ARN (a new `SES_INBOUND_TOPIC_ARN` var), confirms the subscription
+once, and puts one job per message on a new `xstate-mail-in` queue (binding `MAIL_IN`, with a dead-letter queue):
+the S3 key, SES's message id, the envelope recipients, the verdicts (spam, virus, SPF, DKIM, DMARC) and the time.
+It answers at once; SNS retries when it doesn't get a 2xx.
+
+**The consumer** (`mailbox/receive.ts`), per job, every step safe to repeat:
+
+1. **Recipients.** Each envelope recipient is looked up in D1 `addresses` (primary addresses and aliases). Kept
+   only when its mailbox has `backend = 'store'`. Unknown addresses, and mailboxes still on Stalwart (their MX
+   should not point here), are dropped and logged with SES's message id, never bounced (see
+   [Proposed decisions](#proposed-decisions)). Several recipients in one mailbox count once.
+2. **Virus.** SES's virus verdict FAIL: not delivered, logged, and the S3 object moved under `quarantine/` (kept 7
+   days by the same lifecycle rule) for support to look at.
+3. **Fetch** the raw message from S3 (40 MB at most, SES's limit) and read it with the existing parser
+   (`mailbox/parse.ts`: `locateParts`, then postal-mime on the message with its files cut out).
+4. **For each mailbox:** a new message id (below), the raw message put in the organization's bucket at
+   `<mailboxId>/raw/<messageId>.eml` (the same place the shadow copy uses), then `deliver` on the mailbox's store.
+   A message to two mailboxes in one organization is stored twice, once under each mailbox, so deleting one
+   mailbox never touches the other's mail. Simple, and rare enough not to matter.
+5. **Afterwards:** the S3 object is deleted, the organization's `LiveHub` told, and a new-mail push queued
+   (`push/new-mail.ts`), as mail sync does today.
+
+Messages run one at a time per job, and a batch holds at most 4 jobs, so a 40 MB message stays within a Worker's
+memory (parsing needs about the text's size, measured in the spike). A failed step retries the job; after 5 tries
+it goes to the dead-letter queue, with the message still in S3 for 7 days.
+
+**Ids.** New mail can't reuse Stalwart ids, and copied mail keeps them (see [Proposed
+decisions](#proposed-decisions)). Stalwart's ids are lowercase letters and digits (`fsbiaabmqk`), so new message
+and thread ids are ULIDs: 26 characters, uppercase, sortable by time, which can never equal a Stalwart id. They are
+made in the consumer before the raw copy is written, so the R2 key and the store agree. Idempotency is not on the
+id: a retried job looks up SES's message id first (below) and reuses what was stored.
+
+**`deliver` on the mailbox store** (one call, one transaction):
+
+- **Duplicates:** `messages.ses_id` (unique) is SES's message id; a second delivery of it returns the stored
+  message and changes nothing.
+- **Folders:** a store-owned mailbox makes its own six folders on first use (Inbox, Sent, Drafts, Archive, Junk,
+  Trash; ULID ids), instead of copying Stalwart's. New mail goes to Inbox, or to Junk when SES's spam verdict is
+  FAIL (spam layers 2–3 come in step 4).
+- **Thread:** the In-Reply-To and References Message-IDs are looked up in `messages.message_id` (newest first); the
+  first match gives the thread. Otherwise a message with the same subject (after removing `Re:`, `Fwd:` and the
+  like) from or to the same address, within the last 30 days. Otherwise a new thread.
+- **IMAP numbering** (see [IMAP later](#imap-later)): each folder gets `uid_validity` (random, fixed),
+  `uid_next` and `highest_modseq`; each placement a `uid` from its folder's `uid_next`, and the message a `modseq`
+  from a mailbox-wide counter that step 2 raises on every flag change and move. Only store-owned mailboxes are
+  numbered; shadow copies get numbers when their domain switches.
+- **Rows:** the same `messages`, `placements`, `attachments`, `headers_fts` and `text_fts` rows the shadow copy
+  writes, plus new columns: `message_id`, `in_reply_to`, `refs`, `ses_id`, `verdicts` (JSON), `uid` on
+  placements and `modseq` on messages. Text for the word index is the parser's text with the footer removed, as
+  now. The preview is the first 256 characters of that text.
+- **Quota:** the mailbox's quota is checked against the store's total size. A full mailbox still gets its mail in
+  step 1 and logs a warning; refusing comes with the delivery log in step 4.
+
+**Message-IDs for copied mail.** Threading new mail into old conversations (needed when a real domain switches,
+phase 4) needs the Message-ID, In-Reply-To and References of copied mail too. The shadow copy will ask Stalwart for
+them (JMAP header properties, no raw read) and store them, with `COPY_VERSION` 6. Not needed for the pilot; it can
+ship later, before phase 4.
+
+**Reading a store-owned mailbox** uses what phase 1 built (lists, filters, word search, threads, attachments from
+R2). New in step 1: `email_list_folders` and the folder counts, and the change token the apps poll
+(`getMailState`), come from the store for these mailboxes; the store keeps its own state string, raised on every
+`deliver`. Marking read, moving and pinning answer "not available yet" for these mailboxes until step 2.
+
+**Not in step 1:** search by meaning (Vectorize) and agent email triggers for pilot mail (both read from Stalwart
+today; step 4 feeds them from the store), attachment scanning by ClamAV and `files` rows for pilot attachments
+(step 4; SES's virus verdict and our file-type rules on download still apply), the delivery log (step 4; step 1
+logs to Worker logs only), sending (step 3).
+
+**Testing:**
+
+- Unit tests (pure, like `query.ts`): the subject normalizing and thread matching, ULIDs, the SNS job shape, and
+  recipient selection.
+- Local: `SES_MODE=fake` gets a script that writes a `.eml` to a local folder standing in for S3 and posts a
+  signed-looking notification to the local webhook (signature checks skipped only when fake), so the consumer,
+  store and app can be tried end to end without AWS.
+- Pilot: plain mail, a reply to it (threading), HTML-only mail, a large attachment (35 MB), a message to two pilot
+  mailboxes, an unknown address (dropped), the EICAR test file (quarantined), a GTUBE spam test (Junk), and a
+  retried job (no duplicate).
+
+**Cost:** SES receiving plus S3 and SNS, measured in the spike at about $0.15–0.25 per 1,000 received emails.
+Nothing new on Cloudflare beyond a queue and the existing R2 and Durable Objects.
+
+**Security and docs:** the S3 bucket is private and written only by SES; the Worker's keys can only read and
+delete there; the webhook accepts only signed notifications from one topic; mail content is data, never acted on.
+When step 1 runs on the pilot, `apps/web/content/docs/privacy.md` and `security.md` say that received mail passes
+through Amazon SES and briefly through S3 (deleted within seconds, 7 days at most).
+
+**For you to do in AWS and DNS** (I'll give the exact commands when step 1 is built): create the bucket, topic,
+rule set and IAM user; add the Worker secrets; add the `pilot.xstate.com` MX record; verify `pilot.xstate.com` in
+SES if the parent domain's identity doesn't cover it for receiving.
+
+**Decided (2026-11-17):** pilot on `pilot.xstate.com`; a full mailbox refuses mail from step 4, not step 1.
+
+#### Step 1 built (2026-11-17, uncommitted)
+
+- **Code:** `mailbox/inbound.ts` (job from SES's notification, ULIDs, subject keys, Message-ID lists; tests),
+  `mailbox/s3.ts` (read, quarantine, delete), `mailbox/receive.ts` (the consumer), `jobs/ses-inbound.ts` (the
+  webhook), `MailboxStore.deliver` with its own folders, threading, IMAP numbering, `folderList` and `changeState`
+  (`mailbox/store.ts`), `notifyDelivered` (`push/new-mail.ts`), and D1 migration 0036 (`mailboxes.backend`). For a
+  mailbox with `backend = 'store'`: folders, counts, lists, threads, attachments and the change token come from the
+  store; marking, pinning and moving answer `not_available` (409); mail sync and the shadow copy leave it alone;
+  deleting the mailbox deletes its store.
+- **Local test, end to end** (`node scripts/mail-in-fake.mjs`, which posts a notification carrying the message;
+  the local webhook skips the signature check only with `SES_MODE=fake` outside production): a message reached the
+  Inbox; the same SES id again stored nothing; a reply with the same subject from the same person, and a reply with
+  a different subject carrying `In-Reply-To`, both joined the conversation; a spam FAIL went to Junk; a virus FAIL
+  and an unknown address were dropped and logged; mail for a mailbox still on Stalwart was dropped
+  (`not_on_store`); an attachment with an RFC 2231 name (`résumé.csv`) listed and downloaded with the right bytes;
+  folder counts were right; the change token moved with each delivery; marking read answered 409.
+- **Not tried yet:** the real S3 and SNS path, and a large message (needs AWS, below).
+
+#### Step 1 setup
+
+In this order. The account is 881901370832, the region us-east-2. No SES receipt rule set exists today, so this one
+can be the active one.
+
+1. **Cloudflare queues, before pushing** (a deploy fails while a queue it consumes doesn't exist):
+   `npx wrangler queues create xstate-mail-in` and `npx wrangler queues create xstate-mail-in-dlq`.
+2. **Push.** GitHub Actions applies migration 0036 and deploys. Receiving stays off: nothing reaches the webhook
+   until the receipt rule is active.
+3. **S3 bucket** `xstate-mail-inbound`: private (public access blocked), a bucket policy letting
+   `ses.amazonaws.com` put objects only for this account and rule set, and a lifecycle rule deleting everything
+   after 7 days.
+4. **SNS topic** `xstate-mail-inbound`, with a topic policy letting SES publish for this account. Then subscribe
+   `https://api.xstate.com/webhooks/ses-inbound` (HTTPS); the deployed webhook confirms it, which shows in the
+   Worker's logs as `ses-inbound: confirmed subscription`.
+5. **IAM user** `xstate-mail-inbound` with `s3:GetObject`, `s3:PutObject` (the quarantine copy) and
+   `s3:DeleteObject` on `arn:aws:s3:::xstate-mail-inbound/*` only, and an access key, stored as Worker secrets:
+   `npx wrangler secret put MAIL_INBOUND_ACCESS_KEY_ID` and `MAIL_INBOUND_SECRET_ACCESS_KEY`.
+6. **Receipt rule set** `xstate` with rule `inbound`: enabled, scanning on, no recipients, one S3 action (bucket
+   `xstate-mail-inbound`, prefix `inbound/`, topic `xstate-mail-inbound`); then make `xstate` the active set.
+7. **The pilot:** add `pilot.xstate.com` as a domain in xstate (that registers it with SES, Easy DKIM), publish
+   its DKIM records, and instead of the MX record xstate shows, publish `pilot.xstate.com MX 10
+   inbound-smtp.us-east-2.amazonaws.com`. Create the pilot mailboxes, then set
+   `UPDATE mailboxes SET backend = 'store' WHERE id IN (...)` before any mail is sent to them.
+8. **Docs, the day mail first arrives:** `privacy.md` and `security.md` say received mail for these mailboxes
+   passes through Amazon SES and briefly through S3.
+
+Then the pilot tests listed under Testing, from an outside account (Gmail).
 
 ### 3. Calendars
 

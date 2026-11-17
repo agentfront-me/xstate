@@ -15,12 +15,14 @@ import {
   type PageStart,
   type StoreAddress,
   type StoreFolder,
+  type StoreFolderRole,
   type StoreListQuery,
   type StoreListRow,
   type StoreMessage,
   type StorePlacement,
   type StoreRow,
 } from './query'
+import { subjectKey, ulid } from './inbound'
 
 /** Where the copy from the mail server stands. */
 export type StoreSync = {
@@ -60,6 +62,34 @@ export type StoreRaw = {
   attachments: StoreAttachment[]
 }
 
+/** A message that arrived for the mailbox (mailbox/receive.ts), with what the store keeps of it. */
+export type StoreDelivery = {
+  /** The new message's id (a ULID, ./inbound.ts), also in its raw copy's key. */
+  id: string
+  sesId: string
+  messageId: string | null
+  inReplyTo: string | null
+  /** The References header's Message-IDs, oldest first. */
+  references: string[]
+  subject: string
+  from: StoreAddress[]
+  to: StoreAddress[]
+  cc: StoreAddress[]
+  /** The mailbox's own addresses, left out when matching a conversation by subject. */
+  own: string[]
+  preview: string
+  /** Readable text for the word index, footer removed. */
+  text: string
+  receivedAt: string
+  size: number
+  hasAttachment: boolean
+  rawKey: string
+  attachments: Omit<StoreAttachment, 'fileId' | 'verified'>[]
+  /** SES's spam verdict failed: delivered to Junk. */
+  junk: boolean
+  verdicts: Record<string, string>
+}
+
 /** A message of a conversation, as `thread` gives it. */
 export type StoreThreadMessage = StoreListRow & {
   rawKey: string | null
@@ -88,6 +118,9 @@ export type RawStats = {
   /** A few message ids that differ, to look at. */
   diffSample: string[]
 }
+
+/** How far back a message with the same subject and people joins its conversation, without a reply header. */
+const THREAD_BY_SUBJECT_SECONDS = 30 * 24 * 3600
 
 /** How long a message handed out for copying is left alone before it is handed out again. */
 const RAW_RETRY_SECONDS = 6 * 3600
@@ -127,6 +160,22 @@ export class MailboxStore extends Agent<Env> {
       }
     }
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_no_raw ON messages (n) WHERE raw_key IS NULL`)
+    // Mail the store holds itself (phase 2): threading headers, SES's id and verdicts, and IMAP-style numbering.
+    const addColumns = (table: string, columns: string[]) => {
+      for (const column of columns) {
+        try {
+          sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`)
+        } catch {
+          // already added
+        }
+      }
+    }
+    addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER'])
+    addColumns('placements', ['uid INTEGER'])
+    addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
+    sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
+    sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_ses_id ON messages (ses_id) WHERE ses_id IS NOT NULL`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS messages_subject_key ON messages (subject_key, received_s) WHERE subject_key IS NOT NULL`)
     sql.exec(`CREATE TABLE IF NOT EXISTS attachments (
       n INTEGER NOT NULL, seq INTEGER NOT NULL, file_id TEXT, name TEXT, type TEXT NOT NULL, size INTEGER NOT NULL,
       start INTEGER NOT NULL, length INTEGER NOT NULL, encoding TEXT NOT NULL, verified INTEGER,
@@ -171,6 +220,8 @@ export class MailboxStore extends Agent<Env> {
 
   /** Empties the store, to copy the mailbox again from the start (the mail server's change state expired). */
   reset() {
+    // A store that holds the mail itself is the only copy of its folders and flags: never emptied by the shadow copy.
+    if (this.meta('owner') === 'store') throw new Error('This store holds its own mail and is not reset')
     this.ctx.storage.transactionSync(() => {
       for (const table of ['messages', 'placements', 'attachments', 'headers_fts', 'text_fts', 'folders', 'meta']) this.db.exec(`DELETE FROM ${table}`)
     })
@@ -432,6 +483,133 @@ export class MailboxStore extends Agent<Env> {
       for (const r of rows) out.push({ id: r.id as string, from: JSON.parse(r.from_json as string) as StoreAddress[], receivedAt: fromSeconds(r.received_s as number) })
     }
     return out
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Mail the store holds itself (docs/mailbox-store-plan.md, phase 2): delivered by mailbox/receive.ts, not copied.
+
+  /** The message delivered with SES's id `sesId`, if there is one: a retried delivery finds it and stops. */
+  findBySes(sesId: string): { id: string; threadId: string } | null {
+    const row = [...this.db.exec(`SELECT id, thread_id FROM messages WHERE ses_id = ?`, sesId)][0] as { id: string; thread_id: string } | undefined
+    return row ? { id: row.id, threadId: row.thread_id } : null
+  }
+
+  /**
+   * Makes this store the holder of its mailbox's mail, with its own six folders, the first time. Refuses a store that
+   * holds a shadow copy of Stalwart: moving copied mail over is phase 4.
+   */
+  private ensureOwned(): Map<string, string> {
+    if (this.meta('owner') !== 'store') {
+      const copied = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages`)][0]!.c as number
+      if (copied || this.meta('state')) throw new Error('This store holds a copy of Stalwart mail; it cannot take delivered mail')
+      this.db.exec(`DELETE FROM folders`)
+      const names: [StoreFolderRole, string][] = [['inbox', 'Inbox'], ['sent', 'Sent'], ['drafts', 'Drafts'], ['archive', 'Archive'], ['junk', 'Junk'], ['trash', 'Trash']]
+      for (const [role, name] of names) {
+        const validity = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff || 1
+        this.db.exec(`INSERT INTO folders (id, role, name, uid_validity, uid_next, highest_modseq) VALUES (?, ?, ?, ?, 1, 0)`, ulid(), role, name, validity)
+      }
+      this.setMeta('owner', 'store')
+      this.setMeta('modseq', '0')
+    }
+    const byRole = new Map<string, string>()
+    for (const f of this.db.exec(`SELECT id, role FROM folders WHERE role IS NOT NULL`)) byRole.set(f.role as string, f.id as string)
+    return byRole
+  }
+
+  /** The next value of the mailbox-wide change counter: every change gets one, so syncing can ask "what changed since". */
+  private nextModseq(): number {
+    const next = Number(this.meta('modseq') ?? '0') + 1
+    this.setMeta('modseq', String(next))
+    return next
+  }
+
+  /**
+   * Stores a message that arrived for this mailbox, in one transaction: its folder (Inbox, or Junk), its thread, its
+   * IMAP numbering and its search rows. Delivering the same SES message again changes nothing and returns the first.
+   */
+  deliver(d: StoreDelivery): { id: string; threadId: string; folder: StoreFolderRole; duplicate: boolean } {
+    return this.ctx.storage.transactionSync(() => {
+      const existing = this.findBySes(d.sesId)
+      if (existing) return { ...existing, folder: d.junk ? 'junk' : 'inbox', duplicate: true }
+      const folders = this.ensureOwned()
+      const role: StoreFolderRole = d.junk ? 'junk' : 'inbox'
+      const folderId = folders.get(role)!
+      const threadId = this.threadFor(d) ?? ulid()
+      this.upsertOne({
+        id: d.id,
+        threadId,
+        folderIds: [folderId],
+        folder: role,
+        seen: false,
+        pinned: false,
+        from: d.from,
+        to: d.to,
+        subject: d.subject,
+        preview: d.preview,
+        receivedAt: d.receivedAt,
+        size: d.size,
+        hasAttachment: d.hasAttachment,
+        text: d.text,
+      })
+      const n = [...this.db.exec(`SELECT n FROM messages WHERE id = ?`, d.id)][0]!.n as number
+      const modseq = this.nextModseq()
+      this.db.exec(
+        `UPDATE messages SET message_id = ?, in_reply_to = ?, refs = ?, subject_key = ?, ses_id = ?, verdicts = ?, modseq = ?,
+          raw_key = ?, raw_size = ?, parse_diff = '' WHERE n = ?`,
+        d.messageId, d.inReplyTo, d.references.join(' ') || null, subjectKey(d.subject), d.sesId, JSON.stringify(d.verdicts), modseq,
+        d.rawKey, d.size, n,
+      )
+      const folder = [...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, folderId)][0] as { uid_next: number }
+      this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, folder.uid_next, folderId, n)
+      this.db.exec(`UPDATE folders SET uid_next = uid_next + 1, highest_modseq = ? WHERE id = ?`, modseq, folderId)
+      d.attachments.forEach((a, seq) => {
+        this.db.exec(
+          `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding,
+        )
+      })
+      return { id: d.id, threadId, folder: role, duplicate: false }
+    })
+  }
+
+  /**
+   * The conversation a new message belongs to: the newest message it replies to (In-Reply-To, then References from
+   * the latest back), else a recent message with the same subject that shares someone besides the mailbox itself.
+   */
+  private threadFor(d: StoreDelivery): string | null {
+    const replyTo = [...(d.inReplyTo ? [d.inReplyTo] : []), ...[...d.references].reverse()]
+    for (const id of replyTo) {
+      const row = [...this.db.exec(`SELECT thread_id FROM messages WHERE message_id = ? ORDER BY n DESC LIMIT 1`, id)][0]
+      if (row) return row.thread_id as string
+    }
+    const key = subjectKey(d.subject)
+    if (!key) return null
+    const own = new Set(d.own.map((a) => a.toLowerCase()))
+    const people = new Set([...d.from, ...d.to, ...d.cc].map((a) => a.email.toLowerCase()).filter((a) => !own.has(a)))
+    if (!people.size) return null
+    const since = Math.floor(Date.parse(d.receivedAt) / 1000) - THREAD_BY_SUBJECT_SECONDS
+    const candidates = this.db.exec(
+      `SELECT thread_id, from_addr, to_json FROM messages WHERE subject_key = ? AND received_s >= ? ORDER BY received_s DESC LIMIT 20`,
+      key, since,
+    )
+    for (const c of candidates) {
+      const theirs = [c.from_addr as string, ...(JSON.parse(c.to_json as string) as StoreAddress[]).map((a) => a.email.toLowerCase())]
+      if (theirs.some((a) => people.has(a))) return c.thread_id as string
+    }
+    return null
+  }
+
+  /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */
+  folderList(): { id: string; role: string | null; name: string; total: number; unread: number }[] {
+    return [...this.db.exec(
+      `SELECT f.id, f.role, f.name, COUNT(p.n) AS total, COALESCE(SUM(p.seen = 0), 0) AS unread
+        FROM folders f LEFT JOIN placements p ON p.folder_id = f.id GROUP BY f.id ORDER BY f.rowid`,
+    )] as unknown as { id: string; role: string | null; name: string; total: number; unread: number }[]
+  }
+
+  /** A token that changes whenever the mailbox's mail changes: the apps poll it and reload when it differs. */
+  changeState(): string {
+    return this.meta('modseq') ?? '0'
   }
 
   /** Messages and unread messages per folder, to compare with the mail server's own counts. */

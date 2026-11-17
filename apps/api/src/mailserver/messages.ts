@@ -12,7 +12,7 @@ import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
 import { readableText } from '../mailbox/compare'
-import { parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
+import { answeredByStore, heldByStore, parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
 import { store } from '../mailbox/stub'
 import type { StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
@@ -81,12 +81,20 @@ export async function listFolders(
   mailboxId?: string,
 ): Promise<MailboxFolders[]> {
   const mailboxes = await mailboxesFor(env, actor, organizationId, mailboxId)
-  const folders = await jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id))
+  // Mailboxes whose mail the store holds keep their own folders; the rest are on Stalwart.
+  const onServer = mailboxes.filter((m) => !heldByStore(m))
+  const [folders, held] = await Promise.all([
+    jmap.getFolders(env, onServer.map((m) => m.stalwart_id)),
+    Promise.all(mailboxes.filter(heldByStore).map(async (m) => [m.id, await (await store(env, m.id)).folderList()] as const)),
+  ])
+  const heldFolders = new Map(held)
   return mailboxes.map((m) => ({
     mailboxId: m.id,
     address: m.address,
     kind: m.kind,
-    folders: (folders.get(m.stalwart_id) ?? []).map(toFolder),
+    folders: heldByStore(m)
+      ? (heldFolders.get(m.id) ?? []).map((f) => toFolder({ ...f, unreadEmails: f.unread, totalEmails: f.total }))
+      : (folders.get(m.stalwart_id) ?? []).map(toFolder),
   }))
 }
 
@@ -150,8 +158,8 @@ export async function listMessages(
 ): Promise<{ messages: (MessageSummary | CompactSummary)[]; nextCursor: string | null }> {
   const readable = await mailboxesFor(env, actor, organizationId, input.mailboxId)
   // Mailboxes whose lists are answered by their own store (mailbox/store.ts); the rest ask Stalwart.
-  const stored = readable.filter((m) => m.store_mode === 'read')
-  const mailboxes = readable.filter((m) => m.store_mode !== 'read')
+  const stored = readable.filter(answeredByStore)
+  const mailboxes = readable.filter((m) => !answeredByStore(m))
   const text = (v: string | undefined) => v?.trim() || undefined
   const [folders, fromStores] = await Promise.all([
     jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id)),
@@ -268,6 +276,8 @@ export async function getThread(env: EmailEnv, actor: Actor, mailboxId: string, 
     const fromStoreCopy = await storeThread(env, mailbox, threadId, (row) => fromStore(row, mailbox.id))
     if (fromStoreCopy) return fromStoreCopy
   }
+  // The store holds this mailbox's mail: there is no copy on Stalwart to fall back to.
+  if (heldByStore(mailbox)) return []
   const [emails, folders] = await Promise.all([
     jmap.getThread(env, mailbox.stalwart_id, threadId),
     jmap.getFolders(env, [mailbox.stalwart_id]),
@@ -292,6 +302,9 @@ export async function updateMessage(
   input: UpdateMessageInput,
 ): Promise<void> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  if (heldByStore(mailbox)) {
+    throw new EmailError('not_available', 'Marking, pinning and moving mail in this mailbox is not available yet', 409)
+  }
   let folderId: string | undefined
   if (input.folder) {
     const folders = (await jmap.getFolders(env, [mailbox.stalwart_id])).get(mailbox.stalwart_id) ?? []
@@ -314,8 +327,12 @@ export async function updateMessage(
  */
 export async function getMailState(env: EmailEnv, actor: Actor, organizationId: string): Promise<string> {
   const mailboxes = await readableMailboxes(env, actor, organizationId)
-  const states = await jmap.getEmailStates(env, mailboxes.map((m) => m.stalwart_id))
-  return mailboxes.map((m) => `${m.id}:${states.get(m.stalwart_id) ?? ''}`).join(',')
+  const [states, held] = await Promise.all([
+    jmap.getEmailStates(env, mailboxes.filter((m) => !heldByStore(m)).map((m) => m.stalwart_id)),
+    Promise.all(mailboxes.filter(heldByStore).map(async (m) => [m.id, await (await store(env, m.id)).changeState()] as const)),
+  ])
+  const heldStates = new Map(held)
+  return mailboxes.map((m) => `${m.id}:${heldByStore(m) ? `s${heldStates.get(m.id) ?? ''}` : (states.get(m.stalwart_id) ?? '')}`).join(',')
 }
 
 /** An attachment's bytes, as a download. */

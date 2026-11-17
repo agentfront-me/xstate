@@ -22,8 +22,14 @@ const BIG_BYTES = 5 * 1024 * 1024
 /** Raw copies read at once for one conversation. */
 const PARALLEL = 4
 
+/** Whether the store holds the mailbox's mail itself (phase 2): then there is nothing on Stalwart to fall back to. */
+export const heldByStore = (mailbox: Pick<MailboxRow, 'backend'>) => mailbox.backend === 'store'
+
+/** Whether lists and searches of a mailbox are answered by its store: it holds the mail, or reads its shadow copy. */
+export const answeredByStore = (mailbox: Pick<MailboxRow, 'backend' | 'store_mode'>) => heldByStore(mailbox) || mailbox.store_mode === 'read'
+
 /** Whether a mailbox's mail is read from its store. */
-export const readsFromStore = (env: EmailEnv, mailbox: MailboxRow) => mailbox.store_mode === 'read' && storageConfigured(env)
+export const readsFromStore = (env: EmailEnv, mailbox: MailboxRow) => answeredByStore(mailbox) && storageConfigured(env)
 
 /**
  * An attachment's id when its message is read from the store: the message and where the part starts in its raw
