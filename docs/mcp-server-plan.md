@@ -332,15 +332,20 @@ Not touched, but untrue on the marketing page today: `/openapi.json`, `/index.js
 ### 5. Later
 
 - **Mobile** Settings → Connected apps.
-- Mail search across all folders at once (today `email_list_messages` searches one folder).
+- **Done 2026-11-17:** mail search across all folders (`folder: all`), header and date filters (`from`, `to`,
+  `subject`, `after`, `before`, `hasAttachment`) and a `compact` mode on `email_list_messages`; `email_search`
+  (scope `mail.read`) searches mail bodies and attachments by meaning with sender and date filters checked on the
+  nearest passages (Vectorize has no index for them); sender footers stripped from previews and email passages.
+  Found while totalling a mailbox's invoices: keyword search missed a changed email template, and with no sender
+  filter the job took about 110k tokens.
 - **Done 2026-11-16:** `storage_read_attachment_text` (`GET /v1/storage/attachments/:fileId/text`, scope
   `mail.read`) reads a mail attachment's whole text, PDFs through the same extraction as search and
   `storage_read_text`, with the same access check as downloading it. `storage_search` takes `fileId` to ask one
   file only (Vectorize filter on the `doc` metadata index, no 3-passages-per-file cap; the usual permission check
   still runs). Found while summarising a contract over MCP: a dozen near-identical PDFs outranked it, and nothing
   could read an attachment whole. Tried locally with a test PDF and Markdown file sent between two mailboxes.
-- `storage_search` needs `storage.read`, though it also searches mail: a connection with Storage off can't search
-  mail at all. Worth splitting by what the grant allows.
+- `storage_search` needs `storage.read`, though it also searches mail. **Addressed 2026-11-17:** `email_search`
+  searches mail with `mail.read` only.
 - Read-only agent run history on MCP.
 - Personal access tokens or the organization secret key for headless clients.
 - Listing in the Claude and ChatGPT connector directories.

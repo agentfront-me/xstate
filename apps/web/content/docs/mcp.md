@@ -134,7 +134,8 @@ Read only, Draft only or Draft and send.
 | `email_list_mailboxes` | read only | List the mailboxes in the organization that you can see, optionally only one domain or kind. |
 | `email_get_mailbox` | read only | Get one mailbox: its address, aliases, kind, display name and quota. |
 | `email_list_folders` | read only | List the folders (Inbox, Sent, Drafts, Archive, Junk, Trash and custom ones) with unread and total counts, for one mailbox or every mailbox in the organization whose mail you can read. |
-| `email_list_messages` | read only | List the newest conversations in a folder, newest first, one row per conversation (its newest message there, with threadSize): one mailbox, or every mailbox you can read when mailboxId is omitted. |
+| `email_list_messages` | read only | List conversations, newest first, one row per conversation (its newest matching message, with threadSize): one mailbox, or every mailbox you can read when mailboxId is omitted. |
+| `email_search` | read only | Find mail by meaning: the passages of messages and their attachments (PDF, text, CSV, Markdown, JSON; any language) that best answer a question, across every mailbox you can read, or one with mailboxId. |
 | `email_get_thread` | read only | Get every message in a conversation, oldest first, with plain-text and HTML bodies and attachment details (blobId, name, type, size). |
 | `email_update_message` | draft only | Change one message: mark it read or unread (seen), pin or unpin it (pinned, shown as flagged in mail apps), or move it to a folder (inbox, archive, junk, trash). |
 | `email_send` | draft and send | Send a message from a mailbox's address. |

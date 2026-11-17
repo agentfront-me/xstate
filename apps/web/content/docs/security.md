@@ -171,6 +171,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 17, 2026:** Searching mail by meaning (`email_search`) needs only read access to email, not to
+  Storage, and covers only the mailboxes an app or agent was given.
 - **November 16, 2026:** Personal API tokens for sending email from your own server, stored only as hashes.
 - **November 16, 2026:** AI apps can be connected over MCP, with access you choose when you approve them.
 - **November 16, 2026:** An agent's search of files and mail now covers only the mailboxes it was given, not every

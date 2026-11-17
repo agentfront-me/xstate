@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { canRemove, chainRoles, childRole, hiddenAbove, inTrash, roleOn, searchScopes, TOPS_PER_FILTER, type ChainNode } from './roles.ts'
+import { canRemove, chainRoles, childRole, hiddenAbove, inTrash, mailScopes, roleOn, searchScopes, TOPS_PER_FILTER, type ChainNode } from './roles.ts'
 
 const node = (patch: Partial<ChainNode> = {}): ChainNode => ({
   space: 'organization',
@@ -120,5 +120,20 @@ describe('searchScopes', () => {
   it('lists a top once however many items under it are shared', () => {
     const filters = searchScopes(me, [tops[0]!, tops[0]!], [])
     assert.deepEqual(filters[1], { top: { $in: ['team'] } })
+  })
+})
+
+describe('mailScopes', () => {
+  it('covers only the mailboxes, in filters of TOPS_PER_FILTER', () => {
+    assert.deepEqual(mailScopes(['a', 'b']), [{ top: { $in: ['mb:a', 'mb:b'] } }])
+    const many = Array.from({ length: TOPS_PER_FILTER + 1 }, (_, i) => `m${i}`)
+    const filters = mailScopes(many)
+    assert.equal(filters.length, 2)
+    assert.equal(filters[1]!.top!.$in.length, 1)
+    assert.ok(filters.every((f) => !f.space))
+  })
+
+  it('is empty without mailboxes', () => {
+    assert.deepEqual(mailScopes([]), [])
   })
 })

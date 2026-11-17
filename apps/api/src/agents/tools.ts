@@ -10,7 +10,7 @@ import type { Actor } from '../auth/types'
 import { audienceGetPerson, audienceListPeople } from '../operations/audience'
 import { calendarCreateEvent, calendarListEvents } from '../operations/calendar'
 import type { AnyOperation } from '../operations/define'
-import { emailCreateDraft, emailGetThread, emailListMessages, emailSend, emailUpdateMessage } from '../operations/email'
+import { emailCreateDraft, emailGetThread, emailListMessages, emailSearch, emailSend, emailUpdateMessage } from '../operations/email'
 import { membersList } from '../operations/members'
 import { toolInputSchema } from '../operations/schema.ts'
 import { storageSearch } from '../operations/storage'
@@ -26,6 +26,7 @@ const write = (op: unknown, label: string, group: Group, approval: 'always' | 'n
 
 const BUILTIN: Builtin[] = [
   read(emailListMessages, 'List emails', 'Email'),
+  read(emailSearch, 'Search emails by meaning', 'Email'),
   read(emailGetThread, 'Read an email thread', 'Email'),
   write(emailCreateDraft, 'Create a draft', 'Email', 'never'),
   write(emailSend, 'Send, reply or forward', 'Email', 'always'),

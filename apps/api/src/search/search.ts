@@ -14,13 +14,29 @@ import type { ItemView } from '../db/storage'
 import { ApiError } from '../errors'
 import type { Actor, EmailEnv } from '../mailserver/types'
 import { isAdmin, readableMailboxes } from '../mailserver/access'
-import { atLeast, hiddenAbove, inTrash, roleOn, searchScopes, type Reader, type SearchFilter } from '../storage/roles'
+import { stripFooter } from '../mailserver/footer'
+import * as jmap from '../mailserver/stalwart/mail'
+import type { MailboxRow } from '../db/mailboxes'
+import { atLeast, hiddenAbove, inTrash, mailScopes, roleOn, searchScopes, type Reader, type SearchFilter } from '../storage/roles'
+import { hasMailFilter, matchesMail, type MailFilter } from './mail-filter'
 import { embed, query, TOP_K, type Hit, type VectorEnv } from './vectors'
 
 export type SearchEnv = EmailEnv & VectorEnv & Pick<Env, 'SEARCH_RATE'>
 
 /** fileId asks one document only (a Storage file's current version or a mail attachment), any number of passages. */
-export type SearchInput = { organizationId: string; q: string; folderId?: string; fileId?: string; limit: number }
+export type SearchInput = {
+  organizationId: string
+  q: string
+  folderId?: string
+  fileId?: string
+  limit: number
+  /** Mail only (bodies and attachments), for email_search; Storage files are left out. */
+  mailOnly?: boolean
+  /** One mailbox's mail only. */
+  mailboxId?: string
+  /** Sender and date filters, checked on mail results (Storage files never pass them). */
+  mail?: MailFilter
+}
 
 export type SearchResult = {
   /** A Storage file ("storage"), a mail attachment ("mail") or a message's body ("email"). */
@@ -44,7 +60,10 @@ export type SearchResult = {
   /** Mail attachments and emails: the mailbox, and the message (an attachment's is the one it came with). */
   mailbox?: { id: string; address: string }
   threadId?: string | null
-  /** Emails: who sent it, when it arrived, and the folder it is in (inbox, sent, drafts, archive, junk or trash). */
+  /**
+   * Emails: who sent it, when it arrived, and the folder it is in (inbox, sent, drafts, archive, junk or trash).
+   * Attachments found by email_search: the sender and arrival time of the message they came with.
+   */
   from?: string
   receivedAt?: string
   folder?: string | null
@@ -68,12 +87,18 @@ export async function search(env: SearchEnv, actor: Actor, input: SearchInput): 
     readableMailboxes(env, actor, input.organizationId),
     input.folderId ? folderScope(env, actor, input.folderId, input.organizationId) : null,
   ])
-  const mailboxById = new Map(mailboxes.map((m) => [m.id, m]))
+  const inScope = input.mailboxId ? mailboxes.filter((m) => m.id === input.mailboxId) : mailboxes
+  if (input.mailboxId && !inScope.length) throw new ApiError('mailbox_not_found', 'Mailbox not found', 404)
+  const mailboxById = new Map(inScope.map((m) => [m.id, m]))
+  if (input.mailOnly && !mailboxById.size) return { results: [] }
 
   // Inside one folder, its top-level ancestor is the only scope; the path check below keeps hits to the folder.
   const filters: SearchFilter[] = folder
     ? [{ top: { $in: [folder.top] } }]
-    : searchScopes(reader, await storageDb.accessTops(env.DB, input.organizationId, member.id), [...mailboxById.keys()])
+    : input.mailOnly
+      ? mailScopes([...mailboxById.keys()])
+      : searchScopes(reader, await storageDb.accessTops(env.DB, input.organizationId, member.id), [...mailboxById.keys()])
+  const options = { folderId: folder?.id, mail: hasMailFilter(input.mail) ? input.mail : undefined, mailOnly: !!input.mailOnly }
 
   const [vector] = await embed(env, [input.q])
   if (!vector) throw new Error('search: no embedding')
@@ -82,7 +107,7 @@ export async function search(env: SearchEnv, actor: Actor, input: SearchInput): 
   // open it, so this can't reach a file the scopes above would have left out.
   if (input.fileId) {
     const doc = fileDoc(input.fileId)
-    const check = new Checker(env, actor, reader, mailboxById, undefined)
+    const check = new Checker(env, actor, reader, mailboxById, { ...options, folderId: undefined })
     const hits = await query(env, input.organizationId, vector, { doc } as unknown as SearchFilter)
     const results = await check.keep(merge(hits, input.limit))
     // Same answer for a file that doesn't exist and one the actor can't open.
@@ -92,22 +117,35 @@ export async function search(env: SearchEnv, actor: Actor, input: SearchInput): 
 
   const run = (filter: SearchFilter) => query(env, input.organizationId, vector, filter)
   const first = await inBatches(filters, run)
-  const check = new Checker(env, actor, reader, mailboxById, folder?.id)
+  const check = new Checker(env, actor, reader, mailboxById, options)
   const results = await check.keep(merge(first.flat()))
 
-  // Vectorize has no paging: when hits were dropped and a query was full, ask once more without those documents.
-  if (results.length < input.limit && check.failed.size) {
-    const full = filters.filter((_, i) => first[i]!.length === TOP_K)
-    if (full.length) {
-      const nin = [...check.failed].slice(0, NIN_MAX)
-      const again = await inBatches(full, (f) => run({ ...f, doc: { $nin: nin } } as SearchFilter))
-      const seen = new Set(results.map((r) => r.id))
-      const more = await check.keep(merge(again.flat()).filter((h) => !seen.has(h.id)))
-      results.push(...more)
-      results.sort((a, b) => b.score - a.score)
-    }
+  // Vectorize has no paging: when hits were dropped and a query was full, ask again without those documents. With
+  // sender or date filters most of the nearest documents can fail them, so it asks up to three times.
+  const rounds = options.mail ? 3 : 1
+  const seen = new Set(results.map((r) => r.id))
+  let full = filters.filter((_, i) => first[i]!.length === TOP_K)
+  for (let round = 0; round < rounds && results.length < input.limit && check.failed.size && full.length; round++) {
+    const nin = [...check.failed].slice(0, NIN_MAX)
+    const again = await inBatches(full, (f) => run({ ...f, doc: { $nin: nin } } as SearchFilter))
+    const more = await check.keep(merge(again.flat()).filter((h) => !seen.has(h.id)))
+    for (const r of more) seen.add(r.id)
+    results.push(...more)
+    full = full.filter((_, i) => again[i]!.length === TOP_K)
   }
-  return { results: results.slice(0, input.limit) }
+  results.sort((a, b) => b.score - a.score)
+  return { results: perDocument(results).slice(0, input.limit) }
+}
+
+/** At most PER_DOC passages per document, across every round of asking. */
+function perDocument(results: SearchResult[]): SearchResult[] {
+  const count = new Map<string, number>()
+  return results.filter((r) => {
+    const doc = r.id.slice(0, r.id.lastIndexOf(':'))
+    const n = (count.get(doc) ?? 0) + 1
+    count.set(doc, n)
+    return n <= PER_DOC
+  })
 }
 
 /** A folder the actor may view, and its top-level ancestor. */
@@ -151,8 +189,8 @@ class Checker {
     private env: SearchEnv,
     private actor: Actor,
     private reader: Reader,
-    private mailboxes: Map<string, { id: string; address: string }>,
-    private folderId: string | undefined,
+    private mailboxes: Map<string, Pick<MailboxRow, 'id' | 'address' | 'stalwart_id'>>,
+    private options: { folderId: string | undefined; mail: MailFilter | undefined; mailOnly: boolean },
   ) {}
 
   async keep(hits: Hit[]): Promise<SearchResult[]> {
@@ -163,7 +201,7 @@ class Checker {
     const itemIds = [...files.values()].filter((f) => f.item_id).map((f) => f.item_id!)
     const chains = await storageDb.chains(this.env.DB, itemIds, this.actor.userId)
 
-    const out: SearchResult[] = []
+    const kept: { doc: string; result: SearchResult }[] = []
     for (const { hit, doc } of docs) {
       let result: SearchResult | null = null
       if (doc?.kind === 'file') {
@@ -172,10 +210,44 @@ class Checker {
       } else if (doc?.kind === 'email') {
         result = this.emailResult(hit, doc, emails.get(hit.metadata.doc))
       }
-      if (result) out.push(result)
+      if (result && this.options.mailOnly && result.where === 'storage') result = null
+      if (result) kept.push({ doc: hit.metadata.doc, result })
       else this.failed.add(hit.metadata.doc)
     }
-    return out
+    if (this.options.mailOnly || this.options.mail) await this.addSenders(kept.map((k) => k.result))
+    const filter = this.options.mail
+    if (!filter) return kept.map((k) => k.result)
+    return kept.flatMap(({ doc, result }) => {
+      if (result.where !== 'storage' && matchesMail(filter, result.from, result.receivedAt)) return [result]
+      this.failed.add(doc)
+      return []
+    })
+  }
+
+  /** Who sent the message an attachment came with, and when it arrived: one Email/get per mailbox. */
+  private async addSenders(results: SearchResult[]): Promise<void> {
+    const attachments = results.filter((r) => r.where === 'mail' && r.mailbox && r.emailId)
+    if (!attachments.length) return
+    const byMailbox = new Map<string, Set<string>>()
+    for (const r of attachments) {
+      const ids = byMailbox.get(r.mailbox!.id) ?? new Set()
+      ids.add(r.emailId!)
+      byMailbox.set(r.mailbox!.id, ids)
+    }
+    const accounts = [...byMailbox].flatMap(([mailboxId, ids]) => {
+      const mailbox = this.mailboxes.get(mailboxId)
+      return mailbox ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
+    })
+    const heads = await jmap.getEmailHeads(this.env, accounts)
+    const byEmail = new Map(
+      accounts.flatMap(({ mailboxId, accountId }) => (heads.get(accountId) ?? []).map((h) => [`${mailboxId}:${h.id}`, h] as const)),
+    )
+    for (const r of attachments) {
+      const head = byEmail.get(`${r.mailbox!.id}:${r.emailId}`)
+      if (!head) continue
+      r.from = head.from?.[0]?.email
+      r.receivedAt = head.receivedAt
+    }
   }
 
   private base(hit: Hit) {
@@ -189,6 +261,7 @@ class Checker {
     return {
       where: 'email',
       ...this.base(hit),
+      passage: stripFooter(hit.metadata.text),
       emailId: doc.emailId,
       name: hit.metadata.title ?? '',
       threadId: hit.metadata.thread ?? null,
@@ -206,7 +279,7 @@ class Checker {
       const item = chain?.[0]
       if (!item || item.file_id !== file.id || inTrash(chain!)) return null
       if (!atLeast(roleOn(chain!, this.reader), 'viewer')) return null
-      if (this.folderId && !chain!.some((n) => n.id === this.folderId && n.depth > 0)) return null
+      if (this.options.folderId && !chain!.some((n) => n.id === this.options.folderId && n.depth > 0)) return null
       const visible = chain!.slice(1, chain!.length - hiddenAbove(chain!, this.reader)).reverse()
       return {
         where: 'storage',

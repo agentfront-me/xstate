@@ -9,6 +9,7 @@ import { checkName, inspectStream, type Safety } from '../security/attachments'
 import { refuseVirus } from '../security/refuse'
 import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
+import { previewText } from './footer'
 import { EmailError } from './errors'
 import { reserveSend } from './sending'
 import * as jmap from './stalwart/mail'
@@ -100,13 +101,34 @@ function toFolder(f: JmapFolder): Folder {
 export type ListMessagesInput = {
   /** One mailbox, or omit to merge every mailbox the actor can read ("All inboxes"). */
   mailboxId?: string
-  folder: FolderView
+  /** A folder, or 'all': every folder but junk and trash. */
+  folder: FolderView | 'all'
   unreadOnly?: boolean
   query?: string
+  /** Header filters: the From, To or Subject header contains this text (an address, a domain or a name). */
+  from?: string
+  to?: string
+  subject?: string
+  /** Received at or after `after`, and strictly before `before`. */
+  after?: string
+  before?: string
+  hasAttachment?: boolean
+  /** Fewer fields and a shorter preview, for agents reading many rows. */
+  compact?: boolean
   /** `nextCursor` from the previous page. */
   cursor?: string
   limit: number
 }
+
+/** A row of a compact list: what's needed to pick a message and open it with email_get_thread. */
+export type CompactSummary = Pick<
+  MessageSummary,
+  'id' | 'mailboxId' | 'threadId' | 'folder' | 'subject' | 'preview' | 'receivedAt' | 'hasAttachment' | 'threadSize'
+> & { from: string }
+
+/** Preview lengths: Stalwart's own previews are 256 characters. */
+const PREVIEW_MAX = 256
+const COMPACT_PREVIEW_MAX = 140
 
 /**
  * The newest conversations in a folder across one or all readable mailboxes, one row per conversation: its newest
@@ -120,16 +142,28 @@ export async function listMessages(
   actor: Actor,
   organizationId: string,
   input: ListMessagesInput,
-): Promise<{ messages: MessageSummary[]; nextCursor: string | null }> {
+): Promise<{ messages: (MessageSummary | CompactSummary)[]; nextCursor: string | null }> {
   const mailboxes = await mailboxesFor(env, actor, organizationId, input.mailboxId)
   const folders = await jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id))
+  const text = (v: string | undefined) => v?.trim() || undefined
 
   const queries = mailboxes.flatMap((m): { accountId: string; query: jmap.EmailQuery }[] => {
     const list = folders.get(m.stalwart_id) ?? []
     const byRole = (role: FolderRole) => list.filter((f) => f.role === role).map((f) => f.id)
-    const base = { unreadOnly: input.unreadOnly, text: input.query?.trim() || undefined, before: input.cursor, limit: input.limit }
-    if (input.folder === 'pinned') {
-      return [{ accountId: m.stalwart_id, query: { ...base, pinnedOnly: true, notInFolders: [...byRole('junk'), ...byRole('trash')] } }]
+    const base: jmap.EmailQuery = {
+      unreadOnly: input.unreadOnly,
+      text: text(input.query),
+      from: text(input.from),
+      to: text(input.to),
+      subject: text(input.subject),
+      after: input.after,
+      before: earliest(input.cursor, input.before),
+      hasAttachment: input.hasAttachment,
+      limit: input.limit,
+    }
+    if (input.folder === 'pinned' || input.folder === 'all') {
+      const notInFolders = [...byRole('junk'), ...byRole('trash')]
+      return [{ accountId: m.stalwart_id, query: { ...base, pinnedOnly: input.folder === 'pinned', notInFolders } }]
     }
     const inFolders = byRole(input.folder)
     // A mailbox without that folder (a shared mailbox may have no Drafts) has nothing to show.
@@ -143,7 +177,30 @@ export async function listMessages(
   all.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
   const page = all.slice(0, input.limit)
   const more = all.length > input.limit || [...found.values()].some((list) => list.length === input.limit)
-  return { messages: page, nextCursor: more && page.length ? page[page.length - 1]!.receivedAt : null }
+  const nextCursor = more && page.length ? page[page.length - 1]!.receivedAt : null
+  return { messages: input.compact ? page.map(compactSummary) : page, nextCursor }
+}
+
+/** The earlier of two times, either of which may be missing. */
+function earliest(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a || !b) return a ?? b
+  return Date.parse(a) <= Date.parse(b) ? a : b
+}
+
+function compactSummary(m: MessageSummary): CompactSummary {
+  const sender = m.from[0]
+  return {
+    id: m.id,
+    mailboxId: m.mailboxId,
+    threadId: m.threadId,
+    folder: m.folder,
+    from: sender ? (sender.name ? `${sender.name} <${sender.email}>` : sender.email) : '',
+    subject: m.subject,
+    preview: previewText(m.preview, COMPACT_PREVIEW_MAX),
+    receivedAt: m.receivedAt,
+    hasAttachment: m.hasAttachment,
+    threadSize: m.threadSize,
+  }
 }
 
 /**
@@ -308,7 +365,7 @@ function toSummary(e: JmapEmailSummary, mailboxId: string, folders: JmapFolder[]
     from: addresses(e.from),
     to: addresses(e.to),
     subject: e.subject ?? '',
-    preview: e.preview,
+    preview: previewText(e.preview, PREVIEW_MAX),
     receivedAt: e.receivedAt,
     seen: !!e.keywords.$seen,
     pinned: !!e.keywords.$flagged,

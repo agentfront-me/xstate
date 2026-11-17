@@ -107,7 +107,16 @@ export function searchScopes(
   const ids = new Set<string>()
   for (const top of tops) if (!(reader.admin && top.space === 'organization')) ids.add(top.id)
   for (const id of mailboxIds) ids.add(`mb:${id}`)
-  const list = [...ids]
+  return [...filters, ...topFilters([...ids])]
+}
+
+/** The filters covering only the mail of these mailboxes (bodies and attachments), for mail search. */
+export function mailScopes(mailboxIds: string[]): SearchFilter[] {
+  return topFilters(mailboxIds.map((id) => `mb:${id}`))
+}
+
+function topFilters(list: string[]): SearchFilter[] {
+  const filters: SearchFilter[] = []
   for (let i = 0; i < list.length; i += TOPS_PER_FILTER) filters.push({ top: { $in: list.slice(i, i + TOPS_PER_FILTER) } })
   return filters
 }

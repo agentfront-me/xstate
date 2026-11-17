@@ -124,8 +124,15 @@ export type EmailQuery = {
   unreadOnly?: boolean
   pinnedOnly?: boolean
   text?: string
-  /** Only mail received strictly before this time, for paging. */
+  /** Only mail received strictly before this time (paging, or a date range's end). */
   before?: string
+  /** Only mail received at or after this time. */
+  after?: string
+  /** Only mail whose From, To or Subject header contains this text (an address, a domain or a name). */
+  from?: string
+  to?: string
+  subject?: string
+  hasAttachment?: boolean
   /** Only mail from, to or cc'ing this address. */
   participant?: string
   /** One result per conversation (the default), or every matching message. */
@@ -142,6 +149,11 @@ function emailFilter(q: EmailQuery): JmapArgs {
   if (q.pinnedOnly) conditions.push({ hasKeyword: '$flagged' })
   if (q.text) conditions.push({ text: q.text })
   if (q.before) conditions.push({ before: q.before })
+  if (q.after) conditions.push({ after: q.after })
+  if (q.from) conditions.push({ from: q.from })
+  if (q.to) conditions.push({ to: q.to })
+  if (q.subject) conditions.push({ subject: q.subject })
+  if (q.hasAttachment !== undefined) conditions.push({ hasAttachment: q.hasAttachment })
   if (q.participant) {
     conditions.push({ operator: 'OR', conditions: [{ from: q.participant }, { to: q.participant }, { cc: q.participant }] })
   }
@@ -345,6 +357,22 @@ export async function getEmailFolders(env: StalwartEnv, accountId: string, ids: 
   if (!ids.length) return []
   const [result] = await mail(env, [['Email/get', { accountId, ids, properties: ['id', 'mailboxIds'] }]])
   return (result!.list as { id: string; mailboxIds: Record<string, true> }[]) ?? []
+}
+
+/** Sender and arrival time of messages in several accounts, in as few requests as the call limit allows. */
+export async function getEmailHeads(
+  env: StalwartEnv,
+  byAccount: { accountId: string; ids: string[] }[],
+): Promise<Map<string, { id: string; from: JmapAddress[] | null; receivedAt: string }[]>> {
+  const wanted = byAccount.filter((a) => a.ids.length)
+  if (!wanted.length) return new Map()
+  const results = await perAccount(
+    env,
+    wanted.map(({ accountId, ids }) => () => [['Email/get', { accountId, ids, properties: ['id', 'from', 'receivedAt'] }]]),
+  )
+  return new Map(
+    wanted.map(({ accountId }, i) => [accountId, (results[i]![0]!.list as { id: string; from: JmapAddress[] | null; receivedAt: string }[]) ?? []]),
+  )
 }
 
 export type JmapAttachmentMessage = {

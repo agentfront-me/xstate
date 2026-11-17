@@ -12,6 +12,7 @@ import * as searchDb from '../db/search'
 import type { DocRow } from '../db/search'
 import * as mailboxesDb from '../db/mailboxes'
 import * as storageDb from '../db/storage'
+import { stripFooter } from '../mailserver/footer'
 import { folderRole, plainText } from '../mailserver/messages'
 import type { StalwartEnv } from '../mailserver/stalwart/client'
 import * as jmap from '../mailserver/stalwart/mail'
@@ -218,7 +219,8 @@ function emailText(m: JmapEmailText): string {
   const who = (list: { name: string | null; email: string }[] | null) =>
     (list ?? []).map((a) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(', ')
   const head = [`Subject: ${m.subject ?? ''}`, `From: ${who(m.from)}`, `To: ${who(m.to)}`, `Date: ${m.receivedAt}`]
-  return `${head.join('\n')}\n\n${plainText(m)}`.trim()
+  // The sender's footer goes: it adds nothing to a passage and makes every message from one sender look alike.
+  return `${head.join('\n')}\n\n${stripFooter(plainText(m))}`.trim()
 }
 
 /**
