@@ -16,6 +16,7 @@ import type { Actor, EmailEnv } from '../mailserver/types'
 import { isAdmin, readableMailboxes } from '../mailserver/access'
 import { stripFooter } from '../mailserver/footer'
 import * as jmap from '../mailserver/stalwart/mail'
+import { store } from '../mailbox/stub'
 import type { MailboxRow } from '../db/mailboxes'
 import { atLeast, hiddenAbove, inTrash, mailScopes, roleOn, searchScopes, type Reader, type SearchFilter } from '../storage/roles'
 import { hasMailFilter, matchesMail, type MailFilter } from './mail-filter'
@@ -189,7 +190,7 @@ class Checker {
     private env: SearchEnv,
     private actor: Actor,
     private reader: Reader,
-    private mailboxes: Map<string, Pick<MailboxRow, 'id' | 'address' | 'stalwart_id'>>,
+    private mailboxes: Map<string, Pick<MailboxRow, 'id' | 'address' | 'stalwart_id' | 'store_mode'>>,
     private options: { folderId: string | undefined; mail: MailFilter | undefined; mailOnly: boolean },
   ) {}
 
@@ -234,14 +235,20 @@ class Checker {
       ids.add(r.emailId!)
       byMailbox.set(r.mailbox!.id, ids)
     }
+    // Mailboxes read from their own store answer from it; the rest ask Stalwart.
+    const fromStore = [...byMailbox].filter(([mailboxId]) => this.mailboxes.get(mailboxId)?.store_mode === 'read')
     const accounts = [...byMailbox].flatMap(([mailboxId, ids]) => {
       const mailbox = this.mailboxes.get(mailboxId)
-      return mailbox ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
+      return mailbox && mailbox.store_mode !== 'read' ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
     })
-    const heads = await jmap.getEmailHeads(this.env, accounts)
-    const byEmail = new Map(
-      accounts.flatMap(({ mailboxId, accountId }) => (heads.get(accountId) ?? []).map((h) => [`${mailboxId}:${h.id}`, h] as const)),
-    )
+    const [heads, storeHeads] = await Promise.all([
+      jmap.getEmailHeads(this.env, accounts),
+      Promise.all(fromStore.map(async ([mailboxId, ids]) => ({ mailboxId, heads: await (await store(this.env, mailboxId)).heads([...ids]) }))),
+    ])
+    const byEmail = new Map<string, { from: { email: string }[] | null; receivedAt: string }>([
+      ...accounts.flatMap(({ mailboxId, accountId }) => (heads.get(accountId) ?? []).map((h) => [`${mailboxId}:${h.id}`, h] as const)),
+      ...storeHeads.flatMap(({ mailboxId, heads }) => heads.map((h) => [`${mailboxId}:${h.id}`, h] as const)),
+    ])
     for (const r of attachments) {
       const head = byEmail.get(`${r.mailbox!.id}:${r.emailId}`)
       if (!head) continue

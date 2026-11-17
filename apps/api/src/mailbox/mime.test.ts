@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomBytes } from 'node:crypto'
 import { describe, it } from 'node:test'
-import { decodePart, isBodyText, locateParts, withoutFiles, type MimePart } from './mime.ts'
+import { decodePart, isBodyText, locateParts, param, withoutFiles, type MimePart } from './mime.ts'
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex')
 const wrap76 = (s: string) => s.replace(/(.{76})/g, '$1\r\n')
@@ -94,5 +94,42 @@ describe('withoutFiles', () => {
   it('returns the message itself when there is nothing to cut', () => {
     const plain = bytes('Subject: Hi\n\nJust text.\n')
     assert.equal(withoutFiles(plain, locateParts(plain)), plain)
+  })
+})
+
+describe('param', () => {
+  it('reads plain and quoted values', () => {
+    assert.equal(param('attachment; filename=report.pdf', 'filename'), 'report.pdf')
+    assert.equal(param('attachment; filename="Q3 \\"final\\".pdf"; size=10', 'filename'), 'Q3 "final".pdf')
+    assert.equal(param('application/pdf; name=a.pdf', 'filename'), null)
+  })
+
+  it('does not take filename= for name=', () => {
+    assert.equal(param('attachment; filename=a.pdf', 'name'), null)
+  })
+
+  it('decodes an RFC 2231 value with its charset', () => {
+    assert.equal(param("attachment; filename*=utf-8''r%C3%A9sum%C3%A9.pdf", 'filename'), 'résumé.pdf')
+    assert.equal(param("attachment; filename*=iso-8859-1'en'caf%E9.txt", 'filename'), 'café.txt')
+  })
+
+  it('joins RFC 2231 continuations in order, encoded or not', () => {
+    const header = "attachment;\r\n filename*1*=%20report.pdf; filename*0*=UTF-8''Quarterly%E2%80%94Q3;"
+    assert.equal(param(header.replace(/\r\n /g, ' '), 'filename'), 'Quarterly—Q3 report.pdf')
+    assert.equal(param('attachment; filename*0="a very long "; filename*1="name.pdf"', 'filename'), 'a very long name.pdf')
+  })
+
+  it('prefers the RFC 2231 form over a plain fallback', () => {
+    assert.equal(param("attachment; filename=\"resume.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf", 'filename'), 'résumé.pdf')
+  })
+
+  it('names a part sent with continuations only', () => {
+    const raw = bytes(
+      'Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain\n\nHi\n--b\n' +
+        "Content-Type: text/plain\nContent-Disposition: inline; filename*0*=utf-8''notes%20; filename*1=today.txt\n\nNotes\n--b--\n",
+    )
+    const parts = locateParts(raw)
+    assert.equal(parts[1]!.name, 'notes today.txt')
+    assert.equal(isBodyText(parts[1]!), false)
   })
 })

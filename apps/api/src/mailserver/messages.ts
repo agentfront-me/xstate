@@ -12,6 +12,7 @@ import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
 import { readableText } from '../mailbox/compare'
+import { parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
 import { store } from '../mailbox/stub'
 import type { StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
@@ -263,6 +264,10 @@ export async function messagesWith(
 /** Every message in a conversation, oldest first, with bodies and attachments. Doesn't mark anything read. */
 export async function getThread(env: EmailEnv, actor: Actor, mailboxId: string, threadId: string): Promise<Message[]> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')
+  if (readsFromStore(env, mailbox)) {
+    const fromStoreCopy = await storeThread(env, mailbox, threadId, (row) => fromStore(row, mailbox.id))
+    if (fromStoreCopy) return fromStoreCopy
+  }
   const [emails, folders] = await Promise.all([
     jmap.getThread(env, mailbox.stalwart_id, threadId),
     jmap.getFolders(env, [mailbox.stalwart_id]),
@@ -323,7 +328,15 @@ export async function getAttachment(
   type: string,
 ): Promise<Response> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')
-  const upstream = await jmap.downloadBlob(env, mailbox.stalwart_id, blobId, name, type)
+  let upstream: Response
+  if (parseStoreBlobId(blobId)) {
+    // An attachment of a message read from the mailbox's store: read back from its raw copy.
+    const blob = await storeBlob(env, mailbox, blobId)
+    if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
+    upstream = new Response(blob.bytes, { headers: { 'Content-Type': type || blob.type, 'Content-Length': String(blob.bytes.byteLength) } })
+  } else {
+    upstream = await jmap.downloadBlob(env, mailbox.stalwart_id, blobId, name, type)
+  }
   // File-type rules: blocked files never leave; warnings travel in a header the apps show before saving.
   const { safety, body } = await inspectStream(upstream.body!, name)
   if (safety.level === 'blocked') {
@@ -634,8 +647,11 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
     }
   }
 
-  // Attachments may only come from this account: uploads to it, or the forwarded message's own parts.
-  const attachments = [...(input.attachments ?? [])]
+  // Attachments may only come from this account: uploads to it, or the forwarded message's own parts. One picked
+  // from a message read from the mailbox's store is handed to the mail server first.
+  const attachments = await Promise.all(
+    (input.attachments ?? []).map(async (a) => ({ ...a, blobId: await serverBlobId(env, mailbox, a.blobId, a.type) })),
+  )
   const forwarded: (typeof attachments[number] & { size: number })[] = []
   if (input.forwardOf && original) {
     for (const part of original.attachments) {

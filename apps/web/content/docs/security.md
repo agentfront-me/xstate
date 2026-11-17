@@ -43,9 +43,10 @@ change how something works. Recent changes are listed [at the end](#changes).
 - **Proving mail is yours.** When you add a domain, xstate asks you to publish SPF and DKIM records, and
   recommends DMARC. Mail you send leaves through Amazon SES, signed with your domain's own DKIM key.
 - **A mailbox's own index.** To make lists and search fast, a mailbox can have its own index of its messages:
-  senders, recipients, subjects, folders, flags and body text. It is kept separately for each mailbox, reached only
-  through the same access checks as the mail itself, and deleted when the message or the mailbox is deleted. We are
-  turning this on mailbox by mailbox.
+  senders, recipients, subjects, folders, flags and body text, with a copy of each whole message (attachments
+  included) in your organization's own storage bucket, from which the message and its attachments can be opened.
+  It is kept separately for each mailbox, reached only through the same access checks as the mail itself, and
+  deleted when the message or the mailbox is deleted. We are turning this on mailbox by mailbox.
 - **Stopping abuse.** Each mailbox and organization has hourly and daily limits on mail to outside addresses.
   Sending is suspended automatically when bounces or spam complaints pass a safe rate. Addresses that bounced or
   complained aren't sent to again.
@@ -175,6 +176,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 17, 2026:** A mailbox's own index can include a copy of each whole message in your organization's
+  storage bucket, and messages and attachments can be opened from it, with the same access checks.
 - **November 17, 2026:** A mailbox can have its own index of its messages for faster lists and search, kept per
   mailbox and deleted with the message or the mailbox.
 - **November 17, 2026:** Searching mail by meaning (`email_search`) needs only read access to email, not to

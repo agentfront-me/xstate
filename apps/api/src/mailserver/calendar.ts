@@ -22,6 +22,7 @@ import {
   type EventInput,
   type GuestStatus,
 } from './calendar-events'
+import { serverBlobId } from '../mailbox/read'
 import { EmailError, forbidden, notFound as missing } from './errors'
 import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
 import * as jmap from './stalwart/calendar'
@@ -356,7 +357,8 @@ export async function applyInvite(
 }
 
 async function loadInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string) {
-  const all = await jmap.parseInvite(env, mailbox.stalwart_id, blobId)
+  // An invitation in a message read from the mailbox's store is handed to the mail server to parse.
+  const all = await jmap.parseInvite(env, mailbox.stalwart_id, await serverBlobId(env, mailbox, blobId, 'text/calendar'))
   // A repeating event's changed occurrences can come as extra entries; the first is the event itself.
   const parsed = all.find((e) => !e.recurrenceId) ?? all[0]
   if (!parsed) throw new EmailError('not_an_invite', "This attachment isn't a calendar invitation", 400)

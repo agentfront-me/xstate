@@ -57,11 +57,47 @@ function readHeaders(buf: Uint8Array, from: number, to: number): Record<string, 
   return headers
 }
 
-/** A parameter of a structured header (`boundary`, `filename`, `name`), quoted or not. RFC 2231 forms are left encoded. */
-function param(value: string | undefined, name: string): string | null {
-  const m = new RegExp(`(?:^|;)\\s*${name}\\*?\\s*=\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|([^;\\s]+))`, 'i').exec(value ?? '')
-  if (!m) return null
-  return m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : m[2]!
+/**
+ * A parameter of a structured header (`boundary`, `filename`, `name`), quoted or not. The RFC 2231 forms that long
+ * and non-ASCII file names use (`filename*=utf-8''r%C3%A9sum%C3%A9.pdf`, or split as `filename*0*=`, `filename*1*=`)
+ * are joined and decoded, and win over a plain one. RFC 2047 words (`=?utf-8?Q?...?=`) are left for the caller.
+ */
+export function param(value: string | undefined, name: string): string | null {
+  const re = new RegExp(`(?:^|;)\\s*${name}(\\*\\d+)?(\\*)?\\s*=\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|([^;\\s]+))`, 'gi')
+  const pieces = [...(value ?? '').matchAll(re)].map((m) => ({
+    index: m[1] ? Number(m[1].slice(1)) : -1,
+    encoded: !!m[2],
+    text: m[3] !== undefined ? m[3].replace(/\\(.)/g, '$1') : m[4]!,
+  }))
+  if (!pieces.length) return null
+  const extended = pieces.filter((p) => p.index >= 0 || p.encoded).sort((a, b) => a.index - b.index)
+  if (!extended.length) return pieces[0]!.text
+  // charset'language'value on the first encoded piece; the rest are percent-encoded bytes in that charset.
+  let charset = 'utf-8'
+  const bytes: number[] = []
+  extended.forEach((p, i) => {
+    let text = p.text
+    if (p.encoded && i === 0) {
+      const m = /^([^']*)'[^']*'(.*)$/s.exec(text)
+      if (m) {
+        charset = m[1] || charset
+        text = m[2]!
+      }
+    }
+    for (let k = 0; k < text.length; k++) {
+      const hi = p.encoded && text[k] === '%' ? hex(text.charCodeAt(k + 1)) : -1
+      const lo = hi >= 0 ? hex(text.charCodeAt(k + 2)) : -1
+      if (hi >= 0 && lo >= 0) {
+        bytes.push((hi << 4) | lo)
+        k += 2
+      } else bytes.push(text.charCodeAt(k) & 0xff)
+    }
+  })
+  try {
+    return new TextDecoder(charset).decode(new Uint8Array(bytes))
+  } catch {
+    return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+  }
 }
 
 function encodingOf(value: string | undefined): PartEncoding {

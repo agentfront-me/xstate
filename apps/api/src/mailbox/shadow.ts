@@ -16,9 +16,9 @@ import type { JmapFolder, JmapStoreEmail } from '../mailserver/stalwart/mail'
 import { enqueueStoreJobs, type MailboxStoreJob } from './jobs'
 import { organizationBucket, storageConfigured, type BucketEnv } from '../storage/buckets'
 import { deleteObject, getObjectRange, putObject } from '../storage/r2'
-import { decodePart, isBodyText } from './mime'
+import { decodePart } from './mime'
 import { parseDifferences } from './compare'
-import { parseRaw } from './parse'
+import { fileParts, parseRaw } from './parse'
 import type { RawStats, StoreAttachment, StoreRaw } from './store'
 import { MAX_INDEXED_CHARS, type StoreMessage, type StorePlacement } from './query'
 import { store } from './stub'
@@ -164,8 +164,7 @@ export async function copyRaw(env: ShadowEnv, mailboxId: string, emailIds: strin
     const parsed = await parseRaw(raw)
     const files = (await filesDb.listForMailbox(env.DB, mailbox.id, { emailId: e.id, limit: 200 })).filter((f) => f.sha256)
     const attachments: StoreAttachment[] = []
-    for (const part of parsed.parts) {
-      if (isBodyText(part) || !part.length) continue
+    for (const part of fileParts(parsed.parts)) {
       const content = decodePart(raw.subarray(part.start, part.start + part.length), part.encoding)
       const hash = await sha256Hex(content)
       let verified: boolean | null = null

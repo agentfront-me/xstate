@@ -525,6 +525,25 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   (which answers one request at a time) while copy jobs waited to record results; and every new email's sync handed
   out another 8,000. Now one statement counts what is in flight and one marks the next batch (about 6 ms for 8,000
   rows), and a sync only tops the in-flight count back up to 8,000. Refused jobs were retried, so nothing was lost.
+- **Raw copy of a large mailbox done (2026-11-17, 17:07 UTC, hireninja):** 53,747 of 53,747 messages copied
+  (5.1 GB), none missing, counts matching Stalwart in every folder; 10,884 attachments found, 8,792 matched to
+  `files` rows, 6,288 read back by range and all identical; the store itself is 105 MB. Our parsing differed from
+  Stalwart's on 20 messages (19 text, 1 subject), and every one looked at was spacing where we follow the standard
+  and Stalwart doesn't: `format=flowed; delsp=yes` bodies (a soft line break after a space joins the words), a
+  carriage return the sender encoded inside a link (`=0D`), and a space inside a malformed encoded subject.
+  Python's own email parser reads them as we do. The comparison was left as it is, so these stay counted.
+- **Read mode on the large mailbox (2026-11-17):** a `waveapps.com` search returned full pages from the store,
+  `comms.waveapps.com` included, which Stalwart's search missed. Back to `shadow` before the next `COPY_VERSION`
+  deploy.
+- **Whole conversations and attachments from the store:** with `read`, `email_get_thread` reads each message of the
+  conversation from its raw copy (`mailbox/read.ts`): headers, Cc, Reply-To, date, text and HTML from our parser,
+  and the attachments from the parts the locator finds. Their ids are `store.<message id>.<start>`, read back by
+  range from the bucket when downloaded. Attaching one to a reply or draft, or reading an invitation from one,
+  uploads it to Stalwart first, which still sends and keeps calendars. File names in the RFC 2231 form
+  (`filename*=utf-8''…`, split names) are now decoded, and RFC 2047 ones by postal-mime. A conversation with any
+  message whose raw copy isn't made yet (new mail waits for the next sync) is read from Stalwart as before.
+- **`email_search` senders from the store:** attachment results from a mailbox in `read` mode take their sender and
+  arrival time from the store, not Stalwart. Search itself runs on Vectorize and D1 and never asked Stalwart.
 
 Differences from the plan above, for now:
 
@@ -537,10 +556,9 @@ Differences from the plan above, for now:
 - **A message can sit in several folders,** as on Stalwart, so placements are their own table.
 - **`store_mode` instead of `backend`** while Stalwart is in charge; `backend` arrives with the switch.
 
-Not done in this phase yet: the rebuild job, attachments inside an attached email (kept as one file part),
-trying it on a large real mailbox, `email_get_thread` and `email_search` filters from the store, and the docs
-(`apps/web/content/docs/security.md` and `privacy.md` need a line once a production mailbox is switched on, since
-message text is then also kept in the mailbox's own store).
+Left for phase 2: the rebuild job, and attachments inside an attached email (kept as one file part). Still on
+Stalwart in `read` mode: folder counts, marking read, moving and pinning, sending, the change token the apps poll,
+and forwarding (the original's attachments come from Stalwart).
 
 ### 2. The new mail path
 

@@ -21,6 +21,13 @@ export type EmailEnv = Pick<
   | 'SCAN_MODE'
   | 'SCAN_URL'
   | 'MAILBOX_STORE'
+  // The organization's bucket, where mailboxes read from their store keep raw messages (mailbox/read.ts).
+  | 'CLOUDFLARE_ACCOUNT_ID'
+  | 'CLOUDFLARE_API_TOKEN'
+  | 'R2_ACCESS_KEY_ID'
+  | 'R2_SECRET_ACCESS_KEY'
+  | 'R2_BUCKET'
+  | 'APP_ORIGINS'
 > & { SCAN_SECRET?: string }
 
 export type Domain = {

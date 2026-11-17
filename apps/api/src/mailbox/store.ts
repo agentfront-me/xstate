@@ -7,11 +7,13 @@ import { Agent } from 'agents'
 import {
   MAX_INDEXED_CHARS,
   addressText,
+  fromSeconds,
   listSql,
   rowToList,
   senderParts,
   toSeconds,
   type PageStart,
+  type StoreAddress,
   type StoreFolder,
   type StoreListQuery,
   type StoreListRow,
@@ -57,6 +59,16 @@ export type StoreRaw = {
   diff: string
   attachments: StoreAttachment[]
 }
+
+/** A message of a conversation, as `thread` gives it. */
+export type StoreThreadMessage = StoreListRow & {
+  rawKey: string | null
+  rawSize: number | null
+  attachments: { start: number; size: number }[]
+}
+
+/** Where to read an attachment. `length` is -1 when the store has no record of it: look in the raw copy. */
+export type StoreAttachmentPlace = { rawKey: string; start: number; length: number; encoding: string; type: string }
 
 export type RawStats = {
   messages: number
@@ -378,6 +390,48 @@ export class MailboxStore extends Agent<Env> {
       for (const row of rows) sizes.set(row.thread_id as string, row.c as number)
     }
     return sizes
+  }
+
+  /**
+   * Every message of a conversation, oldest first, with where its raw copy is (`rawKey` null before it is copied,
+   * '' when it was too large) and the decoded size of each attachment, by its position in the raw message.
+   */
+  thread(threadId: string): StoreThreadMessage[] {
+    const rows = [...this.db.exec(
+      `SELECT n, id, thread_id, folder, seen, pinned, from_json, to_json, subject, preview, received_s, size, has_attachment,
+        raw_key, raw_size FROM messages WHERE thread_id = ? ORDER BY received_s, n`,
+      threadId,
+    )] as unknown as (StoreRow & { raw_key: string | null; raw_size: number | null })[]
+    return rows.map((row) => ({
+      ...rowToList(row, rows.length),
+      rawKey: row.raw_key,
+      rawSize: row.raw_size,
+      attachments: [...this.db.exec(`SELECT start, size FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as { start: number; size: number }[],
+    }))
+  }
+
+  /** Where an attachment sits: its message's raw copy and the encoded range, found by the range's start. */
+  attachmentAt(emailId: string, start: number): StoreAttachmentPlace | null {
+    const row = [...this.db.exec(
+      `SELECT m.raw_key AS rawKey, a.start, a.length, a.encoding, a.type FROM messages m JOIN attachments a ON a.n = m.n
+        WHERE m.id = ? AND a.start = ?`,
+      emailId, start,
+    )][0] as StoreAttachmentPlace | undefined
+    if (row) return row
+    // Not recorded (or recorded under another part): the caller can still find it in the raw copy.
+    const msg = [...this.db.exec(`SELECT raw_key AS rawKey FROM messages WHERE id = ?`, emailId)][0] as { rawKey: string | null } | undefined
+    return msg?.rawKey ? { rawKey: msg.rawKey, start, length: -1, encoding: '', type: '' } : null
+  }
+
+  /** Senders and arrival times, for search results that need them. Messages the store doesn't have are left out. */
+  heads(ids: string[]): { id: string; from: StoreAddress[]; receivedAt: string }[] {
+    const out: { id: string; from: StoreAddress[]; receivedAt: string }[] = []
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const chunk = ids.slice(i, i + IN_CHUNK)
+      const rows = this.db.exec(`SELECT id, from_json, received_s FROM messages WHERE id IN (${chunk.map(() => '?').join(', ')})`, ...chunk)
+      for (const r of rows) out.push({ id: r.id as string, from: JSON.parse(r.from_json as string) as StoreAddress[], receivedAt: fromSeconds(r.received_s as number) })
+    }
+    return out
   }
 
   /** Messages and unread messages per folder, to compare with the mail server's own counts. */
