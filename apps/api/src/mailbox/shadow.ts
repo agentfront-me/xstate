@@ -38,8 +38,8 @@ export const COPY_VERSION = 5
 /** Raw messages per queued copy job: each is a download and an upload. */
 const RAW_PER_JOB = 10
 /**
- * Raw copies queued per sync. The copy has a queue of its own, so this only bounds how hard one sync leans on the
- * mail server: about half an hour of downloads at the speed below.
+ * Raw copies queued per sync, and also the most handed out and unfinished at once: a sync queues only enough to
+ * bring the queue back up to this, so frequent syncs (every new email) don't stack batches behind each other.
  */
 const RAW_PER_SYNC = 8000
 /** Raw messages copied at once within a job. Each is a download from the mail server, so this is also its load. */
@@ -116,7 +116,7 @@ export async function syncStore(env: ShadowEnv, mailboxId: string): Promise<Stor
 /** Queues raw copies for messages that don't have one yet, a bounded number per run. */
 async function queueRaw(env: ShadowEnv, mailbox: MailboxRow): Promise<number> {
   if (!mailbox.store_raw || !storageConfigured(env)) return 0
-  const ids = await (await store(env, mailbox.id)).missingRaw(RAW_PER_SYNC)
+  const ids = await (await store(env, mailbox.id)).missingRaw(RAW_PER_SYNC, RAW_PER_SYNC)
   const jobs: MailboxStoreJob[] = []
   for (let i = 0; i < ids.length; i += RAW_PER_JOB) jobs.push({ kind: 'store-raw', mailboxId: mailbox.id, emailIds: ids.slice(i, i + RAW_PER_JOB) })
   await enqueueStoreJobs(env, jobs)

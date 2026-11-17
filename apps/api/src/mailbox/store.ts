@@ -267,17 +267,25 @@ export class MailboxStore extends Agent<Env> {
 
   /**
    * Ids of messages whose raw copy hasn't been made, newest first, marking them as handed out so the next call
-   * gives different ones. A message handed out and not finished comes back after RAW_RETRY_SECONDS.
+   * gives different ones. A message handed out and not finished comes back after RAW_RETRY_SECONDS. Hands out only
+   * as many as keep `maxInFlight` or fewer handed out and unfinished, so syncs that come often (every new email)
+   * don't pile batches up behind each other.
+   *
+   * One statement each for counting and for marking: this object answers one request at a time, and marking
+   * thousands of rows one by one kept the copy jobs waiting until they were refused ("Durable Object is overloaded").
    */
-  missingRaw(limit: number): string[] {
+  missingRaw(limit: number, maxInFlight: number): string[] {
     const now = Math.floor(Date.now() / 1000)
+    const since = now - RAW_RETRY_SECONDS
+    const inFlight = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages WHERE raw_key IS NULL AND raw_queued_s >= ?`, since)][0]!.c as number
+    const take = Math.min(limit, maxInFlight - inFlight)
+    if (take <= 0) return []
     const rows = [...this.db.exec(
-      `SELECT n, id FROM messages WHERE raw_key IS NULL AND (raw_queued_s IS NULL OR raw_queued_s < ?) ORDER BY n DESC LIMIT ?`,
-      now - RAW_RETRY_SECONDS, limit,
-    )] as { n: number; id: string }[]
-    this.ctx.storage.transactionSync(() => {
-      for (const row of rows) this.db.exec(`UPDATE messages SET raw_queued_s = ? WHERE n = ?`, now, row.n)
-    })
+      `UPDATE messages SET raw_queued_s = ? WHERE n IN (
+        SELECT n FROM messages WHERE raw_key IS NULL AND (raw_queued_s IS NULL OR raw_queued_s < ?) ORDER BY n DESC LIMIT ?
+      ) RETURNING id`,
+      now, since, take,
+    )] as { id: string }[]
     return rows.map((r) => r.id)
   }
 

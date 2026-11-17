@@ -520,6 +520,11 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   stays within a Worker's 128 MB; one sync queues up to 8,000 raw copies. Every raw copy is a download from
   Stalwart, so these numbers are its load: raise them in steps while watching Stalwart's response times. Jobs left
   on the search queue from before still run there.
+- **"Durable Object is overloaded" (2026-11-17, 15:20 UTC, hireninja):** 4 raw-copy jobs were refused after the
+  speed-up. Each sync handed out its 8,000 messages by updating them one row at a time, holding the mailbox object
+  (which answers one request at a time) while copy jobs waited to record results; and every new email's sync handed
+  out another 8,000. Now one statement counts what is in flight and one marks the next batch (about 6 ms for 8,000
+  rows), and a sync only tops the in-flight count back up to 8,000. Refused jobs were retried, so nothing was lost.
 
 Differences from the plan above, for now:
 
