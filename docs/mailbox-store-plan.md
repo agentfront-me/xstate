@@ -913,6 +913,23 @@ a forward that carried the original's `résumé.csv`.
 and `ses:SendEmail` on this account's identities in us-east-2; its key stored straight into the Worker secrets
 `MAIL_SEND_ACCESS_KEY_ID` and `MAIL_SEND_SECRET_ACCESS_KEY` (never printed).
 
+**Pilot sending (2026-11-17, "Implemented step 3"; the first deploy hit a Cloudflare API error updating a queue
+consumer, code 10013, and the re-run went through):**
+
+| Test | Result |
+|---|---|
+| Draft from `hello@` to Gmail: saved, edited, sent | Drafts empty after; Sent copy in R2 |
+| `hello@` → `team@` (out through SES, back in through SES receiving) | The Sent copy's Message-ID and the received one are the same `<…-000000@us-east-2.amazonses.com>`, so SES does replace ours and the Sent copy has its form right; `dkim=pass header.i=@99events.com`, `dmarc=pass` |
+| Forward of the 20 MB attachment to `team@` | Sent copy 28.7 MB at 19:51:56, received by `team@` at 19:52:11; no memory trouble |
+
+Found and fixed (not yet deployed): with `FromEmailAddress` set, SES rewrote the From header to the bare address, so
+recipients saw `hello@99events.com` without "99events". The request now leaves it out, and SES sends from the
+message's own From header; tried directly with the AWS CLI: `From: 99events <hello@99events.com>` arrived intact,
+DKIM and DMARC still passing.
+
+Still to try: a reply from Gmail to the draft-test message joining its conversation in xstate (needs the person
+to reply in Gmail; the Gmail connector here can't read that account).
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's

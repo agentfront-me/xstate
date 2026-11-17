@@ -66,7 +66,9 @@ const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 function jsonBody(m: SesOutgoing): Uint8Array {
   const enc = new TextEncoder()
   const prefix = enc.encode(
-    JSON.stringify({ FromEmailAddress: m.from, Destination: { ToAddresses: m.to, CcAddresses: m.cc, BccAddresses: m.bcc }, Content: { Raw: { Data: '' } } }).replace(/""}}}$/, '"'),
+    // No FromEmailAddress: with it SES rewrites the From header to the bare address, dropping the display name (seen
+    // on the pilot); without it, SES sends from the message's own From header, as it was built.
+    JSON.stringify({ Destination: { ToAddresses: m.to, CcAddresses: m.cc, BccAddresses: m.bcc }, Content: { Raw: { Data: '' } } }).replace(/""}}}$/, '"'),
   )
   const suffix = enc.encode('"}}}')
   const b64Length = Math.ceil(m.raw.length / 3) * 4
