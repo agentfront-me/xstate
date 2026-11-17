@@ -12,6 +12,7 @@ import { organizationBucket, storageConfigured } from '../storage/buckets'
 import { getObject, getObjectRange } from '../storage/r2'
 import { decodePart, isBodyText, locateParts, type MimePart, type PartEncoding } from './mime'
 import { fileParts, parseRaw, partName } from './parse'
+import type { StoreListRow } from './query'
 import type { StoreThreadMessage } from './store'
 import { store } from './stub'
 import type { Message, MessageSummary } from '../mailserver/messages'
@@ -43,7 +44,7 @@ export async function storeThread(
   env: EmailEnv,
   mailbox: MailboxRow,
   threadId: string,
-  summary: (row: StoreThreadMessage) => MessageSummary,
+  summary: (row: StoreListRow) => MessageSummary,
 ): Promise<Message[] | null> {
   const rows = await (await store(env, mailbox.id)).thread(threadId)
   if (!rows.length || rows.some((r) => !r.rawKey)) return null
@@ -53,7 +54,9 @@ export async function storeThread(
     const row = rows[i]!
     const res = await getObject(env, bucket, row.rawKey!)
     if (!res) return
-    messages[i] = await toMessage(row, new Uint8Array(await res.arrayBuffer()), summary(row))
+    // Only the list fields go to the summary: where the raw copy is stays inside.
+    const { rawKey: _key, rawSize: _size, attachments: _parts, ...listRow } = row
+    messages[i] = await toMessage(row, new Uint8Array(await res.arrayBuffer()), summary(listRow))
   }
   const small = rows.flatMap((r, i) => ((r.rawSize ?? 0) <= BIG_BYTES ? [i] : []))
   const big = rows.flatMap((r, i) => ((r.rawSize ?? 0) > BIG_BYTES ? [i] : []))
