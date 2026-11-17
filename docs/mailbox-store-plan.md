@@ -822,6 +822,13 @@ in each store: the Worker deletes the raw copies, which needs the organization's
 Junk, Trash and restore, a missing id (404); folder counts and the change token moved each time; the hourly run
 with the 30 days set to zero deleted the one message in Trash and its raw copy.
 
+**Deployed and tried in the web app (2026-11-17, "Added step 2"),** on `hello@99events.com`: opening "Re: hello"
+marked the conversation read with no notice (unread 5 → 3); Pin, then Archive moved it to Archive with both
+messages and the pin; Unpin and "Move to inbox" brought it back, read and unpinned. One thing seen: right after
+"Move to inbox" from Archive, the mailbox's Inbox list in the app still showed the old list until a reload; the
+move itself had happened. Worth checking whether Stalwart mailboxes do the same in the app before treating it as
+a store issue.
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's

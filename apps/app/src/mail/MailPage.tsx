@@ -181,7 +181,9 @@ export function MailPage() {
       try {
         await source.update(row, patch)
         toast(message)
-        if (patch.folder) void reloadFolders(client)
+        // A move changes two folders: counts, and every cached list, so the folder it went to doesn't show a copy
+        // from before it arrived.
+        if (patch.folder) void Promise.all([reloadFolders(client), reloadLists(client)])
       } catch (err) {
         toast(errorMessage(err))
         void reloadLists(client)
