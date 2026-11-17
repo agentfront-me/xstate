@@ -17,12 +17,14 @@ export const metadata: Metadata = {
 }
 
 const faqs = [
-  ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own. Buying one during setup and a free xstate subdomain are coming.'],
-  ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
-  ['How is this different from Google Workspace?', 'xstate is built for working with AI. Each AI app you connect gets its own access, limited to the mailboxes you pick and the actions you tick. Search by meaning across mail, attachments and files is included, and the free plan covers up to 5 people.'],
-  ['Can I move from Gmail or Google Workspace?', 'Yes. An administrator authorizes the import once, and xstate copies your mail, calendars, contacts and Drive files, then keeps the copy up to date until you switch your domain over.'],
+  ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own and xstate checks its DNS records for you, usually in a few minutes. Buying a domain during setup and a free xstate subdomain are coming.'],
+  ['What can I keep in Storage?', 'Any file. Save attachments from your mail in one click, keep personal and shared spaces for your team, and edit Markdown and CSV or mark up PDFs in the browser. Earlier versions are kept, and you can share a file by link.'],
+  ['What does search look through?', 'Every email body, PDF and text attachments, and your files in Storage, indexed by meaning so you can ask in your own words. The free plan covers the last 90 days of mail. Your AI apps and agents search the same index, limited to what they were given.'],
+  ['How do agents run a campaign?', 'Describe the campaign in plain words and who it is for. For each person, the agent reads their contact details and your past emails with them, then writes a message for them alone. Every email waits for your approval until you let the agent send on its own. Agents come with Pro and Team and use your own Anthropic or OpenAI key.'],
+  ['Can my app send email through xstate?', 'Yes. Create a personal token and send receipts, password resets and alerts from any mailbox you choose, with one API request. Replies land in that mailbox. It is for email a person is waiting for, not newsletters.'],
+  ['What does the website snippet track?', 'Page views on its own, and any events you send with one line of code. Visitors stay anonymous until they give an email, for example in a form. Anonymous visitors are removed 30 days after their last visit, and events after 90 days.'],
+  ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['Do you use my mail to train AI?', 'No. We do not use your content to train AI models, for advertising or for profiling, and our staff do not read it unless you ask us to. Agents use the AI provider and key your organization chooses.'],
-  ['How long does DNS take?', 'Usually a few minutes. xstate checks every few seconds and ticks off each record as it appears.'],
   ['Can I take my data with me?', 'Yes. Your mail stays reachable over IMAP, so any mail app can copy it out, and files in Storage download as they are. Contacts export as CSV.'],
 ]
 
@@ -50,12 +52,12 @@ const structuredData = {
 }
 
 const features = [
-  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with aliases, shared inboxes and a calendar for every mailbox.', points: ['hello@, support@, sales@ in one click', 'Invitations and replies from the same account', 'Works with Apple Mail, Outlook and any mail app'] },
-  { id: 'F02', tag: 'dns', title: 'DNS that checks itself', body: 'xstate shows the records your domain needs and checks public DNS every few seconds until they are in place.', points: ['Live status for each record', 'Copy them all as a zone file', 'Send the records to a developer'] },
-  { id: 'F03', tag: 'ai apps', title: 'Nothing goes out without your permission', body: 'Connect Claude, Codex or Cursor. Each one gets its own access and only the permissions you tick.', points: ['Read, draft or send: you tick which', 'Only the mailboxes you pick', 'Disconnect in one click'] },
-  { id: 'F04', tag: 'search', title: 'Search across mail and files', body: 'Ask a question and get the passages that answer it, from your mail, attachments and files.', points: ['Search by meaning, in any language', 'PDFs and attachments included', 'AI apps search the same index'] },
-  { id: 'F05', tag: 'files', title: 'Storage for every mailbox', body: 'Save attachments, share files with your team and keep earlier versions.', points: ['Save attachments in one click', 'Personal and shared spaces', 'AI apps get no access, read, or read and change'] },
-  { id: 'F06', tag: 'import', title: 'Move from Google Workspace', body: 'Bring your mail, calendars, contacts and Drive files across in one import, kept in sync until you switch.', points: ['One authorization for the whole domain', 'Mail, calendars, contacts and Drive', 'Switch your domain when the copy is done'] },
+  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with shared inboxes and a calendar for every mailbox. Set up in minutes.', points: ['hello@, support@, sales@ in one click', 'DNS records checked for you, live', 'Works with Apple Mail, Outlook and any mail app'] },
+  { id: 'F02', tag: 'files', title: 'Storage and files, next to your mail', body: 'Personal and shared spaces for your team\'s files, with every attachment one click away. Open and edit files right in the browser.', points: ['Save any attachment to Storage in one click', 'Edit Markdown and CSV, mark up PDFs', 'Earlier versions kept, links to share when you want'] },
+  { id: 'F03', tag: 'search', title: 'Search that understands your mail', body: 'Every email body and attachment is indexed by meaning, so you can ask in your own words and get the passages that answer it.', points: ['A vector index of every email and attachment', 'PDF and text attachments included', 'Your AI apps and agents search the same index'] },
+  { id: 'F04', tag: 'agents', title: 'Agents run your campaigns', body: 'The agent reads each contact and your past emails with them, then writes a message for that person alone. You approve every email before it goes out, until you choose to let it send.', points: ['No templates or merge fields to keep up', 'Runs on a schedule, from a webhook or when someone replies', 'Replies land in your inbox, ready for a follow-up'] },
+  { id: 'F05', tag: 'api', title: 'Transactional email from the same platform', body: 'Send receipts, password resets and alerts from billing@ or support@ on your domain with one API request. Replies land in that mailbox, not in a noreply@ nobody reads.', points: ['No separate email service to sign up for', 'Tokens send only from the mailboxes you pick', 'Safe retries and a delivery status for every email'] },
+  { id: 'F06', tag: 'audience', title: 'Track your audience and events in one place', body: 'Add one snippet to your website to see every visitor, lead and customer: the pages they view and the events you track, next to the emails you have exchanged with them.', points: ['Page views tracked on their own, custom events in one line', 'Segments built from what people do', 'Agents use the same profiles to write each campaign email'] },
 ]
 
 export default function Home() {
@@ -91,7 +93,7 @@ export default function Home() {
       <section id="features" className="section" aria-labelledby="feat-h">
         <div className="section-head">
           <h2 id="feat-h">Features</h2>
-          <span className="small muted mono">6 modules · 1 account</span>
+          <span className="small muted mono">One account for your whole team</span>
         </div>
         <div className="grid">
           {features.map((f) => (
