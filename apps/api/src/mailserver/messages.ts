@@ -11,6 +11,7 @@ import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
+import { readableText } from '../mailbox/compare'
 import { store } from '../mailbox/stub'
 import type { StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
@@ -414,9 +415,13 @@ export function bodyText(parts: JmapBodyPart[], values: JmapEmail['bodyValues'])
 /** A message's readable text: its plain-text part, or its HTML part as text. Agents, previews and search read this. */
 export function plainText(e: Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValues'>): string {
   const textParts = e.textBody.filter((p) => p.type === 'text/plain')
-  if (textParts.length) return bodyText(textParts, e.bodyValues)
   const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
-  return htmlParts.length ? htmlToText(bodyText(htmlParts, e.bodyValues)) : ''
+  // Some senders include an empty plain-text part next to the real HTML one: then the HTML is the body.
+  return readableText(
+    textParts.length ? bodyText(textParts, e.bodyValues) : undefined,
+    htmlParts.length ? bodyText(htmlParts, e.bodyValues) : undefined,
+    htmlToText,
+  )
 }
 
 /** Readable plain text from HTML, for messages sent without a text part. Agents, previews and search read this. */

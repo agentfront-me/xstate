@@ -496,7 +496,9 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   mail padded with invisible characters, which parsers break up differently; the comparison now ignores them. One
   was a bug: an email whose plain-text part is empty kept empty text instead of using its HTML part. Fixed, and the
   HTML-to-text conversion now decodes character references such as `&#847;`, which it left as written before; that
-  also improves search and agents on HTML-only mail today. `COPY_VERSION` is 3 so the store copies again.
+  also improves search and agents on HTML-only mail today. `COPY_VERSION` is 3 so the store copies again. The recopy (11:04 UTC) brought the differences down to 1: the same
+  email, now read from its HTML by us while Stalwart's text for it is empty. So `plainText` (what search, agents
+  and the store read today) now uses the HTML part too when the plain part is blank, and `COPY_VERSION` is 4.
 
 Differences from the plan above, for now:
 
