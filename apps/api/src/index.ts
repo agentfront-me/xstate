@@ -13,6 +13,7 @@ import { handlePaddleWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
 import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
+import { consumeStore, type MailboxStoreJob } from './mailbox/jobs'
 import { cors } from 'hono/cors'
 import { tokensHourly } from './auth/api-tokens'
 import { emailsHourly } from './emails/service'
@@ -105,6 +106,7 @@ export default {
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
   // PUSH jobs: notifications to the mobile app (push/send.ts).
+  // STORE_COPY jobs: copying mail into mailbox stores (mailbox/jobs.ts).
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
@@ -114,7 +116,9 @@ export default {
           ? consumeMigrationDead(batch as MessageBatch<MigrationJob>, env)
           : batch.queue === 'xstate-push'
             ? consumePush(batch as MessageBatch<PushJob>, env)
-            : consume(batch as MessageBatch<MailSyncJob>, env),
+            : batch.queue === 'xstate-mailbox-store'
+              ? consumeStore(batch as MessageBatch<MailboxStoreJob>, env)
+              : consume(batch as MessageBatch<MailSyncJob>, env),
   // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
   // search backfill and sweep, and syncing sending suspensions to Stalwart.
   scheduled: (_controller, env, ctx) =>

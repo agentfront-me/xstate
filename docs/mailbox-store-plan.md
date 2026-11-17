@@ -512,7 +512,14 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   with no errors, and the check at 13:34 matched Stalwart in every folder (53,731, one email having arrived
   meanwhile). 54,180 copies for 53,731 messages: retried and overlapping jobs store a message again, which
   replaces it. While it ran, search indexing for every mailbox waited behind it on the shared queue. The check
-  doesn't report the store's size yet; it should, to watch the 10 GB limit.
+  now reports the store's size (`bytes`).
+- **Faster copies (2026-11-17):** the first raw batch for hireninja ran at 2.7 messages a second and waited for
+  each hourly sync, about 26 hours in all. Store copies now have their own queue (`xstate-mailbox-store`, binding
+  `STORE_COPY`, `mailbox/jobs.ts`; up to 4 batches at once), so they never hold up search indexing; raw copies run 4
+  at a time within a job, messages over 5 MB on their own, and attachments over 8 MB are not read back, so a job
+  stays within a Worker's 128 MB; one sync queues up to 8,000 raw copies. Every raw copy is a download from
+  Stalwart, so these numbers are its load: raise them in steps while watching Stalwart's response times. Jobs left
+  on the search queue from before still run there.
 
 Differences from the plan above, for now:
 

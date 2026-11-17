@@ -101,7 +101,8 @@
       { "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" },
       { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" },
       { "binding": "MIGRATION", "queue": "xstate-migration" },
-      { "binding": "PUSH", "queue": "xstate-push" }
+      { "binding": "PUSH", "queue": "xstate-push" },
+      { "binding": "STORE_COPY", "queue": "xstate-mailbox-store" }
     ],
     "consumers": [
       { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
@@ -114,7 +115,11 @@
       // Migration jobs that ran out of retries without our code seeing an error (the Worker was killed for memory or
       // CPU): marked as needing attention so the copy can't stall silently (migration/jobs.ts consumeMigrationDead).
       // Create once: wrangler queues create xstate-migration-dlq
-      { "queue": "xstate-migration-dlq", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3 }
+      { "queue": "xstate-migration-dlq", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3 },
+      // Copying mail into mailbox stores (mailbox/jobs.ts), apart from search so a big copy can't hold it up. Every
+      // raw copy is a download from Stalwart, so concurrency here (times RAW_PARALLEL in mailbox/shadow.ts) is the
+      // load on the mail server. Create once: wrangler queues create xstate-mailbox-store
+      { "queue": "xstate-mailbox-store", "max_batch_size": 4, "max_batch_timeout": 2, "max_retries": 10, "max_concurrency": 4 }
     ]
   },
   // Workers AI: the embedding model (@cf/baai/bge-m3) and toMarkdown for PDFs. Always runs remotely, in dev too.

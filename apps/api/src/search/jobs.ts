@@ -8,13 +8,14 @@
 
 import * as searchDb from '../db/search'
 import { indexEmails, indexFile, removeDocument, type EmailIndexEnv } from './indexer'
-import { copyRaw, storeEmails, type ShadowEnv } from '../mailbox/shadow'
+import { runStoreJob } from '../mailbox/jobs'
+import type { ShadowEnv } from '../mailbox/shadow'
 
 export type SearchJob =
   | { kind: 'index'; fileId: string }
   | { kind: 'index-emails'; mailboxId: string; emailIds: string[] }
-  // Copying messages into a mailbox's store (mailbox/shadow.ts). It rides on this queue: same shape of work, and
-  // no second queue to run.
+  // Copy jobs for a mailbox's store. They have their own queue now (mailbox/jobs.ts); these kinds stay so jobs
+  // queued here before that change still run.
   | { kind: 'store-emails'; mailboxId: string; emailIds: string[] }
   | { kind: 'store-raw'; mailboxId: string; emailIds: string[] }
 
@@ -90,24 +91,13 @@ export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv
     }
   }
   for (const message of batch.messages) {
-    if (message.body.kind !== 'store-emails') continue
+    const body = message.body
+    if (body.kind !== 'store-emails' && body.kind !== 'store-raw') continue
     try {
-      const stored = await storeEmails(env, message.body.mailboxId, message.body.emailIds)
-      if (stored) console.log('mailbox-store-copy', JSON.stringify({ mailboxId: message.body.mailboxId, stored }))
+      await runStoreJob(env, body)
       message.ack()
     } catch (err) {
-      console.error(`mailbox-store-copy: mailbox ${message.body.mailboxId} failed`, err)
-      message.retry({ delaySeconds: retryDelay(message.attempts) })
-    }
-  }
-  for (const message of batch.messages) {
-    if (message.body.kind !== 'store-raw') continue
-    try {
-      const copied = await copyRaw(env, message.body.mailboxId, message.body.emailIds)
-      if (copied.stored || copied.skipped) console.log('mailbox-store-raw', JSON.stringify(copied))
-      message.ack()
-    } catch (err) {
-      console.error(`mailbox-store-raw: mailbox ${message.body.mailboxId} failed`, err)
+      console.error(`mailbox-store: mailbox ${body.mailboxId} failed`, err)
       message.retry({ delaySeconds: retryDelay(message.attempts) })
     }
   }

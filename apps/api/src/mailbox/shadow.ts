@@ -13,7 +13,7 @@ import { stripFooter } from '../mailserver/footer'
 import { folderRole, plainText } from '../mailserver/messages'
 import * as jmap from '../mailserver/stalwart/mail'
 import type { JmapFolder, JmapStoreEmail } from '../mailserver/stalwart/mail'
-import type { SearchJob } from '../search/jobs'
+import { enqueueStoreJobs, type MailboxStoreJob } from './jobs'
 import { organizationBucket, storageConfigured, type BucketEnv } from '../storage/buckets'
 import { deleteObject, getObjectRange, putObject } from '../storage/r2'
 import { decodePart, isBodyText } from './mime'
@@ -23,7 +23,7 @@ import type { RawStats, StoreAttachment, StoreRaw } from './store'
 import { MAX_INDEXED_CHARS, type StoreMessage, type StorePlacement } from './query'
 import { store } from './stub'
 
-export type ShadowEnv = BucketEnv & Pick<Env, 'DB' | 'STALWART_URL' | 'STALWART_API_KEY' | 'MAILBOX_STORE' | 'SEARCH_INDEX'>
+export type ShadowEnv = BucketEnv & Pick<Env, 'DB' | 'STALWART_URL' | 'STALWART_API_KEY' | 'MAILBOX_STORE' | 'STORE_COPY'>
 
 /** Messages per Email/get, and per call into the store. */
 const BATCH = 25
@@ -37,8 +37,17 @@ export const COPY_VERSION = 5
 
 /** Raw messages per queued copy job: each is a download and an upload. */
 const RAW_PER_JOB = 10
-/** Raw copies queued per sync, so a big mailbox's copy spreads over hours and search indexing keeps its turn on the queue. */
-const RAW_PER_SYNC = 2000
+/**
+ * Raw copies queued per sync. The copy has a queue of its own, so this only bounds how hard one sync leans on the
+ * mail server: about half an hour of downloads at the speed below.
+ */
+const RAW_PER_SYNC = 8000
+/** Raw messages copied at once within a job. Each is a download from the mail server, so this is also its load. */
+const RAW_PARALLEL = 4
+/** Messages over this are copied on their own, never alongside others, so a job stays within a Worker's memory. */
+const RAW_BIG_BYTES = 5 * 1024 * 1024
+/** Attachments over this are not read back from the bucket to check them: the read would double the memory used. */
+const VERIFY_MAX_BYTES = 8 * 1024 * 1024
 /** Raw messages over this are not copied (SES accepts 40 MB; anything larger came from an import). */
 const MAX_RAW_BYTES = 45 * 1024 * 1024
 
@@ -108,9 +117,9 @@ export async function syncStore(env: ShadowEnv, mailboxId: string): Promise<Stor
 async function queueRaw(env: ShadowEnv, mailbox: MailboxRow): Promise<number> {
   if (!mailbox.store_raw || !storageConfigured(env)) return 0
   const ids = await (await store(env, mailbox.id)).missingRaw(RAW_PER_SYNC)
-  const jobs: SearchJob[] = []
+  const jobs: MailboxStoreJob[] = []
   for (let i = 0; i < ids.length; i += RAW_PER_JOB) jobs.push({ kind: 'store-raw', mailboxId: mailbox.id, emailIds: ids.slice(i, i + RAW_PER_JOB) })
-  for (let i = 0; i < jobs.length; i += 100) await env.SEARCH_INDEX.sendBatch(jobs.slice(i, i + 100).map((body) => ({ body })))
+  await enqueueStoreJobs(env, jobs)
   return ids.length
 }
 
@@ -141,11 +150,11 @@ export async function copyRaw(env: ShadowEnv, mailboxId: string, emailIds: strin
   const bucket = await organizationBucket(env, mailbox.organization_id)
   const emails = await jmap.getStoreEmails(env, accountId, emailIds, MAX_INDEXED_CHARS)
   const records: StoreRaw[] = []
-  for (const e of emails) {
+  const copyOne = async (e: JmapStoreEmail) => {
     if (e.size > MAX_RAW_BYTES) {
       records.push({ id: e.id, key: '', size: e.size, diff: '', attachments: [] })
       result.skipped++
-      continue
+      return
     }
     const download = await jmap.downloadBlob(env, accountId, e.blobId, 'message.eml', 'message/rfc822')
     const raw = new Uint8Array(await download.arrayBuffer())
@@ -160,7 +169,7 @@ export async function copyRaw(env: ShadowEnv, mailboxId: string, emailIds: strin
       const content = decodePart(raw.subarray(part.start, part.start + part.length), part.encoding)
       const hash = await sha256Hex(content)
       let verified: boolean | null = null
-      if (!attachments.length) {
+      if (!attachments.length && part.length <= VERIFY_MAX_BYTES) {
         // Prove the read path on one attachment per message: fetch just its range from the bucket and decode it.
         const range = await getObjectRange(env, bucket, key, part.start, part.length)
         verified = !!range && (await sha256Hex(decodePart(range, part.encoding))) === hash
@@ -185,6 +194,11 @@ export async function copyRaw(env: ShadowEnv, mailboxId: string, emailIds: strin
     result.matched += attachments.filter((a) => a.fileId).length
     if (diff.length) result.differing++
   }
+  // Small messages RAW_PARALLEL at a time; big ones on their own afterwards, so memory stays within a Worker's.
+  const small = emails.filter((e) => e.size <= RAW_BIG_BYTES)
+  const big = emails.filter((e) => e.size > RAW_BIG_BYTES)
+  for (let i = 0; i < small.length; i += RAW_PARALLEL) await Promise.all(small.slice(i, i + RAW_PARALLEL).map(copyOne))
+  for (const e of big) await copyOne(e)
   if (records.length) {
     const { gone } = await (await store(env, mailbox.id)).setRaw(records)
     // Deleted while it was being copied: take the copy back out.
@@ -212,11 +226,10 @@ async function firstCopy(env: ShadowEnv, mailbox: MailboxRow, folders: JmapFolde
   return result
 }
 
-async function enqueueCopy(env: Pick<Env, 'SEARCH_INDEX'>, mailboxId: string, emailIds: string[]): Promise<void> {
-  const jobs: SearchJob[] = []
+async function enqueueCopy(env: Pick<Env, 'STORE_COPY'>, mailboxId: string, emailIds: string[]): Promise<void> {
+  const jobs: MailboxStoreJob[] = []
   for (let i = 0; i < emailIds.length; i += PER_JOB) jobs.push({ kind: 'store-emails', mailboxId, emailIds: emailIds.slice(i, i + PER_JOB) })
-  // sendBatch takes up to 100 messages.
-  for (let i = 0; i < jobs.length; i += 100) await env.SEARCH_INDEX.sendBatch(jobs.slice(i, i + 100).map((body) => ({ body })))
+  await enqueueStoreJobs(env, jobs)
 }
 
 /**
@@ -293,6 +306,8 @@ export type StoreCheck = {
   differences: { folder: string; server: { total: number; unread: number }; stored: { total: number; unread: number } }[]
   /** The raw copy's progress and what it found, for mailboxes with store_raw on. */
   raw?: RawStats
+  /** Size of the store's database in bytes (a Durable Object holds 10 GB). */
+  bytes: number
 }
 
 /** Compares the store's per-folder counts with the mail server's. Null when the mailbox doesn't use the store. */
@@ -303,7 +318,7 @@ export async function checkStore(env: ShadowEnv, mailboxId: string): Promise<Sto
   const stub = await store(env, mailbox.id)
   const counts = await stub.counts()
   const byFolder = new Map(counts.folders.map((c) => [c.folderId, c]))
-  const check: StoreCheck = { mailboxId, server: 0, stored: counts.messages, differences: [] }
+  const check: StoreCheck = { mailboxId, server: 0, stored: counts.messages, differences: [], bytes: await stub.size() }
   if (mailbox.store_raw) check.raw = await stub.rawStats()
   for (const f of folders) {
     const have = byFolder.get(f.id) ?? { total: 0, unread: 0 }
