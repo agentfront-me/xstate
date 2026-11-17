@@ -6,7 +6,7 @@ import { Pricing } from './controls'
 import { PostList } from './post-list'
 
 export const metadata: Metadata = {
-  title: { absolute: 'xstate · Free business email with AI agents, on your own domain' },
+  title: { absolute: 'xstate · Free business email on your own domain, built for AI apps' },
   alternates: {
     types: {
       'text/plain': '/llms.txt',
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 
 const faqs = [
   ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own. Buying one during setup and a free xstate subdomain are coming.'],
-  ['Which agents can read my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
+  ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT connect over MCP. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['How is this different from Google Workspace?', 'xstate is built for working with AI. Each AI app you connect gets its own access, limited to the mailboxes you pick and the actions you tick. Search by meaning across mail, attachments and files is included, and the free plan covers up to 5 people.'],
   ['Can I move from Gmail or Google Workspace?', 'Yes. An administrator authorizes the import once, and xstate copies your mail, calendars, contacts and Drive files, then keeps the copy up to date until you switch your domain over.'],
   ['Do you use my mail to train AI?', 'No. We do not use your content to train AI models, for advertising or for profiling, and our staff do not read it unless you ask us to. Agents use the AI provider and key your organization chooses.'],
@@ -35,7 +35,7 @@ const structuredData = {
       name: 'xstate',
       applicationCategory: 'BusinessApplication',
       operatingSystem: 'Web',
-      description: 'Business email, calendar and files on your own domain, with AI agents you control.',
+      description: 'Business email, calendar and files on your own domain, with AI apps you control.',
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },
         { '@type': 'Offer', name: 'Pro', price: '6', priceCurrency: 'USD' },
@@ -50,10 +50,10 @@ const structuredData = {
 }
 
 const features = [
-  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with aliases, shared inboxes and a calendar for every mailbox.', points: ['hello@, support@, sales@ in one click', 'Invitations and replies from the same account', 'IMAP, SMTP and JMAP'] },
+  { id: 'F01', tag: 'email', title: 'Email and calendar on your domain', body: 'Addresses on a domain you own, with aliases, shared inboxes and a calendar for every mailbox.', points: ['hello@, support@, sales@ in one click', 'Invitations and replies from the same account', 'Works with Apple Mail, Outlook and any mail app'] },
   { id: 'F02', tag: 'dns', title: 'DNS that checks itself', body: 'xstate shows the records your domain needs and checks public DNS every few seconds until they are in place.', points: ['Live status for each record', 'Copy them all as a zone file', 'Send the records to a developer'] },
-  { id: 'F03', tag: 'agents', title: 'Nothing goes out without your permission', body: 'Connect an agent over MCP. Each gets its own token and only the permissions you tick.', points: ['Read, draft or send: you tick which', 'Only the mailboxes you pick', 'Disconnect in one click'] },
-  { id: 'F04', tag: 'search', title: 'Search across mail and files', body: 'Ask a question and get the passages that answer it, from your mail, attachments and files.', points: ['Search by meaning, in any language', 'PDFs and attachments included', 'Agents search the same index'] },
+  { id: 'F03', tag: 'ai apps', title: 'Nothing goes out without your permission', body: 'Connect Claude, Codex or Cursor. Each one gets its own access and only the permissions you tick.', points: ['Read, draft or send: you tick which', 'Only the mailboxes you pick', 'Disconnect in one click'] },
+  { id: 'F04', tag: 'search', title: 'Search across mail and files', body: 'Ask a question and get the passages that answer it, from your mail, attachments and files.', points: ['Search by meaning, in any language', 'PDFs and attachments included', 'AI apps search the same index'] },
   { id: 'F05', tag: 'files', title: 'Storage for every mailbox', body: 'Save attachments, share files with your team and keep earlier versions.', points: ['Save attachments in one click', 'Personal and shared spaces', 'AI apps get no access, read, or read and change'] },
   { id: 'F06', tag: 'import', title: 'Move from Google Workspace', body: 'Bring your mail, calendars, contacts and Drive files across in one import, kept in sync until you switch.', points: ['One authorization for the whole domain', 'Mail, calendars, contacts and Drive', 'Switch your domain when the copy is done'] },
 ]
@@ -237,7 +237,7 @@ function HeroArt() {
       <g opacity="0" fill="var(--ink)" textAnchor="middle">
         <Fade begin="2.6s" dur="0.5s" />
         <text x="60" y="150" fill="var(--faint)" fontSize="11">
-          Your agent
+          Your AI app
         </text>
         <Box x={10} y={162} w={100} h={36} label="Claude / Codex" />
       </g>
@@ -265,7 +265,7 @@ function HeroArt() {
         <Dot path="M324,180 L 420,180 C 436,180 440,234 456,234" dur="2.2s" begin="5.4s" muted />
       </g>
       <text x="280" y="348" textAnchor="middle" fill="var(--muted)" fontSize="11" opacity="0">
-        Your agent works inside your domain. Nothing goes out without your permission.
+        Your AI app works inside your domain. Nothing goes out without your permission.
         <Fade begin="3.2s" dur="0.6s" />
       </text>
     </svg>

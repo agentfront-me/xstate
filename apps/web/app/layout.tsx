@@ -12,7 +12,7 @@ const themeCookieScript = `try {
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://xstate.com'),
-  title: { default: 'xstate · Free business email with AI agents, on your own domain', template: '%s · xstate' },
+  title: { default: 'xstate · Free business email on your own domain, built for AI apps', template: '%s · xstate' },
   description: 'Business email, calendar and files on your own domain, free for up to 5 people. Connect Claude, Codex or Cursor and choose what each one may do.',
   icons: { icon: '/favicon.svg', apple: '/brand/apple-touch-icon.png' },
   openGraph: { images: '/brand/og-image.png' },
