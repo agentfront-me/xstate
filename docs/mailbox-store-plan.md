@@ -507,6 +507,12 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   store didn't. The word index now stems too (`porter`), and stores made before are rebuilt (`COPY_VERSION` 5). A
   store that is being recopied answers lists only partly, so a mailbox in `read` mode goes back to `shadow` before
   a deploy that raises `COPY_VERSION`, and returns to `read` after the check.
+- **First large mailbox (2026-11-17, hireninja, 53,730 messages):** queuing the copy took 2.5 minutes inside one
+  mail-sync run (well under the 15-minute limit); the copy ran 12:20–13:34 UTC at a steady 11–12 messages a second
+  with no errors, and the check at 13:34 matched Stalwart in every folder (53,731, one email having arrived
+  meanwhile). 54,180 copies for 53,731 messages: retried and overlapping jobs store a message again, which
+  replaces it. While it ran, search indexing for every mailbox waited behind it on the shared queue. The check
+  doesn't report the store's size yet; it should, to watch the 10 GB limit.
 
 Differences from the plan above, for now:
 
