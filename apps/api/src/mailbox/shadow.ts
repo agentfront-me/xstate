@@ -33,7 +33,7 @@ const PER_JOB = 50
  * Raise this to make every store copy its mailbox again from the start: after a change to what the store keeps
  * or how it is filled.
  */
-export const COPY_VERSION = 2
+export const COPY_VERSION = 3
 
 /** Raw messages per queued copy job: each is a download and an upload. */
 const RAW_PER_JOB = 10

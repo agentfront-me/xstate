@@ -5,6 +5,7 @@
 
 import PostalMime from 'postal-mime'
 import { htmlToText } from '../mailserver/messages'
+import { readableText } from './compare'
 import { locateParts, withoutFiles, type MimePart } from './mime'
 import type { StoreAddress } from './query'
 
@@ -38,6 +39,6 @@ export async function parseRaw(raw: Uint8Array): Promise<ParsedMessage> {
     messageId: mail.messageId ?? null,
     inReplyTo: mail.inReplyTo ?? null,
     references: mail.references ?? null,
-    text: mail.text ?? (mail.html ? htmlToText(mail.html) : ''),
+    text: readableText(mail.text, mail.html, htmlToText),
   }
 }

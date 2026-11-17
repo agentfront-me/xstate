@@ -490,6 +490,14 @@ search served from it behind a flag. Our own mailboxes first. This is where doma
   loop; production search was complete anyway, because that mail arrived as changes), and `COPY_VERSION` is 2 so
   the store copies again.
 
+- **First raw copy on real mail (2026-11-17, asif@xstate.com):** 566 of 566 messages copied (20.9 MB), counts
+  matching Stalwart in every folder, 58 attachments found, 36 matched to `files` rows, 29 read back from R2 by range
+  and all identical. Our parsing differed from Stalwart's on the text of 3 messages. Two were harmless: marketing
+  mail padded with invisible characters, which parsers break up differently; the comparison now ignores them. One
+  was a bug: an email whose plain-text part is empty kept empty text instead of using its HTML part. Fixed, and the
+  HTML-to-text conversion now decodes character references such as `&#847;`, which it left as written before; that
+  also improves search and agents on HTML-only mail today. `COPY_VERSION` is 3 so the store copies again.
+
 Differences from the plan above, for now:
 
 - **The separate attachment copies stay.** Downloads, scanning and search still read them; the positions are

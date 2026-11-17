@@ -10,6 +10,7 @@ import { refuseVirus } from '../security/refuse'
 import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
+import { htmlToText } from './html-text'
 import { store } from '../mailbox/stub'
 import type { StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
@@ -418,22 +419,8 @@ export function plainText(e: Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValu
   return htmlParts.length ? htmlToText(bodyText(htmlParts, e.bodyValues)) : ''
 }
 
-/** Readable plain text from HTML, for messages sent without a text part. Agents and previews read this. */
-export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
+/** Readable plain text from HTML, for messages sent without a text part. Agents, previews and search read this. */
+export { htmlToText }
 
 function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Message {
   const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
