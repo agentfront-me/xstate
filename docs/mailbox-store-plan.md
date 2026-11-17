@@ -826,8 +826,92 @@ with the 30 days set to zero deleted the one message in Trash and its raw copy.
 marked the conversation read with no notice (unread 5 → 3); Pin, then Archive moved it to Archive with both
 messages and the pin; Unpin and "Move to inbox" brought it back, read and unpinned. One thing seen: right after
 "Move to inbox" from Archive, the mailbox's Inbox list in the app still showed the old list until a reload; the
-move itself had happened. Worth checking whether Stalwart mailboxes do the same in the app before treating it as
-a store issue.
+move itself had happened. Cause: the web app, for every mailbox, reloaded only folder counts after a move, and kept
+the destination folder's cached list (from before the move) as fresh for 30 seconds. Fixed in
+`apps/app/src/mail/MailPage.tsx` (a move also reloads the lists); deployed ("Fixed stale view") and tried: archive,
+then "Move to inbox", then the Inbox showed the conversation at once.
+
+#### Step 3: sending and drafts (approved and built 2026-11-18, uncommitted)
+
+**Goal:** a store-held mailbox sends, replies, forwards and keeps drafts with no Stalwart call: the reply box in
+the app, `email_send`, `email_create_draft` / `email_update_draft`, attachment uploads, and `POST /v1/emails` from a
+store-held address. The operations' inputs and results don't change. (99events.com is already verified for
+sending in SES: DKIM SUCCESS.)
+
+**Building the message.** A new pure module, `mailbox/compose.ts`, builds the MIME message that Stalwart builds
+today from the JMAP email: `From`, `To`, `Cc`, `Reply-To`, `Subject` (RFC 2047 when not ASCII), `Date`,
+`Message-ID`, `In-Reply-To` and `References`, the API's extra headers; `text/plain`, plus `text/html` as
+`multipart/alternative`, inline images as `multipart/related`, files as `multipart/mixed`; base64 for files and
+non-ASCII text, lines folded at 76. Written here rather than taken from a library, so its output is ours to test:
+tests build messages and read them back with our own parser (`mailbox/parse.ts`) and `locateParts`. `Bcc` is never
+in the message that leaves; its addresses go only to SES as recipients, and the Sent copy keeps them, as
+Stalwart's does.
+
+**Sending.** `sendMessage` keeps its checks (access, recipients, suppression, the From address, caps and
+suspension through `reserveSend`, file-type rules and the 25 MB attachment limit). For a store-held mailbox it then
+calls SES's `SendEmail` with the raw message and the To, Cc and Bcc addresses as destinations, instead of JMAP
+`EmailSubmission`. That needs an IAM user allowed to send, which the identity-managing user is not: a new
+`xstate-mail-send` with only `ses:SendRawEmail` for this account's identities, its keys as Worker secrets
+(`MAIL_SEND_ACCESS_KEY_ID`, `MAIL_SEND_SECRET_ACCESS_KEY`). A failed send releases the cap reservation, as now.
+Bounces, complaints and deliveries keep arriving at `/webhooks/ses` through each domain's notification topics.
+
+**Every send goes through SES,** including to other xstate addresses: a store-held recipient gets it back through
+SES receiving, a Stalwart-held one through its MX. Delivering straight to another mailbox's store (the plan's "mail
+between xstate mailboxes never leaves Cloudflare") is an optimization for later; the caps already count only outside
+addresses.
+
+**The Sent copy.** SES replaces the Message-ID (spike finding) with `<SES message id@<region>.amazonses.com>`, so
+replies would not match ours. After SES accepts, the Sent copy's raw message gets that Message-ID, is stored in R2
+and added to the store's Sent folder, read, in the conversation of the message it replies to (by In-Reply-To and
+References, as received mail is threaded). An API send with `saveToSent: false` stores nothing. The API's delivery
+log matches events by SES's message id, which the send returns, as well as by the Message-ID it chose.
+
+**Replies and forwards** read the original from the store (`getReplySource`): its Message-ID and References for
+threading, and for a forward its attachments, read from its raw copy by position. Afterwards the original is
+marked answered or forwarded in the store (new flags on `messages`, shown nowhere yet, kept for IMAP later).
+
+**Drafts** live only in the store: saving a draft writes its raw message to R2 and adds it to Drafts (a `draft`
+flag), with no SES call. `draftId` works as today: sending a draft, or saving a new version, deletes the old one.
+Reading a draft back gives its recipients, text, HTML and attachments from the raw copy, as any message.
+
+**Attachment uploads** for a store-held mailbox are scanned and checked as today, then kept in the organization's
+bucket at `<mailboxId>/uploads/<ULID>` with the id `upload.<ULID>` (Stalwart's blob ids are lowercase and dot-less,
+so they can't collide), read back when the message is built. Uploads not sent within 24 hours are deleted by the
+hourly job that empties Trash.
+
+**Not in step 3:** calendar invitations and answers (phase 3: they still go through Stalwart's calendar, which needs
+the mailbox's Stalwart account); system mail from `no-reply@xstate.com` (stays on Stalwart until xstate.com moves);
+a custom MAIL FROM domain (SPF alignment; DMARC passes on DKIM alone, which SES signs); direct delivery between
+store-held mailboxes; search indexing of sent mail (step 4).
+
+**Testing:** the builder's tests (plain, HTML, inline images, attachments, non-ASCII subject and names, threading
+headers, Bcc left out); locally with `SES_MODE=fake`, where sending logs the message instead of calling SES and the
+Sent copy, drafts and uploads go through the real store and dev bucket; then the pilot: a reply from
+`hello@99events.com` to the Gmail message (Gmail threads it, shows DKIM pass for 99events.com), Gmail's answer
+arriving in the same conversation, a draft saved, edited and sent, a forward with the 20 MB attachment, and an API
+send.
+
+**For you in AWS:** none until it's built; then I create the `xstate-mail-send` IAM user and its secrets, as for
+receiving, with your go-ahead.
+
+**Built:** `mailbox/compose.ts` (the builder, with tests that read every message back with postal-mime and
+`locateParts`; it writes into one buffer of the exact size so 25 MB of files needs about 60 MB), `mailbox/ses-send.ts`
+(SES v2 `SendEmail` with the raw message, the request body written straight from the bytes; `SES_MODE` fake logs
+instead), `mailbox/outbound.ts` (sending, drafts and uploads for store-held mailboxes), store methods
+`replySource`, `markOriginal`, `draft`, `removeDraft` and Sent and Drafts in `deliver` (new columns `answered`,
+`forwarded`, `is_draft`), `checkOutgoing` split out of `compose` in `mailserver/messages.ts` so both paths make the
+same checks, and unsent uploads deleted after 24 hours by the hourly job (their ULID says when). The Sent copy
+replaces our Message-ID with `<SES id>@us-east-2.amazonses.com` and adds the Bcc line; whether that is exactly the
+Message-ID recipients see is checked on the pilot.
+
+**Local test, end to end** with `SES_MODE=fake`: an upload (`upload.<ULID>`), a draft with a Bcc and that file, the
+draft edited (the old one gone, one draft left), the draft sent as a reply (it joined the 3-message conversation;
+the Sent copy has the Bcc, the file and the SES Message-ID; SES was given To and Bcc separately; Drafts empty), and
+a forward that carried the original's `résumé.csv`.
+
+**Sending set up (2026-11-18):** IAM user `xstate-mail-send` with an inline policy allowing only `ses:SendRawEmail`
+and `ses:SendEmail` on this account's identities in us-east-2; its key stored straight into the Worker secrets
+`MAIL_SEND_ACCESS_KEY_ID` and `MAIL_SEND_SECRET_ACCESS_KEY` (never printed).
 
 #### Our own MX name (discussed 2026-11-17, deferred)
 

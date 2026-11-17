@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { inboundJob, messageIds, previewOf, subjectKey, ulid } from './inbound.ts'
+import { inboundJob, messageIds, previewOf, subjectKey, ulid, ulidTime } from './inbound.ts'
 
 const received = (over: Record<string, unknown> = {}) => ({
   notificationType: 'Received',
@@ -57,6 +57,11 @@ describe('ulid', () => {
     const b = ulid(1_700_000_000_001)
     assert.match(a, /^[0-9A-HJKMNP-TV-Z]{26}$/)
     assert.ok(a < b)
+  })
+
+  it('gives back the time it was made', () => {
+    assert.equal(ulidTime(ulid(1_700_000_000_123)), 1_700_000_000_123)
+    assert.ok(Number.isNaN(ulidTime('fsbiaabmqk')))
   })
 
   it('can never equal a Stalwart id, which is lowercase', () => {

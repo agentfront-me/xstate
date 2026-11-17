@@ -14,6 +14,7 @@ import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
 import { readableText } from '../mailbox/compare'
+import { draftInStore, sendFromStore, uploadToStore } from '../mailbox/outbound'
 import { answeredByStore, heldByStore, parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
 import { store } from '../mailbox/stub'
 import type { StoreListRow } from '../mailbox/query'
@@ -562,6 +563,8 @@ export async function sendMessage(
   mailboxId: string,
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
+  const held = await heldMailbox(env, actor, mailboxId)
+  if (held) return sendFromStore(env, held, input, await checkOutgoing(env, actor, held, input, true))
   const { mailbox, accountId, identityId, draftsId, sentId, email, original, recipients } = await compose(env, actor, mailboxId, input, true)
 
   // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
@@ -589,10 +592,18 @@ export async function saveDraft(
   mailboxId: string,
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
+  const held = await heldMailbox(env, actor, mailboxId)
+  if (held) return draftInStore(env, held, input, await checkOutgoing(env, actor, held, input, false))
   const { accountId, draftsId, email } = await compose(env, actor, mailboxId, input, false)
   const saved = await jmap.createDraft(env, accountId, draftsId, email)
   if (input.draftId) await dropDraft(env, accountId, input.draftId)
   return saved
+}
+
+/** The mailbox, with write access checked, when the store holds its mail (sending and drafts go to mailbox/outbound.ts). */
+async function heldMailbox(env: EmailEnv, actor: Actor, mailboxId: string): Promise<MailboxRow | null> {
+  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  return heldByStore(mailbox) ? mailbox : null
 }
 
 /** Deletes the draft a message replaced. The new message already exists, so a failure here only leaves a copy. */
@@ -600,11 +611,11 @@ async function dropDraft(env: EmailEnv, accountId: string, draftId: string) {
   await jmap.destroyEmail(env, accountId, draftId).catch((err) => console.error('drafts: deleting the old draft failed', err))
 }
 
-/** The JMAP email for sendMessage and saveDraft, after the access, recipient and folder checks. */
-async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: SendInput, sending: boolean) {
-  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-
+/**
+ * The checks every outgoing message passes, whichever side holds the mailbox: recipients (count, suppression) and
+ * the From address and name. Returns what the message is built with.
+ */
+export async function checkOutgoing(env: EmailEnv, actor: Actor, mailbox: MailboxRow, input: SendInput, sending: boolean) {
   const recipients = [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])]
   if (sending && !recipients.length) throw new EmailError('no_recipients', 'Add at least one recipient')
   if (recipients.length > MAX_RECIPIENTS) {
@@ -618,23 +629,31 @@ async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: Se
     throw new EmailError('recipient_suppressed', `Not sending to ${list.join(', ')}. Remove them and try again.`, 409)
   }
 
-  const [folders, identities, user] = await Promise.all([
-    jmap.getFolders(env, [accountId]).then((m) => m.get(accountId) ?? []),
-    jmap.getIdentities(env, accountId),
-    usersDb.findById(env.DB, actor.userId),
-  ])
-  const draftsId = folders.find((f) => f.role === 'drafts')?.id
-  const sentId = folders.find((f) => f.role === 'sent')?.id
-  if (!draftsId || !sentId) throw new EmailError('folder_not_found', 'This mailbox has no Drafts or Sent folder', 409)
-
   // Mail written in the app leaves from the primary address. The API may also name one of the mailbox's aliases.
   const fromEmail = input.api?.from.email.toLowerCase() ?? mailbox.address
   if (fromEmail !== mailbox.address && !(JSON.parse(mailbox.aliases) as string[]).includes(fromEmail)) {
     throw new EmailError('forbidden_from', 'This mailbox may not send from that address', 403)
   }
   // The display name people see: your own name on your personal mailbox, otherwise the mailbox's name.
+  const user = mailbox.kind === 'personal' ? await usersDb.findById(env.DB, actor.userId) : null
   const ownName = (mailbox.kind === 'personal' ? user?.name : mailbox.display_name) ?? mailbox.display_name ?? null
   const fromName = input.api?.from.name ?? ownName
+  return { recipients, fromEmail, fromName, ownName }
+}
+
+/** The JMAP email for sendMessage and saveDraft, after the access, recipient and folder checks. */
+async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: SendInput, sending: boolean) {
+  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  const accountId = mailbox.stalwart_id
+  const { recipients, fromEmail, fromName, ownName } = await checkOutgoing(env, actor, mailbox, input, sending)
+
+  const [folders, identities] = await Promise.all([
+    jmap.getFolders(env, [accountId]).then((m) => m.get(accountId) ?? []),
+    jmap.getIdentities(env, accountId),
+  ])
+  const draftsId = folders.find((f) => f.role === 'drafts')?.id
+  const sentId = folders.find((f) => f.role === 'sent')?.id
+  if (!draftsId || !sentId) throw new EmailError('folder_not_found', 'This mailbox has no Drafts or Sent folder', 409)
   const identityId =
     identities.find((i) => i.email.toLowerCase() === fromEmail)?.id ??
     (await jmap.createIdentity(env, accountId, { name: ownName ?? '', email: fromEmail }))
@@ -756,6 +775,12 @@ export async function uploadAttachment(
   if (safety.level === 'blocked') {
     await checked.cancel().catch(() => null)
     throw blockedAttachment(options.name, safety)
+  }
+  if (heldByStore(mailbox)) {
+    // Kept in the organization's bucket until the message is written (mailbox/outbound.ts), scanned first as below.
+    const bytes = new Uint8Array(await new Response(checked).arrayBuffer())
+    if (scanning(env)) await refuseVirus(env, bytes, options.name)
+    return { blobId: await uploadToStore(env, mailbox, bytes, options.contentType), type: options.contentType, size: bytes.byteLength, safety }
   }
   if (!scanning(env)) {
     const blob = await jmap.uploadBlob(env, mailbox.stalwart_id, checked, options.contentType, options.size)

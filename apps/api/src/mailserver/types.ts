@@ -30,7 +30,12 @@ export type EmailEnv = Pick<
   | 'R2_SECRET_ACCESS_KEY'
   | 'R2_BUCKET'
   | 'APP_ORIGINS'
-> & { SCAN_SECRET?: string }
+> & {
+  SCAN_SECRET?: string
+  // Sending from mailboxes the store holds, straight through SES (mailbox/ses-send.ts): IAM user xstate-mail-send.
+  MAIL_SEND_ACCESS_KEY_ID?: string
+  MAIL_SEND_SECRET_ACCESS_KEY?: string
+}
 
 export type Domain = {
   id: string

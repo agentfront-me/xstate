@@ -104,7 +104,7 @@ export async function hourly(env: Env): Promise<void> {
   const purge = await purgeDeletedFiles(env)
   // Mailboxes whose mail the store holds: messages in Trash for 30 days are deleted for good.
   const trash = await purgeHeldTrash(env).catch((err) => (console.error('store-trash failed', err), null))
-  if (trash?.purged) console.log('store-trash', JSON.stringify(trash))
+  if (trash?.purged || trash?.uploads) console.log('store-trash', JSON.stringify(trash))
   if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
   // The virus scanner on the mail server: down, or its signatures have stopped updating.
   const scanner = await scannerHealth(env)

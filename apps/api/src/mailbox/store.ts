@@ -67,7 +67,8 @@ export type StoreRaw = {
 export type StoreDelivery = {
   /** The new message's id (a ULID, ./inbound.ts), also in its raw copy's key. */
   id: string
-  sesId: string
+  /** SES's id for the message, received or sent; null for a draft. A delivery with an id already here is a repeat. */
+  sesId: string | null
   messageId: string | null
   inReplyTo: string | null
   /** The References header's Message-IDs, oldest first. */
@@ -88,7 +89,20 @@ export type StoreDelivery = {
   attachments: Omit<StoreAttachment, 'fileId' | 'verified'>[]
   /** SES's spam verdict failed: delivered to Junk. */
   junk: boolean
+  /** Mail the mailbox wrote: its Sent copy, or a draft. Received mail leaves this out (Inbox, or Junk). */
+  folder?: 'sent' | 'drafts'
+  /** Read already: true for the mailbox's own mail. */
+  seen?: boolean
   verdicts: Record<string, string>
+}
+
+/** The message a reply or forward answers, as `replySource` gives it. */
+export type StoreReplySource = {
+  id: string
+  messageId: string | null
+  references: string[]
+  rawKey: string | null
+  attachments: { name: string | null; type: string; size: number; start: number; length: number; encoding: string }[]
 }
 
 /** A message of a conversation, as `thread` gives it. */
@@ -171,7 +185,7 @@ export class MailboxStore extends Agent<Env> {
         }
       }
     }
-    addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER'])
+    addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER', 'answered INTEGER', 'forwarded INTEGER', 'is_draft INTEGER'])
     addColumns('placements', ['uid INTEGER'])
     addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
@@ -530,10 +544,10 @@ export class MailboxStore extends Agent<Env> {
    */
   deliver(d: StoreDelivery): { id: string; threadId: string; folder: StoreFolderRole; duplicate: boolean } {
     return this.ctx.storage.transactionSync(() => {
-      const existing = this.findBySes(d.sesId)
-      if (existing) return { ...existing, folder: d.junk ? 'junk' : 'inbox', duplicate: true }
+      const role: StoreFolderRole = d.folder ?? (d.junk ? 'junk' : 'inbox')
+      const existing = d.sesId ? this.findBySes(d.sesId) : null
+      if (existing) return { ...existing, folder: role, duplicate: true }
       const folders = this.ensureOwned()
-      const role: StoreFolderRole = d.junk ? 'junk' : 'inbox'
       const folderId = folders.get(role)!
       const threadId = this.threadFor(d) ?? ulid()
       this.upsertOne({
@@ -541,7 +555,7 @@ export class MailboxStore extends Agent<Env> {
         threadId,
         folderIds: [folderId],
         folder: role,
-        seen: false,
+        seen: !!d.seen,
         pinned: false,
         from: d.from,
         to: d.to,
@@ -556,9 +570,9 @@ export class MailboxStore extends Agent<Env> {
       const modseq = this.nextModseq()
       this.db.exec(
         `UPDATE messages SET message_id = ?, in_reply_to = ?, refs = ?, subject_key = ?, ses_id = ?, verdicts = ?, modseq = ?,
-          raw_key = ?, raw_size = ?, parse_diff = '' WHERE n = ?`,
+          raw_key = ?, raw_size = ?, parse_diff = '', is_draft = ? WHERE n = ?`,
         d.messageId, d.inReplyTo, d.references.join(' ') || null, subjectKey(d.subject), d.sesId, JSON.stringify(d.verdicts), modseq,
-        d.rawKey, d.size, n,
+        d.rawKey, d.size, d.folder === 'drafts' ? 1 : 0, n,
       )
       const folder = [...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, folderId)][0] as { uid_next: number }
       this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, folder.uid_next, folderId, n)
@@ -654,6 +668,43 @@ export class MailboxStore extends Agent<Env> {
     const gone = this.remove(ids)
     this.nextModseq()
     return { purged: gone.removed, rawKeys: gone.rawKeys }
+  }
+
+  /**
+   * What a reply or forward needs from the message it answers: its Message-ID and References, for threading, and
+   * where its raw copy and its files are, for a forward. Null when the message isn't here.
+   */
+  replySource(id: string): StoreReplySource | null {
+    const row = [...this.db.exec(`SELECT n, message_id, refs, raw_key FROM messages WHERE id = ?`, id)][0] as
+      | { n: number; message_id: string | null; refs: string | null; raw_key: string | null }
+      | undefined
+    if (!row) return null
+    const attachments = [...this.db.exec(`SELECT name, type, size, start, length, encoding FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as StoreReplySource['attachments']
+    return { id, messageId: row.message_id, references: row.refs ? row.refs.split(' ') : [], rawKey: row.raw_key, attachments }
+  }
+
+  /** Marks the message a reply or forward was sent for (kept for IMAP's \\Answered and $Forwarded; shown nowhere yet). */
+  markOriginal(id: string, kind: 'answered' | 'forwarded') {
+    const n = [...this.db.exec(`SELECT n FROM messages WHERE id = ?`, id)][0]?.n as number | undefined
+    if (n === undefined) return
+    this.db.exec(`UPDATE messages SET ${kind === 'answered' ? 'answered' : 'forwarded'} = 1, modseq = ? WHERE n = ?`, this.nextModseq(), n)
+  }
+
+  /** A draft's threading headers, or null when `id` isn't a draft in Drafts (sent or deleted meanwhile). */
+  draft(id: string): { inReplyTo: string | null; references: string[] } | null {
+    const row = [...this.db.exec(`SELECT in_reply_to, refs FROM messages WHERE id = ? AND is_draft = 1 AND folder = 'drafts'`, id)][0] as
+      | { in_reply_to: string | null; refs: string | null }
+      | undefined
+    return row ? { inReplyTo: row.in_reply_to, references: row.refs ? row.refs.split(' ') : [] } : null
+  }
+
+  /** Deletes a draft that was sent or replaced. Returns its raw copy's key, for the caller to delete. */
+  removeDraft(id: string): string[] {
+    const isDraft = [...this.db.exec(`SELECT 1 FROM messages WHERE id = ? AND is_draft = 1`, id)].length > 0
+    if (!isDraft) return []
+    const gone = this.remove([id])
+    this.nextModseq()
+    return gone.rawKeys
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

@@ -203,6 +203,8 @@
   // MAIL_INBOUND_ACCESS_KEY_ID / MAIL_INBOUND_SECRET_ACCESS_KEY (optional until receiving is on): IAM user
   // xstate-mail-inbound, allowed only to read, write (the quarantine copy) and delete in the S3 bucket SES saves
   // received mail to.
+  // MAIL_SEND_ACCESS_KEY_ID / MAIL_SEND_SECRET_ACCESS_KEY (optional until a store-held mailbox sends): IAM user
+  // xstate-mail-send, allowed only ses:SendRawEmail, for mail sent straight through SES (mailbox/ses-send.ts).
   // PADDLE_API_KEY / PADDLE_WEBHOOK_SECRET: the live Paddle API key (pdl_live_…, "xstate production API", expires
   // 2027-11-16: make a new one before then) and the secret of the notification destination
   // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.

@@ -115,3 +115,11 @@ export function messageIds(header: string | null | undefined): string[] {
 export function previewOf(text: string, max = 300): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, max)
 }
+
+/** When a ULID was made, in milliseconds since 1970; NaN for anything else. */
+export function ulidTime(id: string): number {
+  if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) return NaN
+  let t = 0
+  for (const ch of id.slice(0, 10)) t = t * 32 + CROCKFORD.indexOf(ch)
+  return t
+}
