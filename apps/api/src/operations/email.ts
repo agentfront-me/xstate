@@ -231,11 +231,11 @@ export const emailListAccess = defineOperation({
 export const emailGrantAccess = defineOperation({
   name: 'email_grant_access',
   description:
-    'Let a member open a shared mailbox from their own mail app. They get full access (read, send, organize).',
-  input: z.object({ mailboxId: id, memberId: id }),
+    'Let a member open a shared mailbox. access "full" (the default) lets them read, send and organize; "read" only read (mailboxes on the new mail system only). Granting again with the other level changes it.',
+  input: z.object({ mailboxId: id, memberId: id, access: z.enum(['full', 'read']).default('full') }),
   http: { method: 'PUT', path: '/email/mailboxes/:mailboxId/access/:memberId' },
   mcp: false,
-  run: ({ env, actor }, input) => mailserver.grantMailboxAccess(env, actor, input.mailboxId, input.memberId),
+  run: ({ env, actor }, input) => mailserver.grantMailboxAccess(env, actor, input.mailboxId, input.memberId, input.access),
 })
 
 export const emailRevokeAccess = defineOperation({

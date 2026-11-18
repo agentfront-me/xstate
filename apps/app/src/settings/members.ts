@@ -23,6 +23,8 @@ export type OrgMember = {
   suspendedAt: string | null
   /** While their deletion is pending: when it finishes. Restoring them before then undoes it. */
   deleteAfter: string | null
+  /** The shared mailboxes they can open, and how. */
+  sharedAccess: { mailboxId: string; access: 'full' | 'read' }[]
 }
 
 export type MemberMailbox = {
@@ -122,6 +124,13 @@ export async function deleteMember(client: QueryClient, orgId: string, memberId:
   const { member } = await api<{ member: OrgMember }>('POST', `/members/${memberId}/delete`, input)
   put(client, orgId, member)
   return member
+}
+
+/** Gives a member access to a shared mailbox (or changes its level), or takes it away (null). */
+export async function setSharedAccess(client: QueryClient, orgId: string, mailboxId: string, memberId: string, access: 'full' | 'read' | null) {
+  if (access) await api('PUT', `/email/mailboxes/${mailboxId}/access/${memberId}`, { access })
+  else await api('DELETE', `/email/mailboxes/${mailboxId}/access/${memberId}`)
+  await client.invalidateQueries({ queryKey: key(orgId) })
 }
 
 export async function resendInvite(client: QueryClient, orgId: string, memberId: string) {

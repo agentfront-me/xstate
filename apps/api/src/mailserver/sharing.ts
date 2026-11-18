@@ -17,15 +17,33 @@ export async function listMailboxAccess(env: EmailEnv, actor: Actor, mailboxId: 
  * of the shared mailbox's group, so it shows up in their mail client (as shared folders in IMAP, a separate
  * account in JMAP). A member with no personal mailbox yet gets it when one is created.
  *
- * Only full access exists for now: Stalwart group membership can't be made read-only.
+ * `read` lets them read but not send, move or change anything. Only on xstate's new mail system: on the current mail
+ * server group membership can't be made read-only. Granting again with another level changes it.
  */
-export async function grantMailboxAccess(env: EmailEnv, actor: Actor, mailboxId: string, memberId: string): Promise<void> {
+export async function grantMailboxAccess(
+  env: EmailEnv,
+  actor: Actor,
+  mailboxId: string,
+  memberId: string,
+  access: 'full' | 'read' = 'full',
+): Promise<void> {
   const { mailbox } = await mailboxContext(env, actor, mailboxId, 'manage')
   if (mailbox.kind !== 'shared') throw new EmailError('not_shared', 'Access can only be granted to shared mailboxes')
+  if (access === 'read' && mailbox.backend !== 'store') {
+    throw new EmailError('read_needs_new_mail_system', "Read-only access works once this mailbox's domain has moved to xstate's new mail system", 409)
+  }
   await requireMemberInOrg(env, memberId, mailbox.organization_id)
 
+  const existing = await mailboxAccessDb.find(env.DB, mailbox.id, memberId)
+  if (existing) {
+    if (existing.access === 'owner') throw new EmailError('owner_access', "A mailbox owner's access can't be changed")
+    if (existing.access !== access) {
+      await env.DB.prepare('UPDATE mailbox_access SET access = ? WHERE mailbox_id = ? AND member_id = ?').bind(access, mailbox.id, memberId).run()
+    }
+    return
+  }
   const { meta } = await mailboxAccessDb
-    .insert(env.DB, { mailboxId: mailbox.id, memberId, access: 'full', createdAt: new Date().toISOString() })
+    .insert(env.DB, { mailboxId: mailbox.id, memberId, access, createdAt: new Date().toISOString() })
     .run()
   if (!meta.changes) return
 

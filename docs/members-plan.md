@@ -1,7 +1,7 @@
 # Plan: managing members
 
 Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
-(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18**, and phases 1–3 deployed the same day. **Phase 4 built and tested locally 2026-11-18.** Phases 5–6 not started.
+(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18**, and phases 1–3 deployed the same day. **Phases 4 and 5 built, tested and deployed 2026-11-18.** Phase 6 not started.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -264,6 +264,17 @@ The `member_has_mailbox` refusal is removed, because the dialog now handles the 
 - `PUT /mailboxes/:id/access/:memberId` with `{ access: 'full' | 'read' }`, and `DELETE` to remove it. Check
   whether the shared mailbox screens already have these endpoints before adding new ones.
 - The member dialog shows each shared mailbox with a checkbox and Full / Read only.
+
+#### Phase 5 as built (2026-11-18)
+
+- `PUT /email/mailboxes/:id/access/:memberId` takes `access: 'full' | 'read'` (default full). Granting again with
+  the other level changes it. Read only is refused for mailboxes on the current mail server.
+- The members list returns each member's `sharedAccess` (to themselves and to people who manage members). The
+  member dialog lists the shared mailboxes with a checkbox and Full / Read only. Owners and admins see a note that
+  they open every shared mailbox.
+- Fix found while testing: syncing Stalwart group memberships (`stalwartIdsForMember`) now skips mailboxes on the
+  new mail system. A personal mailbox turned shared by a member deletion is a Stalwart user, so Stalwart refused it
+  as a group, and every later grant to people with access to it failed.
 
 ### Phase 6: mobile
 

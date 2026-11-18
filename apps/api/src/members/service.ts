@@ -51,6 +51,8 @@ export type OrgMember = {
   suspendedAt: string | null
   /** While their deletion is pending: when it finishes. Restoring them before then undoes it (members/deletion.ts). */
   deleteAfter: string | null
+  /** The shared mailboxes they can open, and how. Only shown to themselves and people who manage members. */
+  sharedAccess: { mailboxId: string; access: 'full' | 'read' }[]
 }
 
 export type MemberMailbox = {
@@ -60,7 +62,7 @@ export type MemberMailbox = {
   addresses: { id: string; address: string; domainId: string; primary: boolean }[]
 }
 
-type Extras = { mailboxes: Map<string, MemberMailbox>; canManage: boolean }
+type Extras = { mailboxes: Map<string, MemberMailbox>; shared: Map<string, OrgMember['sharedAccess']>; canManage: boolean }
 
 async function extrasFor(env: MembersEnv, organizationId: string, me: Member, memberId?: string): Promise<Extras> {
   const mailboxes = new Map<string, MemberMailbox>()
@@ -71,7 +73,15 @@ async function extrasFor(env: MembersEnv, organizationId: string, me: Member, me
     if (!box) mailboxes.set(r.member_id, (box = { id: r.mailbox_id, backend: r.backend, addresses: [] }))
     box.addresses.push({ id: r.address_id, address: r.address, domainId: r.domain_id, primary: !!r.is_primary })
   }
-  return { mailboxes, canManage: canManage(me) }
+  const shared = new Map<string, OrgMember['sharedAccess']>()
+  const { results } = await env.DB.prepare(
+    `SELECT ma.member_id, ma.mailbox_id, ma.access FROM mailbox_access ma JOIN mailboxes mb ON mb.id = ma.mailbox_id
+     WHERE mb.organization_id = ? AND mb.kind = 'shared' AND ma.access IN ('full', 'read') AND (? IS NULL OR ma.member_id = ?)`,
+  )
+    .bind(organizationId, memberId ?? null, memberId ?? null)
+    .all<{ member_id: string; mailbox_id: string; access: 'full' | 'read' }>()
+  for (const r of results) shared.set(r.member_id, [...(shared.get(r.member_id) ?? []), { mailboxId: r.mailbox_id, access: r.access }])
+  return { mailboxes, shared, canManage: canManage(me) }
 }
 
 const canManage = (me: Member) => isAdmin(me) || me.permissions.org.includes('members.manage')
@@ -98,6 +108,7 @@ function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
     mailbox: extras?.mailboxes.get(row.id) ?? null,
     suspendedAt: row.suspended_at,
     deleteAfter: row.delete_after,
+    sharedAccess: you || extras?.canManage ? (extras?.shared.get(row.id) ?? []) : [],
   }
 }
 

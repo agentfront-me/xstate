@@ -71,19 +71,24 @@ export function remove(db: D1Database, mailboxId: string, memberId: string): D1P
   return db.prepare('DELETE FROM mailbox_access WHERE mailbox_id = ? AND member_id = ?').bind(mailboxId, memberId)
 }
 
-/** Stalwart ids of the shared mailboxes a member can open, and of the personal mailboxes they own. */
+/**
+ * Stalwart ids of the shared mailboxes a member can open, and of the personal mailboxes they own, for Stalwart group
+ * membership. Only mailboxes Stalwart still holds: a mailbox on the new mail system is reached without Stalwart, and
+ * one turned shared by a member deletion (members/deletion.ts) is a Stalwart user, not a group, so Stalwart would
+ * refuse it as a group.
+ */
 export async function stalwartIdsForMember(db: D1Database, memberId: string) {
   const [shared, personal] = await db.batch<{ stalwart_id: string }>([
     db
       .prepare(
         `SELECT m.stalwart_id FROM mailbox_access ma JOIN mailboxes m ON m.id = ma.mailbox_id
-         WHERE ma.member_id = ? AND m.kind = 'shared'`,
+         WHERE ma.member_id = ? AND m.kind = 'shared' AND m.backend = 'stalwart'`,
       )
       .bind(memberId),
     db
       .prepare(
         `SELECT m.stalwart_id FROM mailbox_access ma JOIN mailboxes m ON m.id = ma.mailbox_id
-         WHERE ma.member_id = ? AND ma.access = 'owner' AND m.kind = 'personal'`,
+         WHERE ma.member_id = ? AND ma.access = 'owner' AND m.kind = 'personal' AND m.backend = 'stalwart'`,
       )
       .bind(memberId),
   ])

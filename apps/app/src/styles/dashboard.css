@@ -478,3 +478,7 @@ button.card-row:hover { background: var(--bg-hover); }
 .member-detail .md-row > div > span { color: var(--text-hi); }
 .delete-panel { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .delete-panel .row-gap { align-self: flex-end; }
+.shared-list { display: flex; flex-direction: column; gap: 6px; }
+.shared-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 96px; align-items: center; gap: 10px; min-height: 30px; }
+.shared-row .check { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-hi); }
+.shared-row .muted { font-size: 12px; text-align: right; }

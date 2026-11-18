@@ -24,6 +24,7 @@ import {
   sendPasswordReset,
   setMemberRole,
   setPrimaryAddress,
+  setSharedAccess,
   setTemporaryPassword,
   updateMember,
   useMembers,
@@ -533,6 +534,8 @@ export function MemberDialog({
           </section>
         )}
 
+        {manage && !m.deleteAfter && <SharedAccessSection account={account} member={m} />}
+
         {canHelpPassword && (
           <section>
             <h3>Password</h3>
@@ -757,6 +760,73 @@ function DeleteSection({ account, member: m }: { account: Account; member: OrgMe
           </span>
         </div>
       )}
+    </section>
+  )
+}
+
+/** The shared mailboxes a member can open, with Full or Read only. Owners and admins open them all anyway. */
+function SharedAccessSection({ account, member: m }: { account: Account; member: OrgMember }) {
+  const client = useQueryClient()
+  const orgId = account.org.id
+  const shared = account.mailboxes.filter((mb) => mb.kind === 'shared').sort((a, b) => a.address.localeCompare(b.address))
+  const [busy, setBusy] = useState<string | null>(null)
+  if (!shared.length) return null
+
+  if (m.role === 'owner' || m.role === 'admin') {
+    return (
+      <section>
+        <h3>Shared mailboxes</h3>
+        <p className="hint">{m.role === 'owner' ? 'Owners' : 'Admins'} can open every shared mailbox.</p>
+      </section>
+    )
+  }
+
+  const change = async (mailboxId: string, access: 'full' | 'read' | null) => {
+    setBusy(mailboxId)
+    try {
+      await setSharedAccess(client, orgId, mailboxId, m.id, access)
+    } catch (err) {
+      toast(errorMessage(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <section>
+      <h3>Shared mailboxes</h3>
+      <p className="hint">Full access can read, send and organize. Read only can't change or send anything.</p>
+      <div className="shared-list">
+        {shared.map((mb) => {
+          const current = m.sharedAccess.find((a) => a.mailboxId === mb.id)?.access ?? null
+          return (
+            <div className="shared-row" key={mb.id}>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!current}
+                  disabled={busy === mb.id}
+                  onChange={(e) => void change(mb.id, e.target.checked ? 'full' : null)}
+                />
+                <span className="ellipsis">{mb.displayName || mb.address.split('@')[0]}</span>
+              </label>
+              <span className="muted ellipsis">{mb.address}</span>
+              {current && (
+                <select
+                  className="select sm"
+                  aria-label={`Access to ${mb.address}`}
+                  value={current}
+                  disabled={busy === mb.id}
+                  onChange={(e) => void change(mb.id, e.target.value as 'full' | 'read')}
+                >
+                  <option value="full">Full</option>
+                  <option value="read">Read only</option>
+                </select>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </section>
   )
 }
