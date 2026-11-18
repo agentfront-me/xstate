@@ -5,6 +5,7 @@ import { syncSeats } from '../billing/service'
 import { defineOperation } from './define'
 import { search } from '../search/search'
 import { deliveryLog } from '../mailbox/delivery-log'
+import { cancelSwitch, flipSwitch, rollbackSwitch, startSwitch, switchStatus } from '../mailserver/domain-switch'
 
 const id = z.string().min(1).max(64)
 const kind = z.enum(['personal', 'shared', 'agent'])
@@ -526,6 +527,61 @@ export const emailGetDeliveryLog = defineOperation({
   run: ({ env, actor }, input) => deliveryLog(env, actor, input.organizationId, input),
 })
 
+// Moving a domain to the new mail system (docs/mailbox-store-plan.md, phase 4d). Owners only; not on MCP.
+
+export const emailGetDomainSwitch = defineOperation({
+  name: 'email_get_domain_switch',
+  description:
+    "Moving a domain's mail to the new mail system: where it stands (stalwart, switching or store), the readiness " +
+    'checks for each of its mailboxes, what public DNS shows for its MX, the steps taken so far, and the next step.',
+  input: z.object({ domainId: id }),
+  http: { method: 'GET', path: '/email/domains/:domainId/switch' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ switch: await switchStatus(env, actor, input.domainId) }),
+})
+
+export const emailStartDomainSwitch = defineOperation({
+  name: 'email_start_domain_switch',
+  description:
+    'Starts moving a ready domain: from now on mail Amazon SES receives for it is handed to the current mail server ' +
+    'until the flip, so its MX record can be changed to SES at any time.',
+  input: z.object({ domainId: id }),
+  http: { method: 'POST', path: '/email/domains/:domainId/switch/start' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ switch: await startSwitch(env, actor, input.domainId) }),
+})
+
+export const emailFlipDomainSwitch = defineOperation({
+  name: 'email_flip_domain_switch',
+  description:
+    "Once public DNS shows only Amazon SES's MX: moves the domain's mailboxes to the new mail system, step by step. " +
+    'If a step fails, call it again to carry on.',
+  input: z.object({ domainId: id }),
+  http: { method: 'POST', path: '/email/domains/:domainId/switch/flip' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ switch: await flipSwitch(env, actor, input.domainId) }),
+})
+
+export const emailRollbackDomainSwitch = defineOperation({
+  name: 'email_rollback_domain_switch',
+  description:
+    'Within 30 days of the flip: moves the mailboxes back to the current mail server and copies the mail received or ' +
+    'sent since the flip into it. Then point the MX back and cancel.',
+  input: z.object({ domainId: id }),
+  http: { method: 'POST', path: '/email/domains/:domainId/switch/rollback' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ switch: await rollbackSwitch(env, actor, input.domainId) }),
+})
+
+export const emailCancelDomainSwitch = defineOperation({
+  name: 'email_cancel_domain_switch',
+  description: "Ends a switch while the domain's MX still points at the current mail server (never flipped, or rolled back).",
+  input: z.object({ domainId: id }),
+  http: { method: 'POST', path: '/email/domains/:domainId/switch/cancel' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ switch: await cancelSwitch(env, actor, input.domainId) }),
+})
+
 export const emailOperations = [
   emailAddDomain,
   emailCheckDomain,
@@ -559,4 +615,9 @@ export const emailOperations = [
   emailUpdateDraft,
   emailGetSendingStatus,
   emailGetDeliveryLog,
+  emailGetDomainSwitch,
+  emailStartDomainSwitch,
+  emailFlipDomainSwitch,
+  emailRollbackDomainSwitch,
+  emailCancelDomainSwitch,
 ]

@@ -100,3 +100,13 @@ export async function storeHeldNames(db: D1Database): Promise<{ held: string[]; 
     .all<{ name: string; store: number; other: number }>()
   return { held: results.filter((r) => r.other === 0).map((r) => r.name), mixed: results.filter((r) => r.other > 0).map((r) => r.name) }
 }
+
+/** Where the mail of the domain an address is on lives (null for an address xstate doesn't have). */
+export async function pathOfAddress(db: D1Database, address: string): Promise<DomainRow['mail_path'] | null> {
+  return (
+    (await db
+      .prepare('SELECT d.mail_path AS p FROM addresses a JOIN domains d ON d.id = a.domain_id WHERE a.address = ?')
+      .bind(address.toLowerCase())
+      .first<'stalwart' | 'switching' | 'store'>('p')) ?? null
+  )
+}

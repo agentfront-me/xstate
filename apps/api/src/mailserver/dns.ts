@@ -174,6 +174,11 @@ export async function otherMxHosts(domain: string): Promise<string[]> {
   return [...new Set(hosts.filter((host) => host !== MX_HOST && !LEGACY_MX_HOSTS[host]))]
 }
 
+/** The domain's MX hosts as public DNS shows them (lowercase, no trailing dot); empty when there are none. */
+export async function mxHosts(domain: string): Promise<string[]> {
+  return ((await resolve(domain, 'MX')) ?? []).map((data) => hostname(data).split(/\s+/)[1] ?? '').filter(Boolean)
+}
+
 /** The record data for a name and type, or null when the name doesn't exist (NXDOMAIN). */
 async function resolve(name: string, type: RecordType): Promise<string[] | null> {
   const url = `${DOH_URL}?name=${encodeURIComponent(name)}&type=${type}`

@@ -18,6 +18,7 @@ import { catchUpHeld } from '../mailbox/events'
 import { copyHeldCalendars } from '../mailbox/calendar-store'
 import { sweepHeld } from '../mailbox/stalwart-sweep'
 import { syncStoreRouting } from '../mailserver/stalwart/routing'
+import { watchSwitches } from '../mailserver/domain-switch'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -127,6 +128,9 @@ export async function hourly(env: Env): Promise<void> {
   if (routing?.changed) console.log('stalwart-routing changed', JSON.stringify(routing))
   const swept = await sweepHeld(env).catch((err) => (console.error('stalwart-sweep failed', err), null))
   if (swept?.swept || swept?.events || swept?.failed) console.log('stalwart-sweep', JSON.stringify(swept))
+  // Domains being moved: when public DNS first shows only SES's MX (the flip itself is started by a person).
+  const switches = await watchSwitches(env).catch((err) => (console.error('domain-switch watch failed', err), []))
+  if (switches.length) console.log('domain-switch watch', JSON.stringify(switches))
   if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
   // The virus scanner on the mail server: down, or its signatures have stopped updating.
   const scanner = await scannerHealth(env)

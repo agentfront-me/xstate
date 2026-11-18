@@ -67,3 +67,9 @@ export function findByAddress(db: D1Database, address: string) {
     .bind(address.toLowerCase())
     .first<{ mailbox_id: string; organization_id: string }>()
 }
+
+/** Every address of a mailbox (primary and aliases) with its domain. */
+export async function listForMailbox(db: D1Database, mailboxId: string): Promise<{ address: string; domain_id: string; is_primary: number }[]> {
+  const { results } = await db.prepare('SELECT address, domain_id, is_primary FROM addresses WHERE mailbox_id = ?').bind(mailboxId).all<{ address: string; domain_id: string; is_primary: number }>()
+  return results
+}

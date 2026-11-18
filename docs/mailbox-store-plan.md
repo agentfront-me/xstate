@@ -1992,6 +1992,113 @@ on a new Stalwart domain (acme2.test) was refused with the message, one on acme.
 `xstate <sysmail@acme.test>`, with a `sent` line and the Sent copy in the store. Everything removed afterwards;
 acme.test back on `stalwart`. 440 tests pass.
 
+#### Step 4d: the switch itself (approved and built 2026-11-18, uncommitted)
+
+The order and the reasons are above ("The order of a switch, and why"). This is how it is built.
+
+**Record of a switch:** a D1 table `domain_switches` (migration): `domain_id`, `state` (`switching` | `flipped` |
+`rolled_back` | `cancelled`), `started_at`, `mx_seen_at` (first time public DNS showed only SES's MX), `flipped_at`,
+`ended_at`, `by` (user), and `steps` (JSON: each flip step with its time and outcome, so a flip that stops halfway
+can be resumed and support can see where it stopped). `domains.mail_path` stays the one value the rest of the code
+reads.
+
+**Owner-only operations, not on MCP** (`/v1/email/domains/:domainId/switch…`):
+
+| Call | Allowed when | Does |
+|---|---|---|
+| `GET …/switch` | always | readiness checks, current state, what public DNS shows, the next step |
+| `POST …/switch/start` | `stalwart`, ready | `mail_path` → `switching` |
+| `POST …/switch/flip` | `switching`, DNS shows only SES's MX | the flip (below); resumable |
+| `POST …/switch/cancel` | `switching`, DNS still shows Stalwart's MX | back to `stalwart` |
+| `POST …/switch/rollback` | `store`, within 30 days of the flip | back to `switching`, then `cancel` once the MX is back |
+
+The flip is started by a person, not by the hourly job: for our own domains we want to choose the moment. The hourly
+job records `mx_seen_at` for domains in `switching` and logs when they are ready to flip.
+
+**Ready checks** (shown by `GET`, required by `start` and again by `flip`), for every mailbox with an address on the
+domain:
+- a store copy in `read` mode, with the hourly check `ok` (counts match Stalwart);
+- raw copies complete (`missing: 0`) and threading headers filled (`left: 0`, 4c);
+- no alias on a domain that isn't moving with it;
+- the domain verified with SES (`sending: verified`): SES receiving needs it.
+
+**While `switching`: SES mail is handed to Stalwart.** In `receive.ts`, a recipient whose mailbox is on Stalwart and
+whose domain is `switching` gets the message imported into its Stalwart account (`uploadBlob`, then `Email/import`
+into Inbox, or Junk by our spam decision), instead of `not_on_store`. Logged as `delivered` with
+`handedToStalwart: true` in the mailbox's store. `Email/import` isn't idempotent, so before importing, the store's
+delivery log is checked for that SES id (a retried job imports nothing twice). Stalwart stays the source of truth;
+the shadow copy brings these messages into the store as it does now.
+
+**The flip,** step by step (each recorded in `steps`; a failed step stops the flip and `flip` can be called again):
+1. Checks again: DNS shows only SES's MX, the ready checks pass.
+2. For each mailbox: a last shadow sync, then **`takeOwnership`** on its store (new store method, found while testing
+   4c: today a copied store refuses delivered mail). It keeps the copied folders and their ids, adds any role folder
+   missing (Archive), gives every folder its `uid_validity`, `uid_next` and `highest_modseq`, sets `owner = store`
+   and the change counter, and marks the store **caught up**, so the hourly catch-up doesn't treat 53,000 old
+   messages as new (they were filed and indexed through Stalwart already; doing it again would duplicate files).
+   The sweep's starting point is set to the last sync's time.
+3. In one D1 batch: every mailbox `backend` → `store`, the domain `mail_path` → `store`, the switch `flipped`.
+4. Calendars copied (3a, `ensureCopied`).
+5. Stalwart's routing rule synced now (not at the hour).
+6. The sweep run now for these mailboxes (anything Stalwart received between the last sync and the rule).
+7. Each Stalwart account: sending blocked, and for personal accounts the password replaced with a random one nobody
+   knows (decided: mail apps stop rather than read a frozen copy). Stalwart's admin account (asif@xstate.io) is
+   skipped, as `setSendingBlocked` already does.
+8. The owner gets a system email: what moved, what to watch, how to roll back.
+
+**Rollback** (within 30 days): back to `switching` (SES mail handed to Stalwart again), mailboxes `backend` →
+`stalwart`, routing rule synced (removed), sending unblocked (the person sets a new password in the app for mail
+apps), then copied back into Stalwart: messages the store received or sent since the flip (from R2, by
+`Email/import` into Inbox, Junk or Sent, skipping Message-IDs Stalwart has). Moves, flags and calendar changes made
+after the flip are listed in the rollback's report, not copied back: rolling back is for a switch that failed, which
+should be noticed within hours, not weeks. The store is put back to `shadow` after Stalwart has everything, and copies
+again. Then the MX goes back to Stalwart and `cancel` ends the switch.
+
+**Not built here:** a screen (the operations and their status are enough for our own domains), automatic flipping,
+switching several domains at once.
+
+**Tests:**
+- Pure: the ready checks from given numbers; the "only SES's MX" rule (one SES record; SES plus a leftover Stalwart
+  record is not ready); `takeOwnership` on an in-memory store's tables (folders kept, Archive added, counters set,
+  caught up).
+- Locally (fake SES, `.test` domain whose records count as found): a domain from `stalwart` through `switching`
+  (a fake-SES message lands in Stalwart and then in the store copy; a retried notification imports nothing twice) to
+  the flip (all steps recorded; a reply to an old copied message lands in its old conversation, through the 4c
+  headers; mail from another Stalwart mailbox is queued for relay; the hourly catch-up queues nothing; the old account
+  can't send); then rollback (a message received after the flip is back in Stalwart) and cancel.
+- On production: first a throwaway subdomain of ours (its own SES identity and MX in Cloudflare, one shared mailbox):
+  the whole sequence including rollback. Then xstate.com.
+
+**Decided:** rollback copies messages only (moves, flags and calendar changes reported); the flip is started by a
+person.
+
+**Built:**
+- Migration 0039 `domain_switches`; `db/domain-switches.ts`.
+- `mailserver/switch-rules.ts` (pure, tested): `onlySesMx`, `readiness`.
+- `mailserver/domain-switch.ts`: `switchStatus`, `startSwitch`, `flipSwitch` (steps `checks`, `own:<address>`,
+  `move`, `calendars`, `routing`, `sweep`, `accounts`, `notice`, each recorded; resumable), `rollbackSwitch`,
+  `cancelSwitch`, `watchSwitches` (hourly). Owner only.
+- Operations `email_get_domain_switch`, `email_start_domain_switch`, `email_flip_domain_switch`,
+  `email_rollback_domain_switch`, `email_cancel_domain_switch` (`/v1/email/domains/:domainId/switch…`), `mcp: false`.
+- Store: `takeOwnership(sweptFrom)` (folders kept, missing role folders added, IMAP counters, correspondents from
+  Sent, caught up, sweep start), `sinceFlip`, `ownership`.
+- `receive.ts`: a recipient on a `switching` domain whose mailbox is still on Stalwart gets the message imported into
+  its Stalwart account (`handToStalwart`; the delivery log is checked first, so a retry imports nothing twice).
+- The sweep after a flip starts a day back (Message-IDs prevent duplicates), so a message the last sync only queued
+  for copying isn't lost.
+
+**Local test** (a new `switch.test` domain in the dev organization, shared mailbox box@, three messages delivered
+inside Stalwart): copy in `read` with raw copies → status ready on every check → `start` (`switching`) → a fake-SES
+message imported into Stalwart, the same notification again recognised as a duplicate → `flip`: all nine steps,
+mailbox on the store, routing rule with switch.test → a reply to "Seed message 1" with another subject joined its
+old conversation through the 4c headers; the message that arrived while switching was in the store; the hourly run
+queued no catch-up and swept nothing; mail from dev@acme.test (Stalwart) to box@ was queued for relay, not delivered
+to the old account → `rollback`: the post-flip reply copied back into Stalwart (1 copied), mailbox back on Stalwart
+with a fresh shadow copy, routing rule removed; a second rollback refused → `cancel`: `stalwart`. Test domain removed,
+local Stalwart's strategy as before. 4 new unit tests; 444 tests pass.
+
+**Deploy:** migration 0039 runs in CI. Nothing changes until someone starts a switch.
+
 #### Mail apps (IMAP, SMTP, CalDAV)
 
 A moved mailbox's mail is no longer in Stalwart, so IMAP shows a frozen copy and SMTP sending would leave no Sent

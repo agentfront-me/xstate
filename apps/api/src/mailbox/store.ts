@@ -1036,6 +1036,68 @@ export class MailboxStore extends Agent<Env> {
     return 'claimed'
   }
 
+  /**
+   * Turns a store that holds a copy of Stalwart mail into one that holds the mail itself (the flip of a domain
+   * switch, docs/mailbox-store-plan.md phase 4d). The copied folders keep their ids; any role folder missing is
+   * added; every folder gets the IMAP counters delivery uses; the people the mailbox has written to are recorded
+   * from Sent (spam layer 3). Marked caught up, so the hourly catch-up doesn't offer every old message again (they
+   * were filed and indexed when Stalwart had them), and the sweep from Stalwart starts at `sweptFrom`. Safe to repeat.
+   */
+  takeOwnership(sweptFrom: string): { already: boolean; added: string[]; folders: number; messages: number } {
+    const messages = [...this.db.exec(`SELECT count(*) AS c FROM messages`)][0]!.c as number
+    if (this.meta('owner') === 'store') return { already: true, added: [], folders: 0, messages }
+    const added: string[] = []
+    let folders = 0
+    this.ctx.storage.transactionSync(() => {
+      const roles = new Set([...this.db.exec(`SELECT role FROM folders WHERE role IS NOT NULL`)].map((r) => r.role as string))
+      const wanted: [StoreFolderRole, string][] = [['inbox', 'Inbox'], ['sent', 'Sent'], ['drafts', 'Drafts'], ['archive', 'Archive'], ['junk', 'Junk'], ['trash', 'Trash']]
+      for (const [role, name] of wanted) {
+        if (roles.has(role)) continue
+        this.db.exec(`INSERT INTO folders (id, role, name) VALUES (?, ?, ?)`, ulid(), role, name)
+        added.push(role)
+      }
+      for (const f of [...this.db.exec(`SELECT id FROM folders WHERE uid_validity IS NULL`)]) {
+        const validity = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff || 1
+        this.db.exec(`UPDATE folders SET uid_validity = ?, uid_next = COALESCE(uid_next, 1), highest_modseq = COALESCE(highest_modseq, 0) WHERE id = ?`, validity, f.id)
+        folders++
+      }
+      for (const row of this.db.exec(`SELECT to_json, received_s FROM messages WHERE folder = 'sent'`)) {
+        this.wroteTo((JSON.parse(row.to_json as string) as StoreAddress[]).map((a) => a.email), row.received_s as number)
+      }
+      this.setMeta('correspondents_filled', '1')
+      this.setMeta('events_caught_up', '1')
+      this.setMeta('stalwart_swept_until', sweptFrom)
+      if (this.meta('modseq') === null) this.setMeta('modseq', '0')
+      this.setMeta('owner', 'store')
+    })
+    return { already: false, added, folders, messages }
+  }
+
+  /**
+   * Messages the store received or sent itself since `sinceS` (unix seconds), for copying back into Stalwart when a
+   * switch is rolled back. Mail swept in from Stalwart is left out: Stalwart has it.
+   */
+  sinceFlip(sinceS: number): { id: string; folder: string | null; rawKey: string | null; messageId: string | null; receivedAt: string }[] {
+    return [
+      ...this.db.exec(
+        `SELECT id, folder, raw_key, message_id, received_s FROM messages
+          WHERE received_s >= ? AND ses_id IS NOT NULL AND ses_id NOT LIKE 'stalwart.%' ORDER BY received_s`,
+        sinceS,
+      ),
+    ].map((r) => ({
+      id: r.id as string,
+      folder: (r.folder as string | null) ?? null,
+      rawKey: (r.raw_key as string | null) ?? null,
+      messageId: (r.message_id as string | null) ?? null,
+      receivedAt: new Date((r.received_s as number) * 1000).toISOString(),
+    }))
+  }
+
+  /** Who holds the mail: the store itself, or Stalwart (a copy). */
+  ownership(): 'store' | 'copy' {
+    return this.meta('owner') === 'store' ? 'store' : 'copy'
+  }
+
   /** Which of these Message-IDs the store already has (for the sweep from Stalwart: never twice). */
   knownMessageIds(ids: string[]): string[] {
     if (!ids.length) return []

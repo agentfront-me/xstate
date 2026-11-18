@@ -823,3 +823,9 @@ export async function getThreadingHeaders(
     missing: (result?.notFound as string[] | undefined) ?? [],
   }
 }
+
+/** Whether the account has a message with this Message-ID (without angle brackets). For copying mail back safely. */
+export async function hasMessageId(env: StalwartEnv, accountId: string, messageId: string): Promise<boolean> {
+  const [result] = await mail(env, [['Email/query', { accountId, filter: { header: ['Message-ID', `<${messageId}>`] }, limit: 1 }]])
+  return ((result?.ids as string[] | undefined) ?? []).length > 0
+}
