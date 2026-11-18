@@ -363,6 +363,10 @@ export async function getEmailFolders(env: StalwartEnv, accountId: string, ids: 
 export type JmapStoreEmail = JmapEmailSummary & Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValues'> & {
   /** The raw message, for downloadBlob. */
   blobId: string
+  /** Threading headers (RFC 8621 header properties), for the store's threading of later replies. */
+  messageId?: string[] | null
+  inReplyTo?: string[] | null
+  references?: string[] | null
 }
 
 /** Messages with everything the mailbox store keeps: the summary fields and the body text. Missing ids are left out. */
@@ -374,7 +378,7 @@ export async function getStoreEmails(env: StalwartEnv, accountId: string, ids: s
       {
         accountId,
         ids,
-        properties: [...SUMMARY, 'blobId', 'textBody', 'htmlBody', 'bodyValues'],
+        properties: [...SUMMARY, 'blobId', 'textBody', 'htmlBody', 'bodyValues', 'messageId', 'inReplyTo', 'references'],
         bodyProperties: ['partId', 'type'],
         fetchTextBodyValues: true,
         fetchHTMLBodyValues: true,
@@ -800,4 +804,22 @@ export async function receivedSince(
     ['Email/get', { accountId, '#ids': { resultOf: 'c0', name: 'Email/query', path: '/ids' }, properties: ['blobId', 'messageId', 'receivedAt', 'from'] }],
   ])
   return (got?.list as { id: string; blobId: string; messageId: string[] | null; receivedAt: string; from: JmapAddress[] | null }[] | undefined) ?? []
+}
+
+/**
+ * Only the threading headers of these messages (Message-ID, In-Reply-To, References), for filling them in on copies
+ * made before they were kept (mailbox/shadow.ts, phase 4c). No body, no raw message. Ids the server no longer has
+ * come back in `missing`.
+ */
+export async function getThreadingHeaders(
+  env: StalwartEnv,
+  accountId: string,
+  ids: string[],
+): Promise<{ found: { id: string; messageId: string[] | null; inReplyTo: string[] | null; references: string[] | null }[]; missing: string[] }> {
+  if (!ids.length) return { found: [], missing: [] }
+  const [result] = await mail(env, [['Email/get', { accountId, ids, properties: ['id', 'messageId', 'inReplyTo', 'references'] }]])
+  return {
+    found: (result?.list as { id: string; messageId: string[] | null; inReplyTo: string[] | null; references: string[] | null }[] | undefined) ?? [],
+    missing: (result?.notFound as string[] | undefined) ?? [],
+  }
 }

@@ -20,6 +20,7 @@ import {
   type StoreListRow,
   type StoreMessage,
   type StorePlacement,
+  type StoreThreading,
   type StoreRow,
 } from './query'
 import { subjectKey, ulid } from './inbound'
@@ -221,6 +222,9 @@ export class MailboxStore extends Agent<Env> {
     }
     addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER', 'answered INTEGER', 'forwarded INTEGER', 'is_draft INTEGER'])
     addColumns('placements', ['uid INTEGER'])
+    // Threading headers for copied mail (phase 4c): when they were filled in, also for rows without a Message-ID.
+    addColumns('messages', ['threading_s INTEGER'])
+    sql.exec(`CREATE INDEX IF NOT EXISTS messages_no_threading ON messages (n) WHERE threading_s IS NULL AND message_id IS NULL AND ses_id IS NULL`)
     addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
     sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_ses_id ON messages (ses_id) WHERE ses_id IS NOT NULL`)
@@ -353,11 +357,57 @@ export class MailboxStore extends Agent<Env> {
       this.db.exec(`DELETE FROM headers_fts WHERE rowid = ?`, n)
     }
     this.place(n, receivedS, m.folderIds, m.seen)
+    if (m.threading) this.writeThreading(n, m.threading)
     this.db.exec(`INSERT INTO headers_fts (rowid, sender, recipients, subject) VALUES (?, ?, ?, ?)`, n, addressText(m.from), addressText(m.to), m.subject)
     if (m.text !== undefined) {
       if (existing !== undefined) this.db.exec(`DELETE FROM text_fts WHERE rowid = ?`, n)
       this.db.exec(`INSERT INTO text_fts (rowid, subject, body) VALUES (?, ?, ?)`, n, m.subject, m.text.slice(0, MAX_INDEXED_CHARS))
     }
+  }
+
+  private writeThreading(n: number, t: StoreThreading) {
+    this.db.exec(
+      `UPDATE messages SET message_id = ?, in_reply_to = ?, refs = ?, threading_s = ? WHERE n = ?`,
+      t.messageId, t.inReplyTo, t.references.join(' ') || null, Math.floor(Date.now() / 1000), n,
+    )
+  }
+
+  /**
+   * Copied messages still without threading headers (phase 4c), oldest first. Mail the store received itself has
+   * them already (it has an SES id), and rows filled in are marked even when they have no Message-ID at all.
+   */
+  missingThreading(limit: number): string[] {
+    return [
+      ...this.db.exec(`SELECT id FROM messages WHERE threading_s IS NULL AND message_id IS NULL AND ses_id IS NULL ORDER BY n LIMIT ?`, limit),
+    ].map((r) => r.id as string)
+  }
+
+  /** Fills in threading headers; ids the store doesn't have are ignored. */
+  setThreading(rows: StoreThreading[]): { filled: number } {
+    let filled = 0
+    this.ctx.storage.transactionSync(() => {
+      for (const t of rows) {
+        const n = [...this.db.exec(`SELECT n FROM messages WHERE id = ?`, t.id)][0]?.n as number | undefined
+        if (n === undefined) continue
+        this.writeThreading(n, t)
+        filled++
+      }
+    })
+    return { filled }
+  }
+
+  /** How the backfill stands: rows with headers (or marked done) and rows still to do. With `touch`, records a run. */
+  threadingStats(touch = false): { done: number; left: number; lastRunS: number | null } {
+    if (touch) this.setMeta('threading_run_s', String(Math.floor(Date.now() / 1000)))
+    const row = [
+      ...this.db.exec(
+        `SELECT (SELECT count(*) FROM messages WHERE threading_s IS NULL AND message_id IS NULL AND ses_id IS NULL) AS left_,
+                (SELECT count(*) FROM messages) AS total`,
+      ),
+    ][0]!
+    const left = row.left_ as number
+    const last = this.meta('threading_run_s')
+    return { done: (row.total as number) - left, left, lastRunS: last ? Number(last) : null }
   }
 
   private place(n: number, receivedS: number, folderIds: string[], seen: boolean) {

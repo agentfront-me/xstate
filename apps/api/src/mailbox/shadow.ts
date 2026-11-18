@@ -20,7 +20,7 @@ import { decodePart } from './mime'
 import { parseDifferences } from './compare'
 import { fileParts, parseRaw } from './parse'
 import type { RawStats, StoreAttachment, StoreRaw } from './store'
-import { MAX_INDEXED_CHARS, type StoreMessage, type StorePlacement } from './query'
+import { MAX_INDEXED_CHARS, type StoreMessage, type StorePlacement, type StoreThreading } from './query'
 import { store } from './stub'
 
 export type ShadowEnv = BucketEnv & Pick<Env, 'DB' | 'STALWART_URL' | 'STALWART_API_KEY' | 'MAILBOX_STORE' | 'STORE_COPY'>
@@ -293,7 +293,55 @@ function toStoreMessage(e: JmapStoreEmail, folders: JmapFolder[]): StoreMessage 
     size: e.size,
     hasAttachment: e.hasAttachment,
     text: stripFooter(plainText(e)),
+    // Kept from the first copy on (phase 4c), so only older copies need the backfill.
+    ...(e.messageId !== undefined && { threading: threadingOf(e.id, e) }),
   }
+}
+
+/** The headers as the store keeps them: the first Message-ID and In-Reply-To, every Reference. */
+function threadingOf(id: string, e: { messageId?: string[] | null; inReplyTo?: string[] | null; references?: string[] | null }): StoreThreading {
+  return { id, messageId: e.messageId?.[0] ?? null, inReplyTo: e.inReplyTo?.[0] ?? null, references: e.references ?? [] }
+}
+
+/** Rows per backfill job, and per call to the mail server. */
+const THREADING_PER_JOB = 500
+const THREADING_PER_CALL = 250
+/** A backfill that wrote nothing for this long is taken as stopped, and the hourly check starts it again. */
+const THREADING_STALL_S = 15 * 60
+
+export type ThreadingResult = { mailboxId: string; filled: number; missing: number; more: boolean }
+
+/**
+ * Fills in Message-ID, In-Reply-To and References for copied messages that don't have them (phase 4c), one batch:
+ * asked from the mail server (headers only), written in place. Ids the server no longer has are marked done with
+ * none. `more` says whether to queue the next batch.
+ */
+export async function fillThreading(env: ShadowEnv, mailboxId: string): Promise<ThreadingResult> {
+  const result: ThreadingResult = { mailboxId, filled: 0, missing: 0, more: false }
+  const mailbox = await mailboxesDb.find(env.DB, mailboxId)
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store') return result
+  const stub = await store(env, mailbox.id)
+  await stub.threadingStats(true)
+  const ids = await stub.missingThreading(THREADING_PER_JOB)
+  for (let i = 0; i < ids.length; i += THREADING_PER_CALL) {
+    const batch = ids.slice(i, i + THREADING_PER_CALL)
+    const { found, missing } = await jmap.getThreadingHeaders(env, mailbox.stalwart_id, batch)
+    const rows = [...found.map((e) => threadingOf(e.id, e)), ...missing.map((id) => ({ id, messageId: null, inReplyTo: null, references: [] }))]
+    result.filled += (await stub.setThreading(rows)).filled
+    result.missing += missing.length
+  }
+  result.more = ids.length === THREADING_PER_JOB
+  return result
+}
+
+/** From the hourly check: starts the backfill when rows are left and no batch has run lately. */
+export async function startThreading(env: ShadowEnv, mailboxId: string): Promise<{ done: number; left: number; started: boolean }> {
+  const stats = await (await store(env, mailboxId)).threadingStats()
+  const now = Math.floor(Date.now() / 1000)
+  const running = stats.lastRunS !== null && now - stats.lastRunS < THREADING_STALL_S
+  const started = stats.left > 0 && !running
+  if (started) await enqueueStoreJobs(env, [{ kind: 'store-threading', mailboxId }])
+  return { done: stats.done, left: stats.left, started }
 }
 
 export type StoreCheck = {
@@ -305,6 +353,8 @@ export type StoreCheck = {
   differences: { folder: string; server: { total: number; unread: number }; stored: { total: number; unread: number } }[]
   /** The raw copy's progress and what it found, for mailboxes with store_raw on. */
   raw?: RawStats
+  /** Threading headers (phase 4c): rows filled in, rows left, and whether a backfill was started now. */
+  threading?: { done: number; left: number; started: boolean }
   /** Size of the store's database in bytes (a Durable Object holds 10 GB). */
   bytes: number
 }
@@ -319,6 +369,7 @@ export async function checkStore(env: ShadowEnv, mailboxId: string): Promise<Sto
   const byFolder = new Map(counts.folders.map((c) => [c.folderId, c]))
   const check: StoreCheck = { mailboxId, server: 0, stored: counts.messages, differences: [], bytes: await stub.size() }
   if (mailbox.store_raw) check.raw = await stub.rawStats()
+  check.threading = await startThreading(env, mailbox.id)
   for (const f of folders) {
     const have = byFolder.get(f.id) ?? { total: 0, unread: 0 }
     check.server += f.totalEmails

@@ -2024,7 +2024,7 @@ that is only you; for customers it is announced, and `security.md` and the domai
   30 days?
 - How long to keep the old Stalwart accounts (proposed 30 days)?
 
-#### Threading headers for copied mail (design written 2026-11-18, for review; nothing built)
+#### Threading headers for copied mail (approved and built 2026-11-18, uncommitted)
 
 **Why:** a copied mailbox (hireninja: 53,747 messages, 5.1 GB of raw copies, in `read` mode) has every message, but
 its rows have no `message_id`, `in_reply_to` or `refs`: the shadow copy never stored them. After the switch, a reply
@@ -2060,6 +2060,28 @@ backend flips, the routing rule is applied and the sweep runs.
 locally on a copied mailbox: backfill fills every row, a reply to an old message delivered after the switch lands in
 the old thread, and the sweep skips a message the store already has; on production, hireninja first in `read` mode,
 checking the counts, then asif@xstate.com.
+
+**Built:**
+- Store: column `threading_s`, partial index of rows still to do, `missingThreading(limit)`, `setThreading(rows)`,
+  `threadingStats(touch)`; `upsert` writes the headers when a copy brings them (`StoreMessage.threading`).
+- `stalwart/mail.ts`: `getThreadingHeaders` (`Email/get` with `messageId`, `inReplyTo`, `references` only; not-found
+  ids returned), and `getStoreEmails` asks for the three headers too.
+- `shadow.ts`: `fillThreading` (500 rows per job, 250 per call; ids the server no longer has are marked done),
+  `startThreading` from the hourly `checkStore` (when rows are left and no batch ran in the last 15 minutes), and
+  the check's log line has `threading: { done, left, started }`.
+- `jobs.ts`: job kind `store-threading` on the store-copy queue; each job queues the next while a full batch was done.
+
+**Local test:** jordan@conp3-8329.test copied the old way (headers switched off for that copy only, a temporary local
+edit reverted straight after): 37 rows without headers; the next hourly check started the backfill
+(`left: 37, started: true`), one job filled all 37, and the following check showed `done: 37, left: 0`.
+marcus@conp3-8329.test copied with the new code: 48 rows stored with their headers, nothing for the backfill. 440 tests
+pass (no new unit tests: store and Stalwart code, checked end to end).
+
+**Found while testing, for 4d:** a store that holds a shadow copy refuses delivered mail ("This store holds a copy
+of Stalwart mail"): `ensureOwned` only turns an empty store into an owning one. The flip needs a `takeOwnership`
+that keeps the copied folders (Stalwart's ids and roles), adds any role folder missing (Archive), gives every folder
+its `uid_validity`/`uid_next`/`highest_modseq`, and sets `owner` and `modseq`. The "reply lands in the old thread"
+check moves to 4d's tests, after that.
 
 ### 5. Retire Stalwart
 

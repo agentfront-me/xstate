@@ -30,7 +30,11 @@ export type StoreMessage = StorePlacement & {
   size: number
   hasAttachment: boolean
   text?: string
+  /** Message-ID, In-Reply-To and References as the mail server gives them (phase 4c); left out by older copies. */
+  threading?: StoreThreading
 }
+
+export type StoreThreading = { id: string; messageId: string | null; inReplyTo: string | null; references: string[] }
 
 export type StoreListQuery = {
   /** A folder role, 'pinned' (flagged, not in junk or trash) or 'all' (every folder but junk and trash). */
