@@ -117,6 +117,37 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       await put(next)
       if (notify) await notifyGuests(base, next)
     },
+    async createCalendar(name) {
+      const existing = await stub.calendarRows()
+      const id = ulid()
+      const sortOrder = existing.reduce((max, c) => Math.max(max, c.sortOrder), -1) + 1
+      await stub.setCalendarRows([{ id, name, color: null, isDefault: !existing.length, sortOrder }])
+      return id
+    },
+    async importEvents(events) {
+      const calendarIds = new Set((await calendars()).map((c) => c.id))
+      const now = new Date().toISOString()
+      const created: Record<string, string> = {}
+      const failed: Record<string, string> = {}
+      const rows: StoreEventPut[] = []
+      for (const [key, event] of Object.entries(events)) {
+        const calendarId = Object.keys((event.calendarIds as Record<string, true> | undefined) ?? {})[0]
+        if (!calendarId || !calendarIds.has(calendarId)) {
+          failed[key] = 'calendar not found'
+          continue
+        }
+        const id = ulid()
+        try {
+          rows.push(toRow({ uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as JmapEvent))
+          created[key] = id
+        } catch (err) {
+          // A date or repeat rule we can't place in time: this event only.
+          failed[key] = err instanceof Error ? err.message.slice(0, 200) : String(err)
+        }
+      }
+      for (let i = 0; i < rows.length; i += 200) await stub.putEvents(rows.slice(i, i + 200))
+      return { created, failed }
+    },
   }
   return backend
 }

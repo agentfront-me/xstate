@@ -655,9 +655,9 @@ id: a retried job looks up SES's message id first (below) and reuses what was st
   step 1 and logs a warning; refusing comes with the delivery log in step 4.
 
 **Message-IDs for copied mail.** Threading new mail into old conversations (needed when a real domain switches,
-phase 4) needs the Message-ID, In-Reply-To and References of copied mail too. The shadow copy will ask Stalwart for
-them (JMAP header properties, no raw read) and store them, with `COPY_VERSION` 6. Not needed for the pilot; it can
-ship later, before phase 4.
+phase 4) needs the Message-ID, In-Reply-To and References of copied mail too. Filled in place, not by raising
+`COPY_VERSION` (which would empty the store and copy everything again, raw copies included): see "Threading headers
+for copied mail" under phase 4. Not needed for the pilot.
 
 **Reading a store-owned mailbox** uses what phase 1 built (lists, filters, word search, threads, attachments from
 R2). New in step 1: `email_list_folders` and the folder counts, and the change token the apps poll
@@ -1332,7 +1332,15 @@ then worked). The columns are now in the `CREATE` too.
   and left the rule alone. dev back on Stalwart: the next run removed the rule and the strategy was exactly as before.
 - 4 new unit tests; 436 tests pass.
 
-**On production after the push:** the first hourly run adds the rule for 99events.com and sweeps `hello@` and
+**Deployed (2026-11-18, commit 46a283e) and working.** The 08:00 UTC hourly run swept `hello@`'s old Stalwart account:
+the two stray messages from asif@xstate.com (the "Internal routing test" email and the invitation email) were delivered
+into the store (`sweptFromStalwart`), and the event Stalwart had filed was copied into the store calendar; `team@` had
+nothing. Then, from asif@xstate.com, a new email and a new invitation to `hello@` went out through SES (envelope sender
+`…@us-east-2.amazonses.com`) and were delivered to the store within seconds; the invitation was proven by DMARC and
+added to `hello@`'s calendar on arrival (same organization). Deleting the event in asif@xstate.com's calendar sent a
+cancellation the same way, and `hello@`'s copy became cancelled. `ReloadSettings` was enough: no Stalwart restart.
+
+Before that, the plan for this step was: the first hourly run adds the rule for 99events.com and sweeps `hello@` and
 `team@` (expected: today's "Internal routing test" and the invitation from asif@xstate.com, plus anything else
 Stalwart kept). The docs say outbound-strategy changes needed a restart in production on 2026-11-05;
 `ReloadSettings` was enough locally, so the test after the push checks it: from asif@xstate.com, a plain email and
@@ -1779,6 +1787,79 @@ dev@acme.test held by the store:
   reads now. Fix: when a domain moves to the store, remove it (and its accounts) from Stalwart, so Stalwart
   sends to it by MX like any outside domain. Needed for the pilot now and part of every domain switch in phase 4.
 
+#### Step 3d: Google Calendar import into the store (approved and built 2026-11-18, uncommitted)
+
+**Why:** the Workspace import (`migration/calendar.ts`) still writes into Stalwart with the mailbox's
+`stalwart_id`. For a mailbox whose mail and calendars the store holds, an import would fill the old Stalwart
+calendar, which nobody sees.
+
+**Approach: the import uses the same calendar backend as the API** (`calendarsOf(env, mailbox)`, from 3a), so it
+writes wherever the mailbox's calendars are, Stalwart or store. Its own logic stays as it is: the claims in the
+MigrationStore, the conversion (`calendar-rules.ts`), occurrences written into their series, the final pass after
+the switch, and nothing ever sent to guests.
+
+The import makes six kinds of call today; four exist on the backend already:
+
+| Call | Today | Backend |
+|---|---|---|
+| set up Work and Personal | `setUpCalendars(env, accountId)` | `cal.setUp()` |
+| make a calendar per Google calendar | `jmap.createCalendar` | **new** `cal.createCalendar(name)` |
+| create a page of events, without emails | `jmap.importEvents` (per-event refusals) | **new** `cal.importEvents(events)` |
+| read, change, delete one event | `jmap.getEvent` / `updateEvent(…, false)` / `destroyEvent(…, false)` | same calls, `notify: false` |
+
+- **`createCalendar`:** Stalwart as today; store: a ULID calendar after the others in sort order.
+- **`importEvents`:** Stalwart as today; store: each event checked (its calendar exists, its time columns can be
+  worked out: a rule ical.js can't read is a refusal for that event, not for the page), then one `putEvents` call
+  for the page. Same result shape, `{ created, failed }`, so the import's report works unchanged.
+- **The 20-guest limit** (`MAX_PARTICIPANTS` in `calendar-rules.ts`, with its "N more guests weren't copied" note)
+  is Stalwart's. The store has no such limit, so for store-held mailboxes the limit is lifted to the API's own
+  guest limit for imports (proposed: 100, since imported events send nothing). The note stays for anything over.
+- **Mailboxes that move while an import runs:** each page asks for the backend afresh, so a page after the switch
+  goes to the store. Pages written to Stalwart before the switch are carried over by the one-time calendar copy
+  (3a), which runs at the switch; the sweep (Stalwart routing fix) copies any event it missed by UID. The
+  MigrationStore's source→target ids stay valid because copied events keep their ids.
+
+**Related gap, not in 3d:** the Workspace import's **mail** copy (`migration/mail.ts`, `jmap.importEmails`) also
+writes into Stalwart. Importing mail into a store-held mailbox needs its own step (the store's `deliver` with a
+`migrated` source instead of SES verdicts, and no agents, calendar rules or "new mail" pushes for old mail). Proposed
+as part of phase 4, since moving a Google Workspace customer onto a store-held domain is when it is first needed.
+
+**Free/busy:** not in 3d. Nothing in the app or the MCP tools uses it today; it can be its own small step when the
+event editor wants to show guests' availability.
+
+**Tests:**
+- Pure: the participant limit by backend.
+- Locally, with the fake Google (`migration/google` fakes): import into dev@acme.test held by the store: primary
+  calendar into Work, a second Google calendar becomes its own calendar, a repeating event with a changed and a
+  cancelled occurrence lands as one series with its overrides, an event with 30 guests is kept whole; a retried page
+  adds nothing twice; the final pass applies a change and a deletion made in Google after the first copy.
+- The same run against a Stalwart-held mailbox, to show nothing changed for those.
+- On the pilot: only if there is a Google account with a test calendar to import from; otherwise local only.
+
+**Decided:** 100 guests per imported event on the store (the proposal).
+
+**Built:**
+- `CalendarBackend` gains `createCalendar(name)` and `importEvents(events)`; Stalwart's are the existing JMAP calls,
+  the store's make a ULID calendar after the others, and check each event (calendar exists, time columns can be
+  worked out) before one `putEvents` per 200, refusing only the bad ones.
+- `migration/calendar-rules.ts`: `MAX_PARTICIPANTS_STORE = 100` and `ConvertContext.maxParticipants` (the trim note
+  names the limit used); `contextFor` picks it by `mailbox.backend`.
+- `migration/calendar.ts`: no Stalwart calls left; every page and the final pass ask `calendarsOf(env, mailbox)`.
+  Occurrence changes written into a store-held series pass the series' own sequence, so the final pass's sequence
+  comparison isn't thrown off by the store's own bump.
+
+**Local test** (fake Google, `GOOGLE_MODE=fake`):
+- dev@acme.test held by the store, calendar-only import: 12/12 done; calendars Work, Personal and a new
+  "Team offsite"; the weekday standup with its EXDATE excluded, a cancelled occurrence excluded and a moved occurrence
+  (listed before its series) applied; the 25-person all-hands kept every guest (Stalwart's limit would have cut it to
+  20); Lisbon-time and all-day events kept their zone; the month-end series (`BYSETPOS=-1`) expands. The final pass
+  applied its three changes: "Kickoff" added, "Design review (v2)" renamed, "Day off" deleted.
+- A second import, into a new Stalwart-held mailbox (priya@acme.test): unchanged behaviour, the same 3 calendars and
+  8 events in Stalwart, the all-hands trimmed to 20, the standup with its 3 occurrence changes.
+- 1 new unit test (the limit by context); 437 tests pass.
+
+**Deploy:** no migration, queue or secret. Nothing on the pilot uses the import; it is covered locally.
+
 #### Open questions
 
 - For 3b: is there an Outlook.com (or Microsoft 365) address we can send test invitations to? Outlook is the strictest
@@ -1791,6 +1872,43 @@ dev@acme.test held by the store:
 ### 4. Switching domains
 
 The MX switch and flip above, one domain at a time, starting with our own.
+
+#### Threading headers for copied mail (design written 2026-11-18, for review; nothing built)
+
+**Why:** a copied mailbox (hireninja: 53,747 messages, 5.1 GB of raw copies, in `read` mode) has every message, but
+its rows have no `message_id`, `in_reply_to` or `refs`: the shadow copy never stored them. After the switch, a reply
+to an old message is threaded by those (`deliver`: In-Reply-To and References looked up in `messages.message_id`),
+so without them every reply to old mail starts a new conversation, and the sweep's "already in the store"
+check (by Message-ID) can't recognise copied mail.
+
+**Not by raising `COPY_VERSION`.** A version change runs `reset()` and copies again from the start: the index
+(about 75 minutes for hireninja, with empty lists meanwhile unless it is put back to `shadow` first) and every raw
+message from Stalwart again (`copyOne` downloads unconditionally; a few hours for 5.1 GB). Nothing about the copy is
+wrong; only three columns are missing.
+
+**Instead, a backfill in place:**
+- Store: `missingThreading(limit)` returns ids of rows without `message_id` and not yet tried (a `threading_s`
+  column marks rows done, including ones that have no Message-ID at all, so they aren't asked for forever);
+  `setThreading(rows)` writes `message_id`, `in_reply_to`, `refs` (and `threading_s`) in one statement per batch.
+- From Stalwart, not the raw copies: `Email/get` with `properties: ['messageId', 'inReplyTo', 'references']` for
+  500 ids per call (RFC 8621 header properties; no body, no raw). About 110 calls for hireninja. Reading the
+  headers back out of R2 would avoid Stalwart but means reading 5.1 GB.
+- Ids that Stalwart no longer has (deleted meanwhile) are marked done; the shadow sync removes them anyway.
+- Runs as `store-threading` jobs on the existing `STORE_COPY` queue (the same queue and pacing as the raw copy), a
+  batch per job, the next batch queued by the job itself until none are left; started by the hourly
+  `mailbox-store-check` for every store with rows missing it, so it also covers mail copied later.
+- New shadow copies store the three headers from the start (`getStoreEmails` asks for them too), so the backfill
+  only ever has old rows to do.
+- Safe in `read` mode and safe to repeat; the hourly check logs `threading: done/left` per mailbox.
+
+**Before a domain switches** (phase 4's checklist, with the routing rule and the sweep from phase 3): the mailbox's
+copy is complete (raw copies `n/n`), its threading backfill shows nothing left, its calendars are copied, then the
+backend flips, the routing rule is applied and the sweep runs.
+
+**Tests:** pure tests for the batch handling (done rows skipped, rows without a Message-ID marked, deleted ids);
+locally on a copied mailbox: backfill fills every row, a reply to an old message delivered after the switch lands in
+the old thread, and the sweep skips a message the store already has; on production, hireninja first in `read` mode,
+checking the counts, then asif@xstate.com.
 
 ### 5. Retire Stalwart
 

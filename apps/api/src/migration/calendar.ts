@@ -1,4 +1,5 @@
-// Copying one person's Google calendars into their xstate mailbox's calendars (Stalwart, JMAP Calendars). Only the
+// Copying one person's Google calendars into their xstate mailbox's calendars (Stalwart, or the mailbox's store once
+// its mail is there: mailserver/calendar-backend.ts picks, as for the API). Only the
 // calendars they own: the primary one goes into their default calendar ("Work"), each other one into a calendar of
 // the same name. Per calendar, two listings, one page per queue job:
 //   events       single events and repeating series, imported as they are (claimed first in the MigrationStore,
@@ -11,9 +12,8 @@ import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
 import * as migrationsDb from '../db/migrations'
 import type { MigrationUserRow } from '../db/migrations'
-import { setUpCalendars } from '../mailserver'
-import * as jmap from '../mailserver/stalwart/calendar'
-import { convertEvent, occurrenceOverride, skipReason, type ConvertContext } from './calendar-rules'
+import { calendarsOf, type CalendarBackend } from '../mailserver/calendar-backend'
+import { convertEvent, MAX_PARTICIPANTS, MAX_PARTICIPANTS_STORE, occurrenceOverride, skipReason, type ConvertContext } from './calendar-rules'
 import { finishIfDone } from './final'
 import { GoogleError } from './google/auth'
 import { workspace, type GEvent } from './google/workspace'
@@ -53,10 +53,11 @@ export async function copyCalendarPage(env: Env, job: CalendarJob): Promise<void
 async function copyPage(env: Env, job: CalendarJob, organizationId: string, u: MigrationUserRow, mailbox: MailboxRow) {
   const ws = workspace(env)
   const store = migrationStore(env, organizationId)
-  const accountId = mailbox.stalwart_id
+  // Asked afresh on every page: a mailbox that moves to the store mid-import gets the rest there.
+  const backend = await calendarsOf(env, mailbox)
   let cursor = u.calendar_cursor ? (JSON.parse(u.calendar_cursor) as Cursor) : null
   if (!cursor) {
-    cursor = { calendars: await targetCalendars(env, u, accountId, store), index: 0, phase: 'events', pageToken: null }
+    cursor = { calendars: await targetCalendars(env, u, backend, store), index: 0, phase: 'events', pageToken: null }
     await env.DB.prepare("UPDATE migration_users SET calendar_state = 'copying', calendar_cursor = ? WHERE migration_id = ? AND google_id = ?")
       .bind(JSON.stringify(cursor), u.migration_id, u.google_id)
       .run()
@@ -69,9 +70,9 @@ async function copyPage(env: Env, job: CalendarJob, organizationId: string, u: M
   let held = 0
   if (cursor.phase === 'events') {
     const claim = `${job.migrationId}:${u.google_id}:${job.chain}:${cal.id}:${cursor.pageToken ?? 'first'}`
-    held = await importEvents(env, accountId, store, u.google_id, cal, ctx, page.events.filter((e) => !e.recurringEventId), claim)
+    held = await importEvents(backend, store, u.google_id, cal, ctx, page.events.filter((e) => !e.recurringEventId), claim)
   } else {
-    await applyOccurrences(env, accountId, store, u.google_id, cal, page.events.filter((e) => !!e.recurringEventId))
+    await applyOccurrences(backend, store, u.google_id, cal, page.events.filter((e) => !!e.recurringEventId))
   }
 
   // Next: this listing's next page, else the occurrences listing, else the next calendar. Held items: come back.
@@ -96,9 +97,9 @@ async function copyPage(env: Env, job: CalendarJob, organizationId: string, u: M
 }
 
 /** The person's Google calendars, each with the xstate calendar it goes into (made here when needed). */
-async function targetCalendars(env: Env, u: MigrationUserRow, accountId: string, store: ReturnType<typeof migrationStore>): Promise<CalendarEntry[]> {
+async function targetCalendars(env: Env, u: MigrationUserRow, backend: CalendarBackend, store: ReturnType<typeof migrationStore>): Promise<CalendarEntry[]> {
   const ws = workspace(env)
-  const [google, xstate] = await Promise.all([ws.calendarList(u.email), setUpCalendars(env, accountId)])
+  const [google, xstate] = await Promise.all([ws.calendarList(u.email), backend.setUp()])
   const main = xstate.find((c) => c.isDefault) ?? xstate[0]
   if (!main) throw new Error('This mailbox has no calendar')
   const others = google.filter((c) => !c.primary)
@@ -108,7 +109,7 @@ async function targetCalendars(env: Env, u: MigrationUserRow, accountId: string,
   for (const c of google) {
     let target = c.primary ? main.id : made[c.id]
     if (!target) {
-      target = await jmap.createCalendar(env, accountId, c.name.slice(0, 100))
+      target = await backend.createCalendar(c.name.slice(0, 100))
       await store.record('calendar', u.google_id, [{ sourceId: c.id, targetId: target }])
     }
     out.push({ id: c.id, name: c.name, primary: c.primary, timeZone: c.timeZone, target, syncToken: null })
@@ -123,7 +124,13 @@ function contextFor(u: MigrationUserRow, mailbox: MailboxRow, cal: CalendarEntry
   } catch {
     // No aliases.
   }
-  return { timeZone: cal.timeZone ?? 'Etc/UTC', googleAddresses: [u.email, ...aliases], address: mailbox.address }
+  return {
+    timeZone: cal.timeZone ?? 'Etc/UTC',
+    googleAddresses: [u.email, ...aliases],
+    address: mailbox.address,
+    // Stalwart holds at most 20 people per event; the store has no limit of its own.
+    maxParticipants: mailbox.backend === 'store' ? MAX_PARTICIPANTS_STORE : MAX_PARTICIPANTS,
+  }
 }
 
 /** Store keys are per calendar: Google event ids are only unique within one. */
@@ -131,8 +138,7 @@ const keyOf = (cal: CalendarEntry, id: string) => `${cal.id}/${id}`
 
 /** Imports single events and series. Returns how many were held by another job's claim. */
 async function importEvents(
-  env: Env,
-  accountId: string,
+  backend: CalendarBackend,
   store: ReturnType<typeof migrationStore>,
   owner: string,
   cal: CalendarEntry,
@@ -155,7 +161,7 @@ async function importEvents(
     creates[e.id] = { ...fields, calendarIds: { [cal.target]: true } }
     if (trimmed) notes.push({ sourceId: keyOf(cal, e.id), reason: 'guests_trimmed', detail: `${trimmed} guests left off` })
   }
-  const { created, failed } = await jmap.importEvents(env, accountId, creates)
+  const { created, failed } = await backend.importEvents(creates)
   await store.record('event', owner, Object.entries(created).map(([id, target]) => ({ sourceId: keyOf(cal, id), targetId: target })))
   const problems = [...skipped, ...Object.entries(failed).map(([id, detail]) => ({ sourceId: keyOf(cal, id), reason: 'event_refused', detail: detail.slice(0, 300) }))]
   if (problems.length) await store.skip('event', owner, problems)
@@ -165,7 +171,7 @@ async function importEvents(
 }
 
 /** Writes changed and cancelled occurrences into their series, one update per series. */
-async function applyOccurrences(env: Env, accountId: string, store: ReturnType<typeof migrationStore>, owner: string, cal: CalendarEntry, events: GEvent[]) {
+async function applyOccurrences(backend: CalendarBackend, store: ReturnType<typeof migrationStore>, owner: string, cal: CalendarEntry, events: GEvent[]) {
   if (!events.length) return
   const series = [...new Set(events.map((e) => e.recurringEventId!))]
   const targets = await store.targets('event', owner, series.map((id) => keyOf(cal, id)))
@@ -177,7 +183,7 @@ async function applyOccurrences(env: Env, accountId: string, store: ReturnType<t
       await store.skip('event', owner, mine.map((e) => ({ sourceId: keyOf(cal, e.id), reason: 'no_series' })))
       continue
     }
-    const current = await jmap.getEvent(env, accountId, target)
+    const current = await backend.getEvent(target)
     if (!current) continue
     const overrides = { ...(current.recurrenceOverrides ?? {}) }
     for (const e of mine) {
@@ -185,7 +191,8 @@ async function applyOccurrences(env: Env, accountId: string, store: ReturnType<t
       if (o) overrides[o.key] = { ...(overrides[o.key] as object | undefined), ...o.value }
     }
     // The whole map: a patch path into a map that doesn't exist yet fails on Stalwart.
-    await jmap.updateEvent(env, accountId, target, { recurrenceOverrides: overrides }, false)
+    // The store raises the sequence on a change unless given one; the final pass compares sequences, so keep Google's.
+    await backend.updateEvent(target, { recurrenceOverrides: overrides, ...(backend.kind === 'store' && { sequence: current.sequence ?? 0 }) }, false)
     await store.record('event', owner, mine.map((e) => ({ sourceId: keyOf(cal, e.id), targetId: target })))
   }
 }
@@ -263,7 +270,7 @@ async function applyChanges(
   full: boolean,
 ): Promise<number> {
   const store = migrationStore(env, organizationId)
-  const accountId = mailbox.stalwart_id
+  const backend = await calendarsOf(env, mailbox)
   const ctx = contextFor(u, mailbox, cal)
   const owner = u.google_id
   const whole = events.filter((e) => !e.recurringEventId)
@@ -279,11 +286,11 @@ async function applyChanges(
     }
     if (skipReason(e)) {
       // Deleted in Google (or turned into something we don't copy): remove our copy, never emailing anyone.
-      await jmap.destroyEvent(env, accountId, target, false)
+      await backend.destroyEvent(target, false)
       changed++
       continue
     }
-    const current = await jmap.getEvent(env, accountId, target)
+    const current = await backend.getEvent(target)
     // Our copy is gone (deleted in xstate since): leave it gone rather than bring it back.
     if (!current) continue
     // A full listing (after an expired token) goes through every event: never apply an older version than ours,
@@ -292,17 +299,17 @@ async function applyChanges(
     const { fields } = convertEvent(e, ctx)
     // Keep occurrences changed earlier; add the series' own excluded dates.
     const overrides = { ...(current.recurrenceOverrides ?? {}), ...((fields.recurrenceOverrides as object | undefined) ?? {}) }
-    await jmap.updateEvent(env, accountId, target, { ...fields, recurrenceOverrides: Object.keys(overrides).length ? overrides : null }, false)
+    await backend.updateEvent(target, { ...fields, recurrenceOverrides: Object.keys(overrides).length ? overrides : null }, false)
     changed++
   }
   if (creates.length) {
     const claim = `final:${owner}:${cal.id}:${Date.now()}`
-    await importEvents(env, accountId, store, owner, cal, ctx, creates, claim)
+    await importEvents(backend, store, owner, cal, ctx, creates, claim)
     changed += creates.length
   }
   const occurrences = events.filter((e) => !!e.recurringEventId)
   if (occurrences.length) {
-    await applyOccurrences(env, accountId, store, owner, cal, occurrences)
+    await applyOccurrences(backend, store, owner, cal, occurrences)
     changed += occurrences.length
   }
   return changed

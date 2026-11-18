@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { convertEvent, exdateKeys, MAX_PARTICIPANTS, occurrenceOverride, parseRrule, skipReason, utcToZoned } from './calendar-rules.ts'
+import { convertEvent, exdateKeys, MAX_PARTICIPANTS, MAX_PARTICIPANTS_STORE, occurrenceOverride, parseRrule, skipReason, utcToZoned } from './calendar-rules.ts'
 import type { GEvent } from './google/workspace.ts'
 
 const ctx = { timeZone: 'America/New_York', googleAddresses: ['ana@acme.com'], address: 'ana@acme.com' }
@@ -125,6 +125,17 @@ describe('convertEvent', () => {
     assert.ok(people.includes('mailto:ceo@acme.com') && people.includes('mailto:ana@acme.com'))
     assert.equal(trimmed, 32 - MAX_PARTICIPANTS)
     assert.match(fields.description as string, /12 more guests weren't copied/)
+  })
+
+  it('keeps every guest of a big meeting for a mailbox the store holds, up to its own limit', () => {
+    const attendees = Array.from({ length: 30 }, (_, i) => ({ email: `p${i}@acme.com` }))
+    const event = { id: 'big', summary: 'All hands', start: ny('2026-11-13T21:00:00Z'), end: ny('2026-11-13T22:00:00Z'), organizer: { email: 'ceo@acme.com' }, attendees: [...attendees, { email: 'ana@acme.com', self: true }] }
+    const kept = convertEvent(event, { ...ctx, maxParticipants: MAX_PARTICIPANTS_STORE })
+    assert.equal(Object.keys(kept.fields.participants as object).length, 32)
+    assert.equal(kept.trimmed, 0)
+    const small = convertEvent(event, { ...ctx, maxParticipants: 10 })
+    assert.equal(small.trimmed, 22)
+    assert.match(small.fields.description as string, /at most 10 people/)
   })
 })
 

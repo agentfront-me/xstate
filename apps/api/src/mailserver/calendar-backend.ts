@@ -18,10 +18,17 @@ export type CalendarBackend = {
   getRecurrenceRules(ids: string[]): Promise<Map<string, JmapRecurrenceRule | null>>
   findByUid(uid: string): Promise<string | null>
   getEvent(id: string): Promise<JmapEvent | null>
-  /** With `notify`, guests are emailed (Stalwart only for now; the store refuses before this is reached). */
+  /** With `notify`, guests are emailed (by Stalwart, or through SES for the store: mailbox/scheduling.ts). */
   createEvent(event: Record<string, unknown>, notify: boolean): Promise<string>
   updateEvent(id: string, patch: Record<string, unknown>, notify: boolean): Promise<void>
   destroyEvent(id: string, notify: boolean): Promise<void>
+  /** Makes a calendar (imports: one per Google calendar). Returns its id. */
+  createCalendar(name: string): Promise<string>
+  /**
+   * Creates several events at once without emailing anyone (imports). Returns the new ids by key, and the reason
+   * for each one refused; one bad event never fails the others.
+   */
+  importEvents(events: Record<string, Record<string, unknown>>): Promise<{ created: Record<string, string>; failed: Record<string, string> }>
 }
 
 /** The name Stalwart gives the calendar it creates with every account. */
@@ -43,6 +50,8 @@ export function stalwartCalendars(env: EmailEnv, accountId: string): CalendarBac
     createEvent: (event, notify) => jmap.createEvent(env, accountId, event, notify),
     updateEvent: (id, patch, notify) => jmap.updateEvent(env, accountId, id, patch, notify),
     destroyEvent: (id, notify) => jmap.destroyEvent(env, accountId, id, notify),
+    createCalendar: (name) => jmap.createCalendar(env, accountId, name),
+    importEvents: (events) => jmap.importEvents(env, accountId, events),
   }
 }
 

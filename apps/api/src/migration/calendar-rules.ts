@@ -1,4 +1,4 @@
-// A Google Calendar event as a JSCalendar event for Stalwart. Pure (tested in calendar-rules.test.ts); the copy job
+// A Google Calendar event as a JSCalendar event for the mailbox's calendar (Stalwart, or the store). Pure (tested in calendar-rules.test.ts); the copy job
 // is ./calendar.ts. Times stay in the event's own zone, repeat rules are translated from Google's RRULE lines, and
 // the person's own Google address becomes their xstate address on the guest list.
 
@@ -7,6 +7,8 @@ import type { GAttendee, GEvent, GEventTime } from './google/workspace'
 
 /** Stalwart stores at most this many participants per event, the organizer included. */
 export const MAX_PARTICIPANTS = 20
+/** For a mailbox whose calendars the store holds (no Stalwart limit): imported events email nobody. */
+export const MAX_PARTICIPANTS_STORE = 100
 
 export type ConvertContext = {
   /** The calendar's zone, for times Google sends without one. */
@@ -14,11 +16,13 @@ export type ConvertContext = {
   /** The person's Google address(es) and their xstate address: their own entries become the latter. */
   googleAddresses: string[]
   address: string
+  /** Most participants kept per event, the organizer included; MAX_PARTICIPANTS when left out (Stalwart). */
+  maxParticipants?: number
 }
 
 export type Converted = {
   fields: Record<string, unknown>
-  /** Guests left off because Stalwart stores at most 20 participants. */
+  /** Guests left off over the participant limit (ctx.maxParticipants). */
   trimmed: number
 }
 
@@ -59,7 +63,7 @@ export function convertEvent(e: GEvent, ctx: ConvertContext): Converted {
     fields.participants = participants
     if (organizer) fields.organizerCalendarAddress = `mailto:${organizer}`
   }
-  if (trimmed) fields.description = `${fields.description ? `${fields.description}\n\n` : ''}(${trimmed} more guests weren't copied from Google: an xstate event holds at most ${MAX_PARTICIPANTS} people.)`
+  if (trimmed) fields.description = `${fields.description ? `${fields.description}\n\n` : ''}(${trimmed} more guests weren't copied from Google: an xstate event holds at most ${ctx.maxParticipants ?? MAX_PARTICIPANTS} people.)`
   return { fields, trimmed }
 }
 
@@ -234,7 +238,7 @@ function participantsOf(e: GEvent, ctx: ConvertContext): { participants: Record<
   }
   // Over the limit: keep the organizer and the person, then the others in Google's order.
   const all = [...byEmail.values()]
-  const kept = [...all.filter((p) => p.organizer || p.self), ...all.filter((p) => !p.organizer && !p.self)].slice(0, MAX_PARTICIPANTS)
+  const kept = [...all.filter((p) => p.organizer || p.self), ...all.filter((p) => !p.organizer && !p.self)].slice(0, ctx.maxParticipants ?? MAX_PARTICIPANTS)
   const participants: Record<string, unknown> = {}
   kept.forEach((p, i) => {
     const roles: Record<string, true> = { attendee: true }
