@@ -1741,8 +1741,8 @@ domains (they no longer receive mail there anyway).
   your Google Calendar to `hello@` (you've written to it, so it is added on arrival), accepted through the API, and
   Google showing the answer.
 
-**Needs from you for the pilot:** sending one invitation from your Google Calendar to `hello@99events.com`, and an
-Outlook address if you can.
+**Needs from you for the pilot:** sending one invitation from your Google Calendar to `hello@99events.com`. No
+Outlook test (decided 2026-11-18).
 
 **Decided:** new invitations from known senders are added on arrival (the proposal).
 
@@ -2168,7 +2168,9 @@ that is only you; for customers it is announced, and `security.md` and the domai
      on Stalwart or mid-switch get a 404.
    - Each domain needs a custom-domain route in `wrangler.jsonc`; xstate.com's was added. Its `mta-sts` record must
      not exist when the route is first deployed.
-   - After the deploy, `_mta-sts` gets a new id so senders fetch the new policy.
+   - After the deploy, `_mta-sts` gets a new id so senders fetch the new policy. Done 2026-11-18 11:04 UTC:
+     deployed as 636d348, policy served over valid TLS, SES inbound certificate verified for its name, id
+     `20261118T1`.
    - When switching hireninja.com and the others: delete their old mail-app records and `mta-sts` CNAME, add the
      route, then bump the id.
    - Customer domains would need a CNAME to a host of ours instead; not built.

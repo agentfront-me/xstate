@@ -104,8 +104,18 @@ file yourself, the message isn't sent and xstate tells you why.
 **Downloads.** Attachments and files always download as files and are never opened inside xstate's web pages.
 Browsers are told not to guess their type, and download links expire after 5 minutes.
 
-These rules aren't a virus scan. They block the file types most malware travels in. They apply in xstate's apps
-and API. Mail apps connected over IMAP still receive the original message.
+**Virus scanning.** On top of these rules, xstate scans for viruses with ClamAV, whose signatures update several
+times a day:
+
+- **Mail you receive** is scanned before it's accepted. A message with a virus, or with a blocked file type, is
+  refused during delivery, so the sender's own mail server tells them why, and nothing is stored. Mail apps
+  connected over IMAP don't receive it either. On xstate's new mail path, Amazon SES scans incoming mail too, and an
+  attachment found infected is blocked and its message moved to Junk.
+- **Files you upload**, in the composer and in Storage, are scanned as they arrive, and a file with a virus is
+  refused. If the scanner can't be reached, uploads are refused until it's back rather than stored unchecked.
+
+Mail and files that were already in xstate before scanning started, and mail imported from Google Workspace (which
+Google has scanned already), aren't rescanned. The file-type rules still apply to them.
 
 ## Files and sharing
 
@@ -201,6 +211,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Virus scanning is enforced: incoming mail with a virus is refused during delivery,
+  and infected uploads are refused.
 - **November 18, 2026:** MTA-STS in enforce mode for domains on the new mail path, starting with xstate.com:
   supporting senders deliver only over verified TLS to Amazon SES.
 - **November 18, 2026:** On the new mail path, calendar emails update the calendar only when the sender is proven

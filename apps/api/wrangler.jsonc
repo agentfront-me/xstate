@@ -69,7 +69,8 @@
     // (apps/scanner): "live" refuses infected files, and every file while the scanner is unreachable; "log" scans
     // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
     // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
-    "SCAN_MODE": "log",
+    // "live" since 2026-11-18, after a log-only week with no false alarms (apps/scanner/deploy/README.md, step 4).
+    "SCAN_MODE": "live",
     // "on": domains added from now on start on the mailbox store (docs/mailbox-store-plan.md, phase 4g). Off until our own domains have moved.
     "NEW_DOMAINS_ON_STORE": "off",
     "SCAN_URL": "https://mx.xstate.io/_scan",
