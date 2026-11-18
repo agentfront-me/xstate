@@ -148,7 +148,7 @@ function frameDocument(html: string, plain: boolean, showImages: boolean): strin
     <style>html{overflow-y:hidden}html,body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
     ${base}img{max-width:100%;height:auto}table{max-width:100%}
     body.xq-hide [data-xq]{display:none!important}
-    ${showImages ? '' : 'img[src^="http:"],img[src^="https:"]{display:none}'}</style></head>
+    ${showImages ? '' : 'img[src^="http:" i],img[src^="https:" i],img[src^="//"]{display:none!important}'}</style></head>
     <body>${html}</body></html>`
 }
 

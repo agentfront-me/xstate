@@ -143,8 +143,7 @@ export async function removeDomain(client: QueryClient, domainId: string): Promi
 export type NewMailbox = { kind: MailboxKind; localPart: string; displayName?: string; ownerMemberId?: string }
 
 /**
- * Creates a mailbox on a domain. Personal and agent mailboxes come back with a generated password, shown once.
- * A shared mailbox has no owner, so the person creating it is given access to it.
+ * Creates a mailbox on a domain. A shared mailbox has no owner, so the person creating it is given access to it.
  */
 export async function createMailbox(client: QueryClient, domainId: string, input: NewMailbox): Promise<{ mailbox: Mailbox }> {
   const a = current(client)

@@ -147,7 +147,7 @@ calendar, files and contacts.
   unless you allow it.
 - **It can never do more than you can.** Every action is checked against your own access, then narrowed to what
   you chose. Mail and calendars of mailboxes you didn't pick are out of reach, including through search.
-- **Some things are never available to a connected app:** resetting mailbox passwords, giving people access to
+- **Some things are never available to a connected app:** giving people access to
   mailboxes, API keys, AI provider keys, secrets, inviting or removing members, and public file links. Managing
   domains and mailboxes is off unless an owner or admin turns it on for that connection.
 - **Tokens.** Access tokens last one hour and are stored only as hashes. A connection ends 30 days after its last
