@@ -4,6 +4,7 @@ import * as mailboxesDb from '../db/mailboxes'
 import { syncSeats } from '../billing/service'
 import { defineOperation } from './define'
 import { search } from '../search/search'
+import { deliveryLog } from '../mailbox/delivery-log'
 
 const id = z.string().min(1).max(64)
 const kind = z.enum(['personal', 'shared', 'agent'])
@@ -506,6 +507,25 @@ export const emailGetSendingStatus = defineOperation({
   run: ({ env, actor }, input) => mailserver.sendingStatus(env, actor, input.organizationId),
 })
 
+export const emailGetDeliveryLog = defineOperation({
+  name: 'email_get_delivery_log',
+  description:
+    'Where mail went, for mailboxes on the new mail path: one line per step a message took (delivered and to which ' +
+    'folder with the spam reasons, attachments scanned, sent, delivered or bounced by the receiving server, refused), ' +
+    'newest first, plus received mail that reached no mailbox (dropped, and why). query narrows it to a message (its ' +
+    'id or SES message id) or an address (part of it). Ids, addresses and outcomes only, never content; kept 30 ' +
+    'days. Owners and admins only.',
+  input: z.object({
+    organizationId: id,
+    mailboxId: id.optional(),
+    query: z.string().max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }),
+  http: { method: 'GET', path: '/email/orgs/:organizationId/delivery-log' },
+  mcp: { scope: 'mail.read', readOnly: true },
+  run: ({ env, actor }, input) => deliveryLog(env, actor, input.organizationId, input),
+})
+
 export const emailOperations = [
   emailAddDomain,
   emailCheckDomain,
@@ -538,4 +558,5 @@ export const emailOperations = [
   emailCreateDraft,
   emailUpdateDraft,
   emailGetSendingStatus,
+  emailGetDeliveryLog,
 ]

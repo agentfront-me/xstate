@@ -146,6 +146,18 @@ async function scanAttachments(
   if (!results.size) return results
   await stub.setScan(row.id, [...results].map(([start, r]) => ({ start, ...r })))
   const infected = [...results.values()].filter((r) => r.state === 'infected')
+  const names = new Map(fileParts(parsed.parts).map((p) => [p.start, partName(p) ?? 'attachment']))
+  await stub.logDelivery([
+    {
+      step: 'scanned',
+      emailId: row.id,
+      detail: {
+        mode,
+        attachments: [...results].map(([start, r]) => ({ name: names.get(start), state: r.state, ...(r.virus && { virus: r.virus }) })),
+        ...(infected.length && { movedTo: 'junk' }),
+      },
+    },
+  ])
   if (infected.length) {
     console.log('mail-events: virus', JSON.stringify({ emailId: row.id, viruses: infected.map((r) => r.virus) }))
     if (row.folder !== 'junk') await stub.update({ id: row.id, folder: 'junk', system: true })

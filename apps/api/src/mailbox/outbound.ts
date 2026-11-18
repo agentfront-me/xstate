@@ -49,6 +49,7 @@ export async function sendFromStore(env: OutboundEnv, mailbox: MailboxRow, input
   // Last check before anything leaves: suspension and the hourly and daily caps.
   const reservation = await reserveSend(env, mailbox, checked.recipients.map((r) => r.email))
   let raw: Uint8Array | null = buildMessage(message, { includeBcc: false })
+  prepared.size = raw.length
   // The files are inside the message now; drop them so a large send keeps one copy in memory.
   message.files = undefined
   let sesId: string
@@ -77,6 +78,21 @@ export async function sendFromStore(env: OutboundEnv, mailbox: MailboxRow, input
     kept = { id, threadId: stored.threadId }
     await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'out' })
   }
+  // One line per recipient, like the receiving server's answers (jobs/ses-webhook.ts), so each can be looked up.
+  const recipients = [
+    ...input.to.map((a) => ({ address: a.email, as: 'to' })),
+    ...(input.cc ?? []).map((a) => ({ address: a.email, as: 'cc' })),
+    ...(input.bcc ?? []).map((a) => ({ address: a.email, as: 'bcc' })),
+  ]
+  await stub.logDelivery(
+    recipients.map((r) => ({
+      step: 'sent' as const,
+      emailId: kept.id || null,
+      sesId,
+      address: r.address,
+      detail: { as: r.as, recipients: recipients.length, size: prepared.size, api: !!input.api },
+    })),
+  )
   await afterWriting(env, mailbox, prepared, input)
   if (prepared.original) await stub.markOriginal(prepared.original.id, input.inReplyTo ? 'answered' : 'forwarded')
   return kept
@@ -100,6 +116,8 @@ type Prepared = {
   inReplyTo: string | null
   references: string[]
   hasAttachment: boolean
+  /** The built message's size, for the delivery log. */
+  size?: number
 }
 
 /** The message to build: threading from the original or the draft, and every attachment read and checked. */

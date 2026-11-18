@@ -28,6 +28,7 @@ describe('inboundJob', () => {
       recipients: ['asif@pilot.xstate.com', 'team@pilot.xstate.com'],
       verdicts: { spam: 'PASS', virus: 'FAIL', spf: 'PASS', dkim: 'GRAY', dmarc: '', dmarcPolicy: '' },
       receivedAt: '2026-11-17T18:00:01Z',
+      source: null,
     })
   })
 

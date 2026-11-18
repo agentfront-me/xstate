@@ -11,6 +11,7 @@ import * as accessDb from '../db/mailbox-access'
 import * as addressesDb from '../db/addresses'
 import * as mailboxesDb from '../db/mailboxes'
 import * as orgsDb from '../db/organizations'
+import * as dropsDb from '../db/mail-drops'
 import type { MailboxRow } from '../db/mailboxes'
 import { announce } from '../live/announce'
 import { stripFooter } from '../mailserver/footer'
@@ -68,10 +69,32 @@ async function receive(env: ReceiveEnv, job: InboundJob): Promise<ReceiveResult>
     else if (mailbox.backend !== 'store') result.dropped.push({ address, reason: 'not_on_store' })
     else mailboxes.set(mailbox.id, mailbox)
   }
+  // The delivery log: drops have no mailbox, so they go to D1 under the organization that has the domain.
+  if (result.dropped.length) {
+    const now = new Date().toISOString()
+    const writes = await Promise.all(
+      result.dropped.map(async (d) =>
+        dropsDb.insert(env.DB, {
+          organization_id: await dropsDb.organizationOfAddress(env.DB, d.address),
+          ses_id: job.sesId,
+          at: now,
+          sender: job.source ?? null,
+          recipient: d.address,
+          reason: d.reason,
+        }),
+      ),
+    )
+    await env.DB.batch(writes)
+  }
 
   // SES found a virus: delivered nowhere, kept a week for support to look at.
   if (job.verdicts.virus === 'FAIL') {
     result.virus = true
+    for (const mailbox of mailboxes.values()) {
+      await (await store(env, mailbox.id)).logDelivery([
+        { step: 'refused', sesId: job.sesId, address: job.source ?? null, detail: { reason: 'virus', by: 'Amazon SES', verdicts: job.verdicts } },
+      ])
+    }
     if (job.bucket && job.key) result.quarantined = await quarantineInbound(env, job.bucket, job.key)
     return result
   }
@@ -181,6 +204,22 @@ async function deliverTo(
     await deleteObject(env, bucket, key).catch((err) => console.error(`mail-in: deleting spare copy ${key} failed`, err))
     return { mailboxId: mailbox.id, id: stored.id, folder: stored.folder, duplicate: true }
   }
+  await stub.logDelivery([
+    {
+      step: 'delivered',
+      emailId: id,
+      sesId: job.sesId,
+      address: parsed.from[0]?.email ?? job.source ?? null,
+      detail: {
+        folder: stored.folder,
+        to: job.recipients.filter((a) => [mailbox.address, ...(JSON.parse(mailbox.aliases || '[]') as string[])].includes(a)),
+        envelopeFrom: job.source ?? null,
+        size: raw.length,
+        verdicts: job.verdicts,
+        spam: { score: spam.score, reasons: spam.reasons },
+      },
+    },
+  ])
 
   // Filing, search and agents, on their own queue (./events.ts).
   await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'in' })

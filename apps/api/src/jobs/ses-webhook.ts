@@ -16,6 +16,8 @@
 
 import type { Context } from 'hono'
 import * as addressesDb from '../db/addresses'
+import * as mailboxesDb from '../db/mailboxes'
+import { store } from '../mailbox/stub'
 import * as eventsDb from '../db/email-events'
 import * as sendingDb from '../db/sending'
 import { notifySuspension } from '../emails/notices'
@@ -82,6 +84,7 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
 
   if (kind === 'delivery') {
     await logStatus('delivered', (n.delivery?.recipients ?? []).map((address) => ({ address, detail: null })))
+    await logToStore(c.env, owner?.mailbox_id ?? null, 'ses_delivered', n.mail?.messageId ?? null, (n.delivery?.recipients ?? []).map((address) => ({ address, detail: null })))
     // A notification SNS redelivers is counted twice; that only makes rates look slightly better, never worse.
     const count = n.delivery?.recipients?.length ?? 0
     if (!owner || !count) return c.json({ ignored: 'delivery from an unknown sender' })
@@ -127,6 +130,7 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
   })
   if (writes.length) await c.env.DB.batch(writes)
   await logStatus(kind === 'bounce' ? 'bounced' : 'complained', recipients)
+  await logToStore(c.env, owner?.mailbox_id ?? null, kind === 'bounce' ? 'bounced' : 'complained', n.mail?.messageId ?? null, recipients, subtype)
 
   // Suspend the sender if this pushed it over the line. A failure here mustn't make SNS redeliver the event.
   let suspended: string | null = null
@@ -142,4 +146,28 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
     )
   }
   return c.json({ recorded: recipients.length, kind, suspended })
+}
+
+/**
+ * Adds an SES event to the sending mailbox's delivery log when the store holds its mail (mailbox/store.ts), matched
+ * to the Sent copy by SES's message id. Best effort: the event is recorded in D1 either way.
+ */
+async function logToStore(
+  env: Env,
+  mailboxId: string | null,
+  step: 'ses_delivered' | 'bounced' | 'complained',
+  sesId: string | null,
+  recipients: { address: string; detail: string | null }[],
+  subtype: string | null = null,
+): Promise<void> {
+  if (!mailboxId || !sesId || !recipients.length) return
+  try {
+    const mailbox = await mailboxesDb.find(env.DB, mailboxId)
+    if (mailbox?.backend !== 'store') return
+    await (await store(env, mailbox.id)).logDelivery(
+      recipients.map((r) => ({ step, sesId, address: r.address, detail: { ...(r.detail && { detail: r.detail }), ...(subtype && { type: subtype }) } })),
+    )
+  } catch (err) {
+    console.error('ses-webhook: delivery log failed', err)
+  }
 }

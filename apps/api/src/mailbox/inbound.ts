@@ -27,6 +27,8 @@ export type InboundJob = {
   verdicts: Verdicts
   /** When SES received it, ISO without milliseconds. */
   receivedAt: string
+  /** The envelope sender (SMTP MAIL FROM), for the delivery log; may differ from the From header, or be empty. */
+  source?: string | null
 }
 
 type Verdict = { status?: string } | undefined
@@ -43,7 +45,7 @@ type SesReceived = {
     dmarcPolicy?: string
     action?: { type?: string; bucketName?: string; objectKey?: string; encoding?: string }
   }
-  mail?: { messageId?: string; timestamp?: string }
+  mail?: { messageId?: string; timestamp?: string; source?: string }
   content?: string
 }
 
@@ -71,6 +73,7 @@ export function inboundJob(notification: unknown): InboundJob | null {
       dmarcPolicy: (r.dmarcPolicy ?? '').toLowerCase(),
     },
     receivedAt: new Date(Number.isNaN(time) ? Date.now() : time).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    source: n.mail.source?.toLowerCase() || null,
   }
   if (n.content) {
     // The SNS action sends the message as UTF-8 text or base64; the job always carries base64.

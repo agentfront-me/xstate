@@ -112,6 +112,17 @@ export type StoreEventRow = {
   draft: boolean
 }
 
+/** A step a message took, for the delivery log (`logDelivery`): what support reads to answer "where is my email". */
+export type DeliveryStep = 'delivered' | 'refused' | 'scanned' | 'sent' | 'ses_delivered' | 'bounced' | 'complained'
+export type DeliveryLine = {
+  step: DeliveryStep
+  emailId?: string | null
+  sesId?: string | null
+  /** The other party: the sender of received mail, or a recipient of sent mail. */
+  address?: string | null
+  detail?: Record<string, unknown>
+}
+
 /** The message a reply or forward answers, as `replySource` gives it. */
 export type StoreReplySource = {
   id: string
@@ -215,6 +226,13 @@ export class MailboxStore extends Agent<Env> {
     // Spam layer 3 (phase 2 step 4b): who the mailbox has written to, and its people's verdicts on senders.
     sql.exec(`CREATE TABLE IF NOT EXISTS correspondents (address TEXT PRIMARY KEY, last_s INTEGER NOT NULL) WITHOUT ROWID`)
     sql.exec(`CREATE TABLE IF NOT EXISTS sender_verdicts (address TEXT PRIMARY KEY, verdict TEXT NOT NULL, at_s INTEGER NOT NULL) WITHOUT ROWID`)
+    // The delivery log (phase 2 step 4d): one line per step a message took. Ids, addresses and outcomes, never content.
+    sql.exec(`CREATE TABLE IF NOT EXISTS delivery_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, at_s INTEGER NOT NULL, step TEXT NOT NULL, email_id TEXT, ses_id TEXT,
+      address TEXT, detail TEXT NOT NULL)`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_at ON delivery_log (at_s)`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_email ON delivery_log (email_id) WHERE email_id IS NOT NULL`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_ses ON delivery_log (ses_id) WHERE ses_id IS NOT NULL`)
     // Sent mail from before the table existed, once.
     if (this.meta('owner') === 'store' && this.meta('correspondents_filled') !== '1') {
       for (const row of sql.exec(`SELECT to_json, received_s FROM messages WHERE folder = 'sent'`)) {
@@ -824,6 +842,45 @@ export class MailboxStore extends Agent<Env> {
         WHERE (a.scan IS NULL OR (a.scan = 'scanning' AND m.received_s < ?)) AND m.folder IS NOT 'sent' AND m.is_draft IS NOT 1 LIMIT ?`,
       before, limit,
     )].map((r) => r.id as string)
+  }
+
+  /** Adds lines to the delivery log. */
+  logDelivery(lines: DeliveryLine[]) {
+    const now = Math.floor(Date.now() / 1000)
+    for (const l of lines) {
+      this.db.exec(
+        `INSERT INTO delivery_log (at_s, step, email_id, ses_id, address, detail) VALUES (?, ?, ?, ?, ?, ?)`,
+        now, l.step, l.emailId ?? null, l.sesId ?? null, l.address?.toLowerCase() ?? null, JSON.stringify(l.detail ?? {}),
+      )
+    }
+  }
+
+  /**
+   * The delivery log, newest first: all of it, or the lines of one message (its id or SES id), or those whose
+   * address contains `query`. A message id also finds the lines logged under its SES id before it had an id.
+   */
+  deliveryLog(query: string | null, limit: number): (DeliveryLine & { at: string })[] {
+    const q = query?.trim() || null
+    const sesIds = q ? [...this.db.exec(`SELECT ses_id FROM messages WHERE id = ? AND ses_id IS NOT NULL`, q)].map((r) => r.ses_id as string) : []
+    const rows = this.db.exec(
+      `SELECT at_s, step, email_id, ses_id, address, detail FROM delivery_log
+        WHERE ?1 IS NULL OR email_id = ?1 OR ses_id = ?1 OR ses_id = ?2 OR instr(coalesce(address, ''), lower(?1)) > 0
+        ORDER BY id DESC LIMIT ?3`,
+      q, sesIds[0] ?? null, limit,
+    )
+    return [...rows].map((r) => ({
+      at: fromSeconds(r.at_s as number),
+      step: r.step as DeliveryStep,
+      emailId: r.email_id as string | null,
+      sesId: r.ses_id as string | null,
+      address: r.address as string | null,
+      detail: JSON.parse(r.detail as string) as Record<string, unknown>,
+    }))
+  }
+
+  /** Drops delivery-log lines older than `before` (seconds). */
+  purgeDeliveryLog(before: number): number {
+    return [...this.db.exec(`DELETE FROM delivery_log WHERE at_s < ? RETURNING id`, before)].length
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

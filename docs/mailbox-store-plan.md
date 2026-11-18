@@ -1190,6 +1190,45 @@ which then downloaded.
 **Docs:** `security.md` will say received attachments are scanned by ClamAV only once `SCAN_MODE` is `live` in
 production (today `log`), so the public page never claims more than is enforced.
 
+**Deployed (2026-11-18, "Added virus checking").** On the pilot, "Spring gala budget" forwarded from `hello@` to
+`team@` (out through SES, back in through SES receiving) arrived with `gala-budget.pdf` downloadable; deepo's nginx log
+shows the Worker's `POST /_scan/scan?name=gala-budget.pdf` answered 200 with `{"infected":false}` at 05:20:45 UTC, so
+the real ClamAV checked it. Production stays on `SCAN_MODE=log` until the user switches it to `live`.
+
+#### Step 4d: the delivery log (built 2026-11-18, uncommitted)
+
+What support reads to answer "where is my email" for store-held mailboxes. Ids, addresses and outcomes only, never
+content; everything kept `DELIVERY_LOG_DAYS` (30).
+
+- **Per mailbox, in its store:** table `delivery_log` (`at_s`, `step`, `email_id`, `ses_id`, `address`, `detail` JSON).
+  Steps:
+  - `delivered`: folder, To, envelope sender, size, SES verdicts, spam score and reasons; `address` is the From.
+  - `refused`: SES found a virus (one line in each mailbox it was for).
+  - `scanned`: scan mode, each attachment's state, and whether it moved the message to Junk.
+  - `sent`: one line per recipient (`as` to/cc/bcc, recipient count, size, sent through the API or not).
+  - `ses_delivered`, `bounced`, `complained`: SES's notifications for a store-held sender, one line per recipient.
+- **Drops, in D1** (`mail_drops`, migration 0037): received mail that reached no mailbox (`unknown_address`, or
+  `not_on_store` for an address whose mailbox isn't held). Organization from the address's domain; id
+  `<sesId>:<recipient>`, so a redelivered notification isn't counted twice.
+- **Reading it:** `email_get_delivery_log` (`GET /v1/email/orgs/:organizationId/delivery-log`, MCP read-only),
+  owners and admins only. Filters: `mailboxId` (that mailbox's lines, without drops) and `query`, which is a message
+  id (also finds the lines logged under its SES id), an SES id, or part of an address. Merged newest first, `limit`
+  1–200 (default 50).
+- **Purging:** the hourly run deletes store lines older than 30 days in the same pass as Trash
+  (`purgeHeldTrash`), and D1 drops older than 30 days.
+- **Not built:** a screen for it in the app. The MCP tool and the API are enough for support now.
+
+**Local test:** a clean message (`delivered`, inbox), a message to an unknown address (`dropped`,
+`unknown_address`), a virus (`refused`, by SES), an attachment (`delivered`, then `scanned` in fake mode), and a send
+to two recipients (two `sent` lines). Query by recipient, by message id (both `sent` lines) and by unknown address
+(the drop) each found the right lines. A member who isn't an admin got 403. The hourly run deleted a seeded 2-month-old
+drop and kept the new one.
+
+**Found while testing:** the first version logged one `sent` line with the recipients in `detail`, so a search by
+recipient missed it. Now one line per recipient.
+
+**Deploy:** migration 0037 runs in CI; no new queues, secrets or AWS changes.
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's

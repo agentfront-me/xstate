@@ -52,6 +52,10 @@ change how something works. Recent changes are listed [at the end](#changes).
   to come from someone you know), or when it uses the name of someone in your organization from an outside address.
   Mail from people you've written to reaches your Inbox, and marking a sender as junk or not junk applies to their
   next messages.
+- **Delivery log.** For mailboxes on the new mail path, xstate keeps a record of where each message went: delivered
+  and to which folder (with the reasons it went to Junk), attachments scanned, sent, accepted or bounced by the
+  receiving server, refused, or dropped for an address that doesn't exist. It holds ids, addresses and outcomes,
+  never what a message says, is kept 30 days, and only owners and admins can read it.
 - **A mailbox's own index.** To make lists and search fast, a mailbox can have its own index of its messages:
   senders, recipients, subjects, folders, flags and body text, with a copy of each whole message (attachments
   included) in your organization's own storage bucket, from which the message and its attachments can be opened.
@@ -187,6 +191,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** A delivery log for mailboxes on the new mail path: where each message went, without its
+  content, kept 30 days and readable only by owners and admins.
 - **November 18, 2026:** Domains on xstate's new mail path receive through Amazon SES, which scans each message
   for viruses and spam; received mail passes briefly through a private Amazon S3 bucket before it reaches your
   organization's storage. Being tried on one test domain.

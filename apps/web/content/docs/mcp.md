@@ -142,6 +142,7 @@ Read only, Draft only or Draft and send.
 | `email_create_draft` | draft only | Save a message to a mailbox's Drafts without sending it, so a person can review and send it. |
 | `email_update_draft` | draft only | Replace a draft in a mailbox's Drafts with a new version. |
 | `email_get_sending_status` | read only | The organization's outbound sending limits, how many outside recipients it sent to in the last hour and day, and any active suspensions (a mailbox, or mailboxId null for the whole organization) with the reason. |
+| `email_get_delivery_log` | read only | Where mail went, for mailboxes on the new mail path: one line per step a message took (delivered and to which folder with the spam reasons, attachments scanned, sent, delivered or bounced by the receiving server, refused), newest first, plus received mail that reached no mailbox (dropped, and why). |
 | `storage_list_attachments` | read only | Attachments of the mail you can read, newest first, optionally for one mailbox, only "received" or "sent", or matching a name. |
 | `storage_get_attachment` | read only | Get one mail attachment: name, type, size, received or sent, its message and thread, and the mailbox. |
 | `storage_read_attachment_text` | read only | Read the whole text of a mail attachment: a PDF up to 25 MB, or a text file (CSV, Markdown, plain text, JSON) up to 1 MB. |
