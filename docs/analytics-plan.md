@@ -1,6 +1,7 @@
 # Analytics plan
 
 Status: plan agreed 2026-11-18 (decisions in section 11). All phases built 2026-11-18 (sections 12–18); phase 6 (Overview) is uncommitted.
+How it works in detail (tables, API, definitions, extending): [analytics-reference.md](analytics-reference.md).
 
 The design (Claude Design, "xstate App", Analytics page) adds an **Analytics** section to the rail. Today the data
 already flows in (`POST /v1/collect` → the organization's `AudienceStore` Durable Object), but the only place it
