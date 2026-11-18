@@ -16,6 +16,7 @@ import '../styles/storage.css'
 import {
   addMember,
   addMemberAddress,
+  deleteMember,
   inviteMember,
   memberAction,
   removeMemberAddress,
@@ -25,6 +26,7 @@ import {
   setPrimaryAddress,
   setTemporaryPassword,
   updateMember,
+  useMembers,
   type Delivery,
   type OrgMember,
 } from './members'
@@ -391,7 +393,7 @@ export function MemberDialog({
             <span className="name ellipsis">
               {label}
               {invited && <span className="tag">Invite pending</span>}
-              {suspended && <span className="tag">Suspended</span>}
+              {suspended && <span className="tag">{m.deleteAfter ? 'Being deleted' : 'Suspended'}</span>}
             </span>
             <span className="sub ellipsis">{m.email}</span>
           </div>
@@ -593,7 +595,28 @@ export function MemberDialog({
           </section>
         )}
 
-        {canSecure && !m.you && !invited && (
+        {canSecure && !m.you && !invited && m.deleteAfter && (
+          <section>
+            <div className="md-row">
+              <div>
+                <h3 className="danger">Being deleted</h3>
+                <p className="hint">
+                  Deleted for good on {new Date(m.deleteAfter).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}. Until then you can
+                  restore them, with their access and mailbox as they were.
+                </p>
+              </div>
+              <button
+                className="btn btn-sm"
+                disabled={!!busy}
+                onClick={() => void act('restore', () => memberAction(client, orgId, m.id, 'restore'), `${label} is restored`)}
+              >
+                Restore member
+              </button>
+            </div>
+          </section>
+        )}
+
+        {canSecure && !m.you && !invited && !m.deleteAfter && (
           <section>
             <div className="md-row">
               <div>
@@ -617,20 +640,123 @@ export function MemberDialog({
           </section>
         )}
 
-        {editable && m.role !== 'owner' && (
+        {editable && m.role !== 'owner' && invited && (
           <section>
             <div className="md-row">
               <div>
-                <h3 className="danger">{invited ? 'Cancel invite' : 'Remove member'}</h3>
-                <p className="hint">{invited ? 'Their invite link stops working.' : 'They lose access right away.'}</p>
+                <h3 className="danger">Cancel invite</h3>
+                <p className="hint">Their invite link stops working.</p>
               </div>
               <button className="btn btn-sm danger" onClick={() => onRemove(m)}>
-                {invited ? 'Cancel invite' : 'Remove member'}
+                Cancel invite
               </button>
             </div>
           </section>
         )}
+
+        {canSecure && !m.you && !invited && !m.deleteAfter && <DeleteSection account={account} member={m} />}
       </div>
     </Modal>
+  )
+}
+
+/** Deleting a member: what happens to their mail, files and agents, then a confirmation. */
+function DeleteSection({ account, member: m }: { account: Account; member: OrgMember }) {
+  const client = useQueryClient()
+  const orgId = account.org.id
+  const people = (useMembers(orgId, true).data ?? []).filter((x) => x.id !== m.id && x.status === 'active' && !x.suspendedAt)
+  const me = people.find((x) => x.you)
+  const label = m.name || m.email
+  const box = m.mailbox
+  // On the current mail server a personal mailbox can't become a shared one.
+  const canShare = box?.backend === 'store'
+  const [open, setOpen] = useState(false)
+  const [mail, setMail] = useState<'shared' | 'delete'>(canShare ? 'shared' : 'delete')
+  const [shareWith, setShareWith] = useState<string[]>(me ? [me.id] : [])
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const confirmWord = m.email
+  const ready = typed.trim().toLowerCase() === confirmWord.toLowerCase() && (!box || mail === 'delete' || shareWith.length > 0)
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await deleteMember(client, orgId, m.id, { mail: box ? mail : 'delete', shareWith: mail === 'shared' ? shareWith : [] })
+      toast(`${label} will be deleted in 30 days`)
+      setOpen(false)
+    } catch (err) {
+      toast(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section>
+      <div className="md-row">
+        <div>
+          <h3 className="danger">Delete member</h3>
+          <p className="hint">Signs them out and blocks access now. Deleted for good after 30 days; you can restore them until then.</p>
+        </div>
+        {!open && (
+          <button className="btn btn-sm danger" onClick={() => setOpen(true)}>
+            Delete member
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="delete-panel">
+          {box && (
+            <label className="field">
+              What should happen to the mail in {box.addresses.map((a) => a.address).join(', ')}?
+              <select className="select" value={mail} onChange={(e) => setMail(e.target.value as 'shared' | 'delete')}>
+                {canShare && <option value="shared">Turn it into a shared mailbox</option>}
+                <option value="delete">Delete all its mail after 30 days</option>
+              </select>
+            </label>
+          )}
+          {box && !canShare && <p className="hint">This mailbox is on the current mail server, so it can't become a shared mailbox yet.</p>}
+          {box && mail === 'shared' && (
+            <div className="field">
+              <span>Who can open it (from now on; mail to their addresses keeps arriving)</span>
+              <span className="chips">
+                {people.map((p) => {
+                  const on = shareWith.includes(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="chip"
+                      aria-pressed={on}
+                      onClick={() => setShareWith((list) => (on ? list.filter((x) => x !== p.id) : [...list, p.id]))}
+                    >
+                      <Icon name={on ? 'check' : 'plus'} size={12} />
+                      {p.name || p.email}
+                    </button>
+                  )
+                })}
+              </span>
+            </div>
+          )}
+          <p className="hint">
+            Their My Files move into a folder in {me ? 'your' : "the owner's"} My Files. Agents they made are paused now and passed to{' '}
+            {me ? 'you' : 'the owner'}. Personal API tokens stop working.
+          </p>
+          <label className="field">
+            Type {confirmWord} to confirm
+            <input className="text-input" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+          </label>
+          <span className="row-gap">
+            <button className="btn btn-sm btn-quiet" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-sm danger" disabled={!ready || busy} aria-busy={busy || undefined} onClick={() => void submit()}>
+              Delete member
+            </button>
+          </span>
+        </div>
+      )}
+    </section>
   )
 }

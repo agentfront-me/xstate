@@ -13,6 +13,7 @@ import type { Actor } from '../auth/types'
 import * as membersDb from '../db/members'
 import { ApiError } from '../errors'
 import { isAdmin, requireOrgPermission } from '../mailserver/access'
+import { cancelDeletion } from './deletion'
 import { getMember, type MembersEnv, type OrgMember } from './service'
 
 async function context(env: MembersEnv, actor: Actor, memberId: string, self: 'allowed' | 'refused') {
@@ -56,10 +57,14 @@ export async function suspendMember(env: MembersEnv, actor: Actor, memberId: str
   return getMember(env, actor, memberId)
 }
 
-export async function restoreMember(env: MembersEnv, actor: Actor, memberId: string): Promise<OrgMember> {
+/** Gives a suspended member their access back, and undoes their deletion if one hasn't finished yet. */
+export async function restoreMember(env: Env, actor: Actor, memberId: string): Promise<OrgMember> {
   await context(env, actor, memberId, 'refused')
   const now = new Date().toISOString()
-  await env.DB.prepare('UPDATE members SET suspended_at = NULL, updated_at = ? WHERE id = ?').bind(now, memberId).run()
+  await env.DB.batch([
+    ...(await cancelDeletion(env, memberId)),
+    env.DB.prepare('UPDATE members SET suspended_at = NULL, updated_at = ? WHERE id = ?').bind(now, memberId),
+  ])
   return getMember(env, actor, memberId)
 }
 

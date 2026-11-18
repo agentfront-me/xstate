@@ -507,7 +507,7 @@ function LiveMembers({ account }: { account: Account }) {
                   </div>
                   <span className="right">
                     {invited && <span className="tag">Invite pending</span>}
-                    {m.suspendedAt && <span className="tag">Suspended</span>}
+                    {m.suspendedAt && <span className="tag">{m.deleteAfter ? 'Being deleted' : 'Suspended'}</span>}
                     <span className="muted">{cap(m.role)}</span>
                     <Icon name="chevron-right" size={14} />
                   </span>

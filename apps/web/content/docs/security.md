@@ -210,6 +210,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Deleting a member blocks their access at once and finishes after 30 days, so it can be
+  undone until then. An admin chooses whether their mailbox becomes a shared mailbox (and who can open it) or is
+  deleted with its mail.
 - **November 18, 2026:** Sessions can be ended: admins can sign a member out everywhere or suspend them, and a
   password reset signs out other sessions. A suspended member can't reach the organization through the app, API
   tokens or connected AI apps, and their phones stop getting alerts.

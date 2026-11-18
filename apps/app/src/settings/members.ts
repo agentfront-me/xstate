@@ -21,6 +21,8 @@ export type OrgMember = {
   mailbox: MemberMailbox | null
   /** When they were suspended, while they are. */
   suspendedAt: string | null
+  /** While their deletion is pending: when it finishes. Restoring them before then undoes it. */
+  deleteAfter: string | null
 }
 
 export type MemberMailbox = {
@@ -111,6 +113,13 @@ export async function sendPasswordReset(memberId: string) {
 /** Sign out everywhere, suspend or restore: the member comes back as they now are. */
 export async function memberAction(client: QueryClient, orgId: string, memberId: string, action: 'sign-out' | 'suspend' | 'restore') {
   const { member } = await api<{ member: OrgMember }>('POST', `/members/${memberId}/${action}`)
+  put(client, orgId, member)
+  return member
+}
+
+/** Starts deleting a member: suspended now, gone after 30 days unless restored. */
+export async function deleteMember(client: QueryClient, orgId: string, memberId: string, input: { mail: 'shared' | 'delete'; shareWith: string[] }) {
+  const { member } = await api<{ member: OrgMember }>('POST', `/members/${memberId}/delete`, input)
   put(client, orgId, member)
   return member
 }

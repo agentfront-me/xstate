@@ -48,6 +48,8 @@ export type MemberRow = {
   recovery_email: string | null
   /** Set while the member is suspended (migrations/0042). */
   suspended_at: string | null
+  /** Set while their deletion is pending: when it finishes (migrations/0043). */
+  delete_after: string | null
   created_at: string
   /** From the open invitation, for invited members. */
   invited_by_name: string | null
@@ -56,7 +58,7 @@ export type MemberRow = {
 }
 
 const MEMBER_SELECT = `
-  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, u.recovery_email, m.suspended_at, m.created_at,
+  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, u.recovery_email, m.suspended_at, m.delete_after, m.created_at,
          ib.name AS invited_by_name, i.sent_at, i.expires_at
   FROM members m
   JOIN users u ON u.id = m.user_id

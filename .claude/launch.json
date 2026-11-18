@@ -12,6 +12,23 @@
       "port": 8788
     },
     {
+      "name": "api-cron",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8788",
+        "--inspector-port",
+        "9230",
+        "--test-scheduled"
+      ],
+      "port": 8788
+    },
+    {
       "name": "app",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

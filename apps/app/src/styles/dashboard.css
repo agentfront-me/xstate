@@ -476,3 +476,5 @@ button.card-row:hover { background: var(--bg-hover); }
 .member-row .right { display: flex; align-items: center; gap: 10px; color: var(--text-dim); }
 .member-row.is-suspended .avatar, .member-row.is-suspended .text { opacity: 0.55; }
 .member-detail .md-row > div > span { color: var(--text-hi); }
+.delete-panel { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.delete-panel .row-gap { align-self: flex-end; }

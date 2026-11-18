@@ -49,6 +49,8 @@ export type OrgMember = {
   mailbox: MemberMailbox | null
   /** When they were suspended, while they are (members/security.ts). */
   suspendedAt: string | null
+  /** While their deletion is pending: when it finishes. Restoring them before then undoes it (members/deletion.ts). */
+  deleteAfter: string | null
 }
 
 export type MemberMailbox = {
@@ -95,6 +97,7 @@ function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
     recoveryEmail: you || extras?.canManage ? row.recovery_email : null,
     mailbox: extras?.mailboxes.get(row.id) ?? null,
     suspendedAt: row.suspended_at,
+    deleteAfter: row.delete_after,
   }
 }
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { syncSeats } from '../billing/service'
 import { completeReset, lookupReset, sendResetLink, setTemporaryPassword } from '../members/passwords'
+import { deleteMember } from '../members/deletion'
 import { restoreMember, signOutEverywhere, suspendMember } from '../members/security'
 import {
   acceptInvite,
@@ -170,6 +171,16 @@ export const membersRestore = defineOperation({
   run: async ({ env, actor }, input) => ({ member: await restoreMember(env, actor, input.memberId) }),
 })
 
+export const membersDelete = defineOperation({
+  name: 'members_delete',
+  description:
+    'Deletes a member, restorable for 30 days (members_restore). They are suspended at once and their agents paused. mail "shared": the members in shareWith can open their mailbox now, and it becomes a shared mailbox when the deletion finishes. mail "delete": the mailbox and its mail are deleted then. Their My Files go to whoever deleted them.',
+  input: z.object({ memberId: id, mail: z.enum(['shared', 'delete']), shareWith: z.array(id).max(50).default([]) }),
+  http: { method: 'POST', path: '/members/:memberId/delete' },
+  mcp: false,
+  run: async ({ env, actor }, { memberId, ...input }) => ({ member: await deleteMember(env, actor, memberId, input) }),
+})
+
 export const passwordResetLookup = defineOperation({
   name: 'auth_password_reset_lookup',
   description: 'Which account a password reset link is for.',
@@ -230,6 +241,7 @@ export const memberOperations = [
   membersSignOut,
   membersSuspend,
   membersRestore,
+  membersDelete,
   invitationLookup,
   invitationAccept,
   passwordResetLookup,

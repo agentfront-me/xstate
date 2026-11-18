@@ -1,7 +1,7 @@
 # Plan: managing members
 
 Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
-(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18.** Phases 4–6 not started.
+(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18**, and phases 1–3 deployed the same day. **Phase 4 built and tested locally 2026-11-18.** Phases 5–6 not started.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -236,6 +236,28 @@ to an admin), their **agents** (switched off, owner moved to the person deleting
 **calendar** (it goes with the mailbox).
 
 The `member_has_mailbox` refusal is removed, because the dialog now handles the mailbox.
+
+#### Phase 4 as built (2026-11-18)
+
+- Migration `0043_member_deletion.sql`: `members.delete_after`, `delete_mail`, `delete_shared_with` and
+  `deleted_by`. `POST /members/:id/delete` takes `{ mail: 'shared' | 'delete', shareWith }`, in
+  `members/deletion.ts`. `POST /members/:id/restore` also undoes a pending deletion.
+- Deleting suspends the member, signs them out and pauses the agents they made or published.
+- "Turn into a shared mailbox" makes it shared **at once**, not at the end. Personal mailboxes are readable only by
+  their owner (`mailAccess`), so this is the only way the chosen people can read it during the 30 days. Restoring
+  makes it personal again and removes the access that was granted for the deletion.
+- That option only works for mailboxes on the new mail system. Mailboxes on the current mail server can only have
+  their mail deleted.
+- The hourly job (`membersHourly`) finishes deletions:
+  - **Mailbox:** deleted, or the owner row dropped from the now-shared mailbox.
+  - **My Files:** moved into "From <name>" in the deleter's My Files (or the owner's, if the deleter has left).
+  - **Agents:** handed to that person.
+  - **Membership:** removed. The account is removed too when it's in no other organization.
+  - **Tokens and seats:** their API tokens are revoked (the existing email goes to admins) and seats are synced.
+- "Move mail into another member's mailbox" isn't built.
+- The old `DELETE /members/:id` stays for cancelling invites and for leaving an organization.
+- To test the hourly job locally, run the `api-cron` launch config (`wrangler dev --test-scheduled`) and open
+  `/__scheduled`.
 
 ### Phase 5: shared mailbox access in the member dialog
 
