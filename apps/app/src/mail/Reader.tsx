@@ -44,6 +44,7 @@ export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onS
   const open = expanded ?? initialExpanded(messages)
   const latest = messages[messages.length - 1]
   const archived = row.folder === 'archive'
+  const junk = row.folder === 'junk'
   const ready = thread.isSuccess
 
   const toggle = (i: number) => {
@@ -87,6 +88,16 @@ export function Reader({ row, source, ownAddress, narrow, onClose, onChange, onS
           <Icon name={archived ? 'inbox' : 'archive'} size={15} />
           {archived ? 'Move to inbox' : 'Archive'}
         </button>
+        {/* Junk and Not junk: the move also teaches the spam filter about the sender (store-held mailboxes). */}
+        {(row.folder === 'inbox' || row.folder === 'archive' || row.folder === 'junk') && (
+          <button
+            className="btn-tool"
+            onClick={() => onChange(row, { folder: junk ? 'inbox' : 'junk' }, junk ? 'Moved to inbox; not junk' : 'Moved to Spam', true)}
+          >
+            <Icon name={junk ? 'inbox' : 'shield-alert'} size={15} />
+            {junk ? 'Not junk' : 'Junk'}
+          </button>
+        )}
         <button className="btn-tool" onClick={() => onSeen(row, !row.seen)}>
           <Icon name="circle" size={15} />
           {row.seen ? 'Mark unread' : 'Mark read'}

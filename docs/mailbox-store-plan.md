@@ -1105,6 +1105,17 @@ Found while designing: a member writing from their personal address under their 
 "Asif Khan") would look like impersonation; the known-sender rule lets them through once the mailbox has written to
 that address, which is why existing Sent mail fills `correspondents` too.
 
+**Deployed (2026-11-18, "Implemented spamming support").** On the pilot, a GTUBE message sent from the app by
+`team@99events.com` to `hello@99events.com` arrived with `X-SES-Spam-Verdict: FAIL` and went to the Inbox, because
+`hello@` had written to `team@` the day before (the known-sender rule, filled from existing Sent mail). The GTUBE
+message of the day before, from `pilot-test@xstate.com`, which `hello@` never wrote to, is in Spam.
+
+**Gap found:** neither the web app nor the mobile app has a "Mark as junk" action; mail reaches Junk by hand only through
+the API, MCP or agents (`email_update_message` with `folder: junk`). "Move to inbox" from Spam does record "Not
+junk". Fixed in the web app (2026-11-18, uncommitted): the reader has **Junk** for a conversation in Inbox or
+Archive and **Not junk** in Spam (`apps/app/src/mail/Reader.tsx`), for every mailbox; tried in demo mode at 1280 px
+(one toolbar line: Pin, Archive, Junk, Mark read). The mobile app still has neither.
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's
