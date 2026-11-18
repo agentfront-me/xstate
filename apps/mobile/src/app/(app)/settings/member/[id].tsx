@@ -58,6 +58,7 @@ export default function MemberScreen() {
   }
 
   const name = m.name ?? m.email
+  const boxes = m.mailboxes ?? (m.mailbox ? [m.mailbox] : [])
   const state = memberState(m)
   const admin = canManage(org)
   // What the API allows, so buttons only show where they work.
@@ -101,19 +102,23 @@ export default function MemberScreen() {
           ) : null}
         </Card>
 
-        {m.mailbox ? (
+        {boxes.length ? (
           <>
-            <SectionLabel>Addresses</SectionLabel>
-            <Card>
-              {m.mailbox.addresses.map((a) => (
-                <Row key={a.id}>
-                  <Text style={[s.value, { flex: 1, textAlign: 'left' }]} numberOfLines={1}>
-                    {a.address}
-                  </Text>
-                  {a.primary ? <Text style={s.tag}>Primary</Text> : null}
-                </Row>
-              ))}
-            </Card>
+            <SectionLabel>{boxes.length > 1 ? 'Mailboxes' : 'Addresses'}</SectionLabel>
+            {boxes.map((box) => (
+              <View key={box.id} style={{ marginBottom: 10 }}>
+                <Card>
+                  {box.addresses.map((a) => (
+                    <Row key={a.id}>
+                      <Text style={[s.value, { flex: 1, textAlign: 'left' }]} numberOfLines={1}>
+                        {a.address}
+                      </Text>
+                      {a.primary && boxes.length === 1 ? <Text style={s.tag}>Primary</Text> : null}
+                    </Row>
+                  ))}
+                </Card>
+              </View>
+            ))}
           </>
         ) : null}
 

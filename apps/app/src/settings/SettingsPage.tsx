@@ -32,7 +32,7 @@ import type { Domain, MailboxKind } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
 import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
-import { AddMemberDialog, MemberDialog } from './MemberDialogs'
+import { AddMemberDialog, MemberDialog, SharedMailboxesSection } from './MemberDialogs'
 import { membersSub, removeMember, useMembers, type OrgMember } from './members'
 import { AiProvidersSection, LiveSecretsSection } from './AiSections'
 import { BillingSection as LiveBillingSection } from './Billing'
@@ -448,7 +448,7 @@ function sentLabel(m: OrgMember): string {
 
 /** The line under a member's name: their sign-in, how many domains they're on, and invite state. */
 function memberSub(m: OrgMember): string {
-  const domains = new Set(m.mailbox?.addresses.map((a) => a.domainId)).size
+  const domains = new Set(m.mailboxes.flatMap((b) => b.addresses.map((a) => a.domainId))).size
   const parts = [m.email]
   if (domains > 1) parts.push(`${domains} domains`)
   if (m.status === 'invited') parts.push(sentLabel(m))
@@ -517,6 +517,7 @@ function LiveMembers({ account }: { account: Account }) {
           </div>
         )}
       </div>
+      <SharedMailboxesSection account={account} />
       {adding && <AddMemberDialog account={account} onClose={() => setAdding(false)} />}
       {open && !removing && (
         <MemberDialog

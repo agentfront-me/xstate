@@ -238,6 +238,16 @@ export const emailGrantAccess = defineOperation({
   run: ({ env, actor }, input) => mailserver.grantMailboxAccess(env, actor, input.mailboxId, input.memberId, input.access),
 })
 
+export const emailGiveMailbox = defineOperation({
+  name: 'email_give_mailbox',
+  description:
+    'Gives a personal mailbox, with all its mail, to another member: they become its owner and the previous owner loses access. Owners, admins and people who manage its domain.',
+  input: z.object({ mailboxId: id, memberId: id }),
+  http: { method: 'POST', path: '/email/mailboxes/:mailboxId/owner' },
+  mcp: false,
+  run: ({ env, actor }, input) => mailserver.giveMailbox(env, actor, input.mailboxId, input.memberId),
+})
+
 export const emailRevokeAccess = defineOperation({
   name: 'email_revoke_access',
   description: "Stop a member from opening a shared mailbox. A mailbox owner's access can't be revoked.",
@@ -602,6 +612,7 @@ export const emailOperations = [
   emailRemoveAlias,
   emailListAccess,
   emailGrantAccess,
+  emailGiveMailbox,
   emailRevokeAccess,
   emailListFolders,
   emailListMessages,

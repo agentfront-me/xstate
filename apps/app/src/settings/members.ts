@@ -17,8 +17,10 @@ export type OrgMember = {
   invite: { sentAt: string | null; expiresAt: string; invitedBy: string | null } | null
   /** Where invites and reset links go. Only shown for yourself, or to people who manage members. */
   recoveryEmail: string | null
-  /** Their own mailbox: every address, the primary one (their sign-in) first. */
+  /** Their own mailbox: every address, the primary one (their sign-in) first. The first of `mailboxes`. */
   mailbox: MemberMailbox | null
+  /** Every personal mailbox they own, the one they sign in with first. Usually one. */
+  mailboxes: MemberMailbox[]
   /** When they were suspended, while they are. */
   suspendedAt: string | null
   /** While their deletion is pending: when it finishes. Restoring them before then undoes it. */
@@ -54,8 +56,18 @@ export function useMembers(orgId: string, enabled: boolean) {
   return useQuery({
     queryKey: key(orgId),
     queryFn: async () => (await api<{ members: OrgMember[] }>('GET', `/members/orgs/${orgId}`)).members,
+    // Members saved by an older version (or sent by an API not deployed yet) have no `mailboxes` or `sharedAccess`.
+    select: (list) => list.map(complete),
     enabled,
   })
+}
+
+function complete(m: OrgMember): OrgMember {
+  return {
+    ...m,
+    mailboxes: m.mailboxes ?? (m.mailbox ? [m.mailbox] : []),
+    sharedAccess: m.sharedAccess ?? [],
+  }
 }
 
 function put(client: QueryClient, orgId: string, member: OrgMember) {
@@ -130,7 +142,18 @@ export async function deleteMember(client: QueryClient, orgId: string, memberId:
 export async function setSharedAccess(client: QueryClient, orgId: string, mailboxId: string, memberId: string, access: 'full' | 'read' | null) {
   if (access) await api('PUT', `/email/mailboxes/${mailboxId}/access/${memberId}`, { access })
   else await api('DELETE', `/email/mailboxes/${mailboxId}/access/${memberId}`)
+  await Promise.all([client.invalidateQueries({ queryKey: key(orgId) }), client.invalidateQueries({ queryKey: ['mailbox-access', mailboxId] })])
+}
+
+/** Hands a personal mailbox, with its mail, to another member. */
+export async function giveMailbox(client: QueryClient, orgId: string, mailboxId: string, memberId: string) {
+  await api('POST', `/email/mailboxes/${mailboxId}/owner`, { memberId })
   await client.invalidateQueries({ queryKey: key(orgId) })
+}
+
+/** Who can open a mailbox, and how. */
+export async function mailboxAccess(mailboxId: string) {
+  return (await api<{ access: { memberId: string; access: 'owner' | 'full' | 'read' }[] }>('GET', `/email/mailboxes/${mailboxId}/access`)).access
 }
 
 export async function resendInvite(client: QueryClient, orgId: string, memberId: string) {

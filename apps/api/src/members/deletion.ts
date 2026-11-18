@@ -26,14 +26,18 @@ export const DELETE_DAYS = 30
 
 type Personal = { id: string; backend: 'stalwart' | 'store' }
 
-/** Their own mailbox: personal, or already turned shared by a pending deletion (they still hold the owner row). */
-async function personalMailbox(env: Env, memberId: string): Promise<Personal | null> {
-  return env.DB.prepare(
+/**
+ * Their own mailboxes: personal, or already turned shared by a pending deletion (they still hold the owner row).
+ * Usually one, but people set up before one mailbox could have addresses on several domains may have one per domain.
+ */
+async function personalMailboxes(env: Env, memberId: string): Promise<Personal[]> {
+  const { results } = await env.DB.prepare(
     `SELECT mb.id, mb.backend FROM mailbox_access ma JOIN mailboxes mb ON mb.id = ma.mailbox_id
-     WHERE ma.member_id = ? AND ma.access = 'owner' AND mb.kind IN ('personal', 'shared') LIMIT 1`,
+     WHERE ma.member_id = ? AND ma.access = 'owner' AND mb.kind IN ('personal', 'shared')`,
   )
     .bind(memberId)
-    .first<Personal>()
+    .all<Personal>()
+  return results
 }
 
 export async function deleteMember(
@@ -53,13 +57,13 @@ export async function deleteMember(
   const pending = await env.DB.prepare('SELECT delete_after FROM members WHERE id = ?').bind(memberId).first<{ delete_after: string | null }>()
   if (pending?.delete_after) throw new ApiError('already_deleting', 'This member is already being deleted', 409)
 
-  const mailbox = await personalMailbox(env, memberId)
+  const mailboxes = await personalMailboxes(env, memberId)
   let shareWith: string[] = []
-  if (mailbox && input.mail === 'shared') {
-    if (mailbox.backend !== 'store') {
+  if (mailboxes.length && input.mail === 'shared') {
+    if (mailboxes.some((m) => m.backend !== 'store')) {
       throw new ApiError(
         'shared_needs_new_mail_system',
-        "This mailbox is on the current mail server, where it can't become a shared mailbox. Choose to delete its mail, or wait until its domain has moved.",
+        "One of their mailboxes is on the current mail server, where it can't become a shared mailbox. Choose to delete their mail, or wait until its domain has moved.",
         409,
       )
     }
@@ -76,20 +80,20 @@ export async function deleteMember(
   const now = new Date()
   const iso = now.toISOString()
   const after = new Date(now.getTime() + DELETE_DAYS * 86_400_000).toISOString()
-  // Only grants they didn't already have, so restoring takes away exactly these.
-  const added: string[] = []
-  if (mailbox) {
-    for (const id of shareWith) if (!(await mailboxAccessDb.find(env.DB, mailbox.id, id))) added.push(id)
+  // Only grants they didn't already have, so restoring takes away exactly these: [mailbox id, member id] pairs.
+  const added: [string, string][] = []
+  for (const mb of mailboxes) {
+    for (const id of shareWith) if (!(await mailboxAccessDb.find(env.DB, mb.id, id))) added.push([mb.id, id])
   }
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE members SET suspended_at = COALESCE(suspended_at, ?), delete_after = ?, delete_mail = ?, delete_shared_with = ?,
          deleted_by = ?, updated_at = ? WHERE id = ?`,
-    ).bind(iso, after, mailbox ? input.mail : null, JSON.stringify(added), me.id, iso, memberId),
+    ).bind(iso, after, mailboxes.length ? input.mail : null, JSON.stringify(added), me.id, iso, memberId),
     ...signOutUser(env, target.user_id, iso),
-    ...added.map((id) => mailboxAccessDb.insert(env.DB, { mailboxId: mailbox!.id, memberId: id, access: 'full', createdAt: iso })),
-    ...(mailbox && input.mail === 'shared'
-      ? [env.DB.prepare("UPDATE mailboxes SET kind = 'shared', updated_at = ? WHERE id = ?").bind(iso, mailbox.id)]
+    ...added.map(([mailboxId, id]) => mailboxAccessDb.insert(env.DB, { mailboxId, memberId: id, access: 'full', createdAt: iso })),
+    ...(input.mail === 'shared'
+      ? mailboxes.map((mb) => env.DB.prepare("UPDATE mailboxes SET kind = 'shared', updated_at = ? WHERE id = ?").bind(iso, mb.id))
       : []),
     // Their agents act with their access, which is gone: paused until someone else takes them on.
     env.DB.prepare(
@@ -108,13 +112,17 @@ export async function cancelDeletion(env: Env, memberId: string): Promise<D1Prep
     .bind(memberId)
     .first<{ delete_shared_with: string | null; delete_mail: string | null }>()
   if (!row) return []
-  const mailbox = await personalMailbox(env, memberId)
-  const granted = JSON.parse(row.delete_shared_with ?? '[]') as string[]
+  const mailboxes = await personalMailboxes(env, memberId)
+  // [mailbox id, member id] pairs; deletions started before that format stored member ids only (their one mailbox).
+  const granted = (JSON.parse(row.delete_shared_with ?? '[]') as (string | [string, string])[]).flatMap((g) =>
+    typeof g === 'string' ? (mailboxes[0] ? [[mailboxes[0].id, g] as [string, string]] : []) : [g],
+  )
+  const now = new Date().toISOString()
   return [
     env.DB.prepare('UPDATE members SET delete_after = NULL, delete_mail = NULL, delete_shared_with = NULL, deleted_by = NULL WHERE id = ?').bind(memberId),
-    ...(mailbox ? granted.map((id) => mailboxAccessDb.remove(env.DB, mailbox.id, id)) : []),
-    ...(mailbox && row.delete_mail === 'shared'
-      ? [env.DB.prepare("UPDATE mailboxes SET kind = 'personal', updated_at = ? WHERE id = ?").bind(new Date().toISOString(), mailbox.id)]
+    ...granted.map(([mailboxId, id]) => mailboxAccessDb.remove(env.DB, mailboxId, id)),
+    ...(row.delete_mail === 'shared'
+      ? mailboxes.map((mb) => env.DB.prepare("UPDATE mailboxes SET kind = 'personal', updated_at = ? WHERE id = ?").bind(now, mb.id))
       : []),
   ]
 }
@@ -152,15 +160,16 @@ export async function finishDeletion(env: Env, memberId: string): Promise<void> 
   if (!heir) throw new Error('no member to hand files to')
   const now = new Date().toISOString()
 
-  // The mailbox first: if deleting it fails, nothing else has changed and the next hour tries again.
-  const mailbox = await personalMailbox(env, memberId)
-  if (mailbox && target.delete_mail === 'delete') {
-    await deleteMailbox(env, { userId: target.owner_id }, mailbox.id)
-  } else if (mailbox) {
-    await env.DB.batch([
-      env.DB.prepare("UPDATE mailboxes SET kind = 'shared', updated_at = ? WHERE id = ?").bind(now, mailbox.id),
-      mailboxAccessDb.remove(env.DB, mailbox.id, memberId),
-    ])
+  // The mailboxes first: if deleting one fails, the membership is still there and the next hour tries again.
+  for (const mailbox of await personalMailboxes(env, memberId)) {
+    if (target.delete_mail === 'delete') {
+      await deleteMailbox(env, { userId: target.owner_id }, mailbox.id)
+    } else {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE mailboxes SET kind = 'shared', updated_at = ? WHERE id = ?").bind(now, mailbox.id),
+        mailboxAccessDb.remove(env.DB, mailbox.id, memberId),
+      ])
+    }
   }
 
   // My Files: into a folder at the top of the heir's My Files, so nothing clashes with their own names.

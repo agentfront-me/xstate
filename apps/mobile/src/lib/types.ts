@@ -130,6 +130,8 @@ export type OrgMember = {
   you: boolean
   /** Their own mailbox: every address, the primary one (their sign-in) first. */
   mailbox: { id: string; addresses: { id: string; address: string; domainId: string; primary: boolean }[] } | null
+  /** Every personal mailbox they own, the one they sign in with first (older apps only read `mailbox`). */
+  mailboxes?: { id: string; addresses: { id: string; address: string; domainId: string; primary: boolean }[] }[]
   /** Set while they're suspended. */
   suspendedAt: string | null
   /** Set while their deletion is pending: when it finishes. */

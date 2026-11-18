@@ -47,6 +47,11 @@ export type OrgMember = {
   recoveryEmail: string | null
   /** Their own mailbox in the organization, if they have one: every address, the primary (their sign-in) first. */
   mailbox: MemberMailbox | null
+  /**
+   * Every personal mailbox they own, the one with their sign-in first. Usually one; people set up before one mailbox
+   * could have addresses on several domains may have one per domain. `mailbox` is the first of these.
+   */
+  mailboxes: MemberMailbox[]
   /** When they were suspended, while they are (members/security.ts). */
   suspendedAt: string | null
   /** While their deletion is pending: when it finishes. Restoring them before then undoes it (members/deletion.ts). */
@@ -62,15 +67,15 @@ export type MemberMailbox = {
   addresses: { id: string; address: string; domainId: string; primary: boolean }[]
 }
 
-type Extras = { mailboxes: Map<string, MemberMailbox>; shared: Map<string, OrgMember['sharedAccess']>; canManage: boolean }
+type Extras = { mailboxes: Map<string, MemberMailbox[]>; shared: Map<string, OrgMember['sharedAccess']>; canManage: boolean }
 
 async function extrasFor(env: MembersEnv, organizationId: string, me: Member, memberId?: string): Promise<Extras> {
-  const mailboxes = new Map<string, MemberMailbox>()
+  const mailboxes = new Map<string, MemberMailbox[]>()
   for (const r of await membersDb.personalMailboxes(env.DB, organizationId, memberId)) {
-    let box = mailboxes.get(r.member_id)
-    // One personal mailbox per member is the rule; if there were more, the first one found is theirs here.
-    if (box && box.id !== r.mailbox_id) continue
-    if (!box) mailboxes.set(r.member_id, (box = { id: r.mailbox_id, backend: r.backend, addresses: [] }))
+    const list = mailboxes.get(r.member_id) ?? []
+    if (!mailboxes.has(r.member_id)) mailboxes.set(r.member_id, list)
+    let box = list.find((b) => b.id === r.mailbox_id)
+    if (!box) list.push((box = { id: r.mailbox_id, backend: r.backend, addresses: [] }))
     box.addresses.push({ id: r.address_id, address: r.address, domainId: r.domain_id, primary: !!r.is_primary })
   }
   const shared = new Map<string, OrgMember['sharedAccess']>()
@@ -105,7 +110,15 @@ function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
         ? { sentAt: row.sent_at, expiresAt: row.expires_at, invitedBy: row.invited_by_name }
         : null,
     recoveryEmail: you || extras?.canManage ? row.recovery_email : null,
-    mailbox: extras?.mailboxes.get(row.id) ?? null,
+    ...(() => {
+      // The mailbox they sign in with first, then by first address.
+      const list = [...(extras?.mailboxes.get(row.id) ?? [])].sort(
+        (a, b) =>
+          Number(b.addresses.some((x) => x.address === row.email)) - Number(a.addresses.some((x) => x.address === row.email)) ||
+          a.addresses[0]!.address.localeCompare(b.addresses[0]!.address),
+      )
+      return { mailbox: list[0] ?? null, mailboxes: list }
+    })(),
     suspendedAt: row.suspended_at,
     deleteAfter: row.delete_after,
     sharedAccess: you || extras?.canManage ? (extras?.shared.get(row.id) ?? []) : [],
@@ -327,7 +340,7 @@ export async function setPrimaryAddress(env: Env, actor: Actor, memberId: string
   const { target, me } = await memberContext(env, actor, memberId)
   requireOrgPermission(me, 'members.manage')
   if (target.role === 'owner' && target.user_id !== actor.userId) throw forbidden("Only the owner can change the owner's addresses")
-  const box = (await extrasFor(env, target.organization_id, me, memberId)).mailboxes.get(memberId)
+  const box = (await extrasFor(env, target.organization_id, me, memberId)).mailboxes.get(memberId)?.find((b) => b.addresses.some((a) => a.id === addressId))
   const next = box?.addresses.find((a) => a.id === addressId)
   if (!box || !next) throw new ApiError('address_not_found', 'Address not found', 404)
   if (next.primary) return reload(env, actor, me, memberId)

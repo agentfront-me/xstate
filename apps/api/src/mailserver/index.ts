@@ -73,7 +73,7 @@ export {
   type Repeat,
 } from './calendar'
 export { evaluateSender, sendingHourly, sendingStatus } from './sending'
-export { grantMailboxAccess, listMailboxAccess, revokeMailboxAccess } from './sharing'
+export { giveMailbox, grantMailboxAccess, listMailboxAccess, revokeMailboxAccess } from './sharing'
 export type {
   Actor,
   Domain,

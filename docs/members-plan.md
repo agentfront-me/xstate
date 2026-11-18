@@ -311,3 +311,18 @@ suspend and sign out everywhere for admins. Adding members stays on the web.
 - **Shipping:** JavaScript only, so it ships with `eas update --channel preview`, without a new build.
 - **Local testing:** the `mobile-local` launch config points the dev build at the local API.
 
+#### Follow-up: several mailboxes per member, shared mailboxes list, giving a mailbox (2026-11-18)
+
+Production showed the owner with four separate personal mailboxes (one per domain, made before one mailbox could
+have several addresses), four shared mailboxes nobody could see from Members, and mohammad@asif.pk owned by the
+owner instead of the invited Mohammad Asif.
+- **All mailboxes:** the members list returns `mailboxes` (every personal mailbox, the sign-in one first) as well
+  as `mailbox`, which older apps read. The web and mobile apps show all of them, and "· N domains" counts across
+  them.
+- **Deleting:** handles every mailbox a member owns, including restoring and finishing.
+- **Shared mailboxes:** a section on the Members page, as in the design, lists each one with how many members can
+  open it. Opening one sets who can open it, with Full / Read only.
+- **Giving a mailbox:** `POST /email/mailboxes/:id/owner` (`email_give_mailbox`) gives a personal mailbox and its
+  mail to another member, invited ones included. The member dialog offers "Give this mailbox to someone else…".
+- **Not built:** merging separate mailboxes into one (moving mail between stores).
+

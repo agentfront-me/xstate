@@ -4,7 +4,7 @@
 // same mailbox. Without a verified domain there is no mailbox to give, so Add member falls back to a plain email
 // invite: they then sign in with their own email.
 
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
@@ -17,7 +17,9 @@ import {
   addMember,
   addMemberAddress,
   deleteMember,
+  giveMailbox,
   inviteMember,
+  mailboxAccess,
   memberAction,
   removeMemberAddress,
   resendInvite,
@@ -368,7 +370,7 @@ export function MemberDialog({
   const canSecure = manage && m.role !== 'owner' && (m.role !== 'admin' || account.org.role === 'owner' || account.org.role === 'admin')
   const suspended = !!m.suspendedAt
   // A temporary password only when their sign-in is an address of their mailbox here, not an email of their own.
-  const orgSignIn = !!m.mailbox?.addresses.some((a) => a.address === m.email)
+  const orgSignIn = m.mailboxes.some((b) => b.addresses.some((a) => a.address === m.email))
 
   const act = async (what: string, fn: () => Promise<unknown>, done?: string) => {
     setBusy(what)
@@ -382,7 +384,6 @@ export function MemberDialog({
     }
   }
 
-  const box = m.mailbox
   const recoveryChanged = recovery.trim().toLowerCase() !== (m.recoveryEmail ?? '')
 
   return (
@@ -419,45 +420,52 @@ export function MemberDialog({
           </div>
         </section>
 
-        {box && (
+        {m.mailboxes.length > 0 && (
           <section>
-            <h3>Addresses</h3>
-            <p className="hint">Mail to any of these arrives in one inbox. They sign in with the primary address and can send from any of them.</p>
-            <div className="card">
-              {box.addresses.map((a) => (
-                <div className="card-row address-row" key={a.id}>
-                  <Icon name="at-sign" size={14} />
-                  <span className="name ellipsis">{a.address}</span>
-                  <span className="right">
-                    {a.primary ? (
-                      <span className="tag">Primary</span>
-                    ) : (
-                      editable && (
-                        <>
-                          {box.backend === 'store' && (
+            <h3>{m.mailboxes.length > 1 ? 'Mailboxes' : 'Addresses'}</h3>
+            <p className="hint">
+              {m.mailboxes.length > 1
+                ? `${m.mailboxes.length} separate mailboxes, each with its own inbox. They sign in with ${m.email}.`
+                : 'Mail to any of these arrives in one inbox. They sign in with the primary address and can send from any of them.'}
+            </p>
+            {m.mailboxes.map((box) => (
+              <div className="card" key={box.id}>
+                {box.addresses.map((a) => (
+                  <div className="card-row address-row" key={a.id}>
+                    <Icon name="at-sign" size={14} />
+                    <span className="name ellipsis">{a.address}</span>
+                    <span className="right">
+                      {a.primary ? (
+                        m.mailboxes.length === 1 && <span className="tag">Primary</span>
+                      ) : (
+                        editable && (
+                          <>
+                            {box.backend === 'store' && (
+                              <button
+                                className="btn btn-sm btn-quiet"
+                                disabled={!!busy}
+                                onClick={() => void act('primary', () => setPrimaryAddress(client, orgId, m.id, a.id), `${a.address} is now primary`)}
+                              >
+                                Make primary
+                              </button>
+                            )}
                             <button
-                              className="btn btn-sm btn-quiet"
+                              className="x-btn"
+                              aria-label={`Remove ${a.address}`}
                               disabled={!!busy}
-                              onClick={() => void act('primary', () => setPrimaryAddress(client, orgId, m.id, a.id), `${a.address} is now primary`)}
+                              onClick={() => void act('remove-address', () => removeMemberAddress(client, orgId, box.id, a.address), 'Address removed')}
                             >
-                              Make primary
+                              <Icon name="x" size={14} />
                             </button>
-                          )}
-                          <button
-                            className="x-btn"
-                            aria-label={`Remove ${a.address}`}
-                            disabled={!!busy}
-                            onClick={() => void act('remove-address', () => removeMemberAddress(client, orgId, box.id, a.address), 'Address removed')}
-                          >
-                            <Icon name="x" size={14} />
-                          </button>
-                        </>
-                      )
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
+                          </>
+                        )
+                      )}
+                    </span>
+                  </div>
+                ))}
+                {manage && <GiveMailbox account={account} member={m} mailboxId={box.id} address={box.addresses.find((a) => a.primary)?.address ?? box.addresses[0]!.address} />}
+              </div>
+            ))}
             {editable && domains.length > 0 && (
               <form
                 className="inline-form"
@@ -465,7 +473,7 @@ export function MemberDialog({
                 onSubmit={(e) => {
                   e.preventDefault()
                   if (!localOf(newLocal)) return
-                  void act('add-address', () => addMemberAddress(client, orgId, box.id, { localPart: localOf(newLocal), domainId: newDomain }), 'Address added')
+                  void act('add-address', () => addMemberAddress(client, orgId, m.mailboxes[0]!.id, { localPart: localOf(newLocal), domainId: newDomain }), 'Address added')
                 }}
               >
                 <input className="text-input" aria-label="New address" placeholder="name" value={newLocal} onChange={(e) => setNewLocal(e.target.value)} />
@@ -477,7 +485,7 @@ export function MemberDialog({
                   ))}
                 </select>
                 <button className="btn" disabled={busy === 'add-address'}>
-                  Add address
+                  {m.mailboxes.length > 1 ? `Add to ${m.mailboxes[0]!.addresses[0]!.address.split('@')[0]}@` : 'Add address'}
                 </button>
               </form>
             )}
@@ -670,9 +678,10 @@ function DeleteSection({ account, member: m }: { account: Account; member: OrgMe
   const people = (useMembers(orgId, true).data ?? []).filter((x) => x.id !== m.id && x.status === 'active' && !x.suspendedAt)
   const me = people.find((x) => x.you)
   const label = m.name || m.email
-  const box = m.mailbox
+  const boxes = m.mailboxes
+  const box = boxes[0]
   // On the current mail server a personal mailbox can't become a shared one.
-  const canShare = box?.backend === 'store'
+  const canShare = boxes.length > 0 && boxes.every((b) => b.backend === 'store')
   const [open, setOpen] = useState(false)
   const [mail, setMail] = useState<'shared' | 'delete'>(canShare ? 'shared' : 'delete')
   const [shareWith, setShareWith] = useState<string[]>(me ? [me.id] : [])
@@ -712,9 +721,9 @@ function DeleteSection({ account, member: m }: { account: Account; member: OrgMe
         <div className="delete-panel">
           {box && (
             <label className="field">
-              What should happen to the mail in {box.addresses.map((a) => a.address).join(', ')}?
+              What should happen to the mail in {boxes.flatMap((b) => b.addresses.map((a) => a.address)).join(', ')}?
               <select className="select" value={mail} onChange={(e) => setMail(e.target.value as 'shared' | 'delete')}>
-                {canShare && <option value="shared">Turn it into a shared mailbox</option>}
+                {canShare && <option value="shared">{boxes.length > 1 ? 'Turn them into shared mailboxes' : 'Turn it into a shared mailbox'}</option>}
                 <option value="delete">Delete all its mail after 30 days</option>
               </select>
             </label>
@@ -828,5 +837,201 @@ function SharedAccessSection({ account, member: m }: { account: Account; member:
         })}
       </div>
     </section>
+  )
+}
+
+/** Gives one of a member's personal mailboxes, with all its mail, to someone else in the organization. */
+function GiveMailbox({ account, member: m, mailboxId, address }: { account: Account; member: OrgMember; mailboxId: string; address: string }) {
+  const client = useQueryClient()
+  const orgId = account.org.id
+  const people = (useMembers(orgId, true).data ?? []).filter((x) => x.id !== m.id && !x.deleteAfter)
+  const [open, setOpen] = useState(false)
+  const [to, setTo] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (!people.length) return null
+
+  const give = async () => {
+    const person = people.find((p) => p.id === to)
+    if (!person) return
+    const who = person.name || person.email
+    if (!confirm(`Give ${address} and all its mail to ${who}? ${who} becomes its owner and can read everything in it. ${m.name || m.email} loses access.`)) return
+    setBusy(true)
+    try {
+      await giveMailbox(client, orgId, mailboxId, person.id)
+      void refreshAccount(client)
+      toast(`${address} now belongs to ${who}`)
+      setOpen(false)
+    } catch (err) {
+      toast(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card-row give-row">
+      {open ? (
+        <>
+          <select className="select sm" aria-label={`Give ${address} to`} value={to} onChange={(e) => setTo(e.target.value)}>
+            <option value="">Give {address} to…</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name || p.email}
+                {p.status === 'invited' ? ' (invited)' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="row-gap">
+            <button className="btn btn-sm btn-quiet" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-sm" disabled={!to || busy} aria-busy={busy || undefined} onClick={() => void give()}>
+              Give mailbox
+            </button>
+          </span>
+        </>
+      ) : (
+        <button className="text-btn" onClick={() => setOpen(true)}>
+          Give this mailbox to someone else…
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Shared mailboxes (on the Members page)
+
+const accessKey = (mailboxId: string) => ['mailbox-access', mailboxId] as const
+
+/** The organization's shared mailboxes and how many people can open each; opening one manages who. */
+export function SharedMailboxesSection({ account }: { account: Account }) {
+  const shared = account.mailboxes.filter((mb) => mb.kind === 'shared').sort((a, b) => a.address.localeCompare(b.address))
+  const access = useQueries({ queries: shared.map((mb) => ({ queryKey: accessKey(mb.id), queryFn: () => mailboxAccess(mb.id) })) })
+  const [openId, setOpenId] = useState<string | null>(null)
+  const open = shared.find((mb) => mb.id === openId)
+  const manage = account.org.role === 'owner' || account.org.role === 'admin'
+
+  return (
+    <div className="group">
+      <div className="group-head">
+        <div className="text">
+          <h2>Shared mailboxes</h2>
+          <p>One address that several members read and reply from. Owners and admins can open all of them. Add one from Domains.</p>
+        </div>
+      </div>
+      <div className="card">
+        {shared.length === 0 && (
+          <div className="card-row">
+            <span className="muted">No shared mailboxes yet.</span>
+          </div>
+        )}
+        {shared.map((mb, i) => {
+          const n = access[i]?.data?.length
+          return (
+            <button className="card-row member-row" key={mb.id} onClick={() => setOpenId(mb.id)}>
+              <span className="avatar md">
+                <Icon name="inbox" size={14} />
+              </span>
+              <div className="text">
+                <span className="name ellipsis">{mb.displayName || mb.address.split('@')[0]}</span>
+                <span className="sub ellipsis">{mb.address}</span>
+              </div>
+              <span className="right">
+                <span className="muted">{n === undefined ? '' : n === 0 ? 'Only admins' : `${n} ${n === 1 ? 'member' : 'members'}`}</span>
+                <Icon name="chevron-right" size={14} />
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      {open && <SharedMailboxDialog account={account} mailbox={open} manage={manage} onClose={() => setOpenId(null)} />}
+    </div>
+  )
+}
+
+function SharedMailboxDialog({
+  account,
+  mailbox,
+  manage,
+  onClose,
+}: {
+  account: Account
+  mailbox: { id: string; address: string; displayName?: string | null }
+  manage: boolean
+  onClose: () => void
+}) {
+  const client = useQueryClient()
+  const orgId = account.org.id
+  const access = useQuery({ queryKey: accessKey(mailbox.id), queryFn: () => mailboxAccess(mailbox.id) })
+  const people = (useMembers(orgId, true).data ?? []).filter((p) => p.role === 'member' && !p.deleteAfter)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const change = async (memberId: string, level: 'full' | 'read' | null) => {
+    setBusy(memberId)
+    try {
+      await setSharedAccess(client, orgId, mailbox.id, memberId, level)
+      await client.invalidateQueries({ queryKey: accessKey(mailbox.id) })
+    } catch (err) {
+      toast(errorMessage(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Modal title={mailbox.displayName || mailbox.address} onClose={onClose}>
+      <div className="modal-body member-detail">
+        <div className="member-head">
+          <span className="avatar md">
+            <Icon name="inbox" size={14} />
+          </span>
+          <div className="text">
+            <span className="name ellipsis">{mailbox.displayName || mailbox.address.split('@')[0]}</span>
+            <span className="sub ellipsis">{mailbox.address}</span>
+          </div>
+        </div>
+        <section>
+          <h3>Who can open it</h3>
+          <p className="hint">Owners and admins can always open it. Full access can read, send and organize; Read only can't change or send anything.</p>
+          {people.length === 0 ? (
+            <p className="hint">Everyone in the organization is an owner or admin.</p>
+          ) : (
+            <div className="shared-list">
+              {people.map((p) => {
+                const current = access.data?.find((a) => a.memberId === p.id)?.access ?? null
+                const level = current === 'owner' ? null : current
+                return (
+                  <div className="shared-row" key={p.id}>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={!!level}
+                        disabled={!manage || busy === p.id || !access.data}
+                        onChange={(e) => void change(p.id, e.target.checked ? 'full' : null)}
+                      />
+                      <span className="ellipsis">{p.name || p.email}</span>
+                    </label>
+                    <span className="muted ellipsis">{p.status === 'invited' ? 'Invited' : p.email}</span>
+                    {level && (
+                      <select
+                        className="select sm"
+                        aria-label={`Access for ${p.name || p.email}`}
+                        value={level}
+                        disabled={!manage || busy === p.id}
+                        onChange={(e) => void change(p.id, e.target.value as 'full' | 'read')}
+                      >
+                        <option value="full">Full</option>
+                        <option value="read">Read only</option>
+                      </select>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+    </Modal>
   )
 }

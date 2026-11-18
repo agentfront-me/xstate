@@ -482,3 +482,6 @@ button.card-row:hover { background: var(--bg-hover); }
 .shared-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 96px; align-items: center; gap: 10px; min-height: 30px; }
 .shared-row .check { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-hi); }
 .shared-row .muted { font-size: 12px; text-align: right; }
+.give-row { justify-content: space-between; gap: 8px; }
+.give-row .select { max-width: 60%; }
+.member-detail .card + .card { margin-top: 8px; }

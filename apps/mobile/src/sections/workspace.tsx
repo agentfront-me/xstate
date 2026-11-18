@@ -20,7 +20,8 @@ export function memberState(m: OrgMember): { label: string; color: string } | nu
 
 /** Their sign-in address, and how many domains they have addresses on when it's more than one. */
 export function memberLine(m: OrgMember): string {
-  const domains = new Set(m.mailbox?.addresses.map((a) => a.domainId)).size
+  const boxes = m.mailboxes ?? (m.mailbox ? [m.mailbox] : [])
+  const domains = new Set(boxes.flatMap((b) => b.addresses.map((a) => a.domainId))).size
   return domains > 1 ? `${m.email} · ${domains} domains` : m.email
 }
 
