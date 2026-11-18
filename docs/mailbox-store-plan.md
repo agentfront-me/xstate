@@ -1229,6 +1229,17 @@ recipient missed it. Now one line per recipient.
 
 **Deploy:** migration 0037 runs in CI; no new queues, secrets or AWS changes.
 
+**Deployed (2026-11-18, "Added logging").** On the pilot, a send from `hello@` to `team@` and `nobody-4d@` logged two
+`sent` lines, `delivered` in `team@`'s inbox and `dropped` (`unknown_address`). No `ses_delivered` line came for two
+sends to Gmail, although SES's notifications reached `/webhooks/ses`.
+
+**Found on the pilot:** since step 3 stopped passing FromEmailAddress (to keep the display name), SES reports
+`mail.source` as the whole From header (`99events <hello@99events.com>`). The webhook looked that up as an address,
+found no mailbox, and so never counted deliveries, bounces or complaints against store-held senders (their rates and
+automatic suspension included; `delivery_counts` stops on 2026-11-17). Fixed with `sourceAddress` in
+`mailbox/inbound.ts`, used by the webhook and for received mail. Uncommitted; after deploy, a send to Gmail should add
+a `ses_delivered` line and a `delivery_counts` row for the day.
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's

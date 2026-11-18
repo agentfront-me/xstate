@@ -73,7 +73,7 @@ export function inboundJob(notification: unknown): InboundJob | null {
       dmarcPolicy: (r.dmarcPolicy ?? '').toLowerCase(),
     },
     receivedAt: new Date(Number.isNaN(time) ? Date.now() : time).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    source: n.mail.source?.toLowerCase() || null,
+    source: sourceAddress(n.mail.source),
   }
   if (n.content) {
     // The SNS action sends the message as UTF-8 text or base64; the job always carries base64.
@@ -141,4 +141,16 @@ export function ulidTime(id: string): number {
   let t = 0
   for (const ch of id.slice(0, 10)) t = t * 32 + CROCKFORD.indexOf(ch)
   return t
+}
+
+/**
+ * The bare address in an SES `mail.source`. For a raw send without FromEmailAddress (mailbox/ses-send.ts keeps the
+ * display name that way) SES reports the From header as it is, `99events <hello@99events.com>`; otherwise, and for
+ * received mail, it is the envelope sender. Lowercased; null when there is none.
+ */
+export function sourceAddress(source: string | null | undefined): string | null {
+  if (!source) return null
+  const bracketed = /<([^<>\s]+@[^<>\s]+)>\s*$/.exec(source)
+  const address = (bracketed?.[1] ?? source).trim().toLowerCase()
+  return address || null
 }

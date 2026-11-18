@@ -17,6 +17,7 @@
 import type { Context } from 'hono'
 import * as addressesDb from '../db/addresses'
 import * as mailboxesDb from '../db/mailboxes'
+import { sourceAddress } from '../mailbox/inbound'
 import { store } from '../mailbox/stub'
 import * as eventsDb from '../db/email-events'
 import * as sendingDb from '../db/sending'
@@ -72,7 +73,8 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
   const kind = (n.notificationType ?? n.eventType ?? '').toLowerCase()
   if (kind !== 'bounce' && kind !== 'complaint' && kind !== 'delivery') return c.json({ ignored: kind || 'unknown' })
 
-  const sender = (n.mail?.source ?? '').toLowerCase()
+  // The sending mailbox's address: SES gives the whole From header for our raw sends (mailbox/inbound.ts).
+  const sender = sourceAddress(n.mail?.source) ?? ''
   const owner = sender ? await addressesDb.findByAddress(c.env.DB, sender) : null
   // Our own Message-ID, when SES passes it on: the surest way to find the message in the API's send log.
   const ourMessageId = n.mail?.commonHeaders?.messageId?.replace(/^<|>$/g, '') || null

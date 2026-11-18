@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { inboundJob, messageIds, previewOf, subjectKey, ulid, ulidTime } from './inbound.ts'
+import { inboundJob, messageIds, previewOf, sourceAddress, subjectKey, ulid, ulidTime } from './inbound.ts'
 
 const received = (over: Record<string, unknown> = {}) => ({
   notificationType: 'Received',
@@ -103,5 +103,22 @@ describe('messageIds', () => {
 describe('previewOf', () => {
   it('collapses whitespace and cuts', () => {
     assert.equal(previewOf('Hello\n\n  there', 8), 'Hello th')
+  })
+})
+
+describe('sourceAddress', () => {
+  it('takes the address out of a From header with a display name', () => {
+    assert.equal(sourceAddress('99events <hello@99events.com>'), 'hello@99events.com')
+    assert.equal(sourceAddress('"Khan, Asif" <Asif@XState.com>'), 'asif@xstate.com')
+  })
+
+  it('keeps a bare envelope sender, lowercased', () => {
+    assert.equal(sourceAddress('Bounce+abc@Example.org'), 'bounce+abc@example.org')
+    assert.equal(sourceAddress('010f01a1ed2e2b87-62368e79@us-east-2.amazonses.com'), '010f01a1ed2e2b87-62368e79@us-east-2.amazonses.com')
+  })
+
+  it('returns null when there is none', () => {
+    assert.equal(sourceAddress(undefined), null)
+    assert.equal(sourceAddress(''), null)
   })
 })
