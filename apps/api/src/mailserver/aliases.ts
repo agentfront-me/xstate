@@ -19,6 +19,8 @@ export async function addAlias(
   if (!domain || domain.organization_id !== mailbox.organization_id) throw notFound('domain')
   if (domainAccess(member, domain.id) !== 'manage') throw forbidden(`You can't manage ${domain.name}`)
 
+  await requireSamePath(env, mailbox, domain)
+
   const localPart = normalizeLocalPart(alias.localPart)
   const address = `${localPart}@${domain.name}`
   await requireAddressFree(env, address)
@@ -65,4 +67,21 @@ async function currentAliases(env: EmailEnv, mailboxId: string, excludeAddressId
   return rows
     .filter((a) => a.id !== excludeAddressId)
     .map((a) => ({ localPart: a.local_part, domainId: a.domain_stalwart_id }))
+}
+
+/**
+ * An alias must be on a domain whose mail lives where the mailbox's own domain's mail lives (phase 4b). Otherwise a
+ * domain would have mailboxes in both Stalwart and the mailbox store: Stalwart's routing rule then can't cover it,
+ * and mail between the two would be delivered to the wrong place. Domains move whole.
+ */
+async function requireSamePath(env: EmailEnv, mailbox: mailboxesDb.MailboxRow, domain: domainsDb.DomainRow): Promise<void> {
+  const own = await domainsDb.find(env.DB, mailbox.domain_id)
+  const path = own?.mail_path ?? 'stalwart'
+  if (path === domain.mail_path) return
+  const where = (p: string) => (p === 'store' ? 'the new mail system' : p === 'switching' ? 'a domain being moved' : 'the current mail server')
+  throw new EmailError(
+    'domain_mail_path_differs',
+    `${domain.name} is on ${where(domain.mail_path)} and this mailbox's domain is on ${where(path)}. Aliases must stay on domains handled the same way.`,
+    409,
+  )
 }

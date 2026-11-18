@@ -65,7 +65,20 @@ export async function createMailbox(
   const now = new Date().toISOString()
   const organizationId = domain.organization_id
   const writes = [
-    mailboxesDb.insert(env.DB, { id, organizationId, kind: input.kind, displayName, quotaBytes, stalwartId, createdBy: actor.userId, now }),
+    // On a domain whose mail the store holds, the mailbox starts there too (phase 4b). It still gets a Stalwart
+    // account above, because stalwart_id is required until phase 5; Stalwart's routing rule sends the domain's mail
+    // out to SES, so nothing reaches that account.
+    mailboxesDb.insert(env.DB, {
+      id,
+      organizationId,
+      kind: input.kind,
+      displayName,
+      quotaBytes,
+      stalwartId,
+      createdBy: actor.userId,
+      now,
+      backend: domain.mail_path === 'store' ? 'store' : 'stalwart',
+    }),
     addressesDb.insert(env.DB, { organizationId, mailboxId: id, domainId: domain.id, localPart, address, isPrimary: true, now }),
   ]
   if (input.ownerMemberId) {

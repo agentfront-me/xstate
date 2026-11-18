@@ -82,12 +82,14 @@ export function insert(
     stalwartId: string
     createdBy: string
     now: string
+    /** 'store' for a mailbox on a domain whose mail the store holds (phase 4b); 'stalwart' otherwise. */
+    backend?: 'stalwart' | 'store'
   },
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO mailboxes (id, organization_id, kind, display_name, quota_bytes, stalwart_id, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mailboxes (id, organization_id, kind, display_name, quota_bytes, stalwart_id, created_by, created_at, updated_at, backend)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       mailbox.id,
@@ -99,6 +101,7 @@ export function insert(
       mailbox.createdBy,
       mailbox.now,
       mailbox.now,
+      mailbox.backend ?? 'stalwart',
     )
 }
 

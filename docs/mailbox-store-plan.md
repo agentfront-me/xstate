@@ -1971,8 +1971,26 @@ MTA-STS or Stalwart DKIM), "Check DNS" listed them and kept the domain verified;
 as before. 3 new unit tests (the records and zone text, the pilot's published records found, Stalwart's MX not
 taken for a store domain); 440 tests pass.
 
-**After deploy:** "Check DNS" on 99events.com should turn it from `pending` to `verified` (its MX, SPF and DKIM are
-SES's already).
+**Deployed (2026-11-18, commit daa55f5).** Migration 0038 set 99events.com to `store` and every other domain to
+`stalwart`. "Check DNS" on 99events.com found all six records (SES MX, SPF, three DKIM CNAMEs, DMARC) and the domain
+went from `pending` to `verified` for the first time; its records page shows the six store records.
+
+#### Steps 4b and 4e: mailboxes on store domains, system mail through the store (approved and built 2026-11-18, uncommitted)
+
+- **4b:** `createMailbox` inserts the mailbox with `backend = 'store'` when its domain's `mail_path` is `store` (a
+  Stalwart account is still made, for `stalwart_id`; the routing rule keeps the domain's mail away from it).
+  `addAlias` refuses (409 `domain_mail_path_differs`) an alias on a domain whose `mail_path` differs from the
+  mailbox's own domain's. Deleting a store-held mailbox already removes its store and raw copies
+  (`mailserver/mailboxes.ts`, the existing `store_mode`/`backend` branch).
+- **4e:** `sendSystemEmail` sends with `sendFromStore` when the `SYSTEM_MAIL_FROM` mailbox is store-held: From
+  "xstate", the message's Reply-To kept, a Sent copy kept, the usual delivery-log line (marked `api`, the path it
+  uses) and sending caps. Through Stalwart as before otherwise.
+
+**Local test:** acme.test marked `store`: a new shared mailbox sysmail@acme.test was created on the store; an alias
+on a new Stalwart domain (acme2.test) was refused with the message, one on acme.test accepted. With
+`SYSTEM_MAIL_FROM=sysmail@acme.test`, creating an API token sent its owner "New API token: …" through (fake) SES from
+`xstate <sysmail@acme.test>`, with a `sent` line and the Sent copy in the store. Everything removed afterwards;
+acme.test back on `stalwart`. 440 tests pass.
 
 #### Mail apps (IMAP, SMTP, CalDAV)
 
