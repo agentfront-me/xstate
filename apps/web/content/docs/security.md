@@ -25,7 +25,10 @@ change how something works. Recent changes are listed [at the end](#changes).
   invitation goes to a secondary email they can already read.
 - **Temporary passwords.** An admin can add someone with a temporary password instead of an invitation. It's shown
   to the admin once and stored only as a hash. Signing in with it only lets the person choose their own password
-  (a 15-minute, single-purpose token), and the new one must be different.
+  (a 15-minute, single-purpose token), and the new one must be different. Admins can only set one for someone who
+  signs in with an address of the organization's own, never for the owner, and only the owner can for an admin.
+- **Password reset links** an admin emails a member go to their secondary email, work once and expire after 24
+  hours. We store only a hash of the link.
 
 ## Who can see what
 
@@ -205,6 +208,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Admins can give a member a new temporary password or email them a link to choose a new
+  one.
 - **November 18, 2026:** Members can be added with their own mailbox and sign in with its address. Admins can
   set a temporary password, which must be changed at the first sign-in.
 - **November 18, 2026:** xstate's old mail server and its ClamAV scanner were shut down. Received mail is

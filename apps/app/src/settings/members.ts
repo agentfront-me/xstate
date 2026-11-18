@@ -93,6 +93,19 @@ export async function removeMemberAddress(client: QueryClient, orgId: string, ma
   await client.invalidateQueries({ queryKey: key(orgId) })
 }
 
+/** A new temporary password for the member, shown once. They choose their own at their next sign-in. */
+export async function setTemporaryPassword(client: QueryClient, orgId: string, memberId: string) {
+  const result = await api<{ password: string }>('POST', `/members/${memberId}/password`)
+  // Someone still invited joins with it: reload so they show as a member.
+  await client.invalidateQueries({ queryKey: key(orgId) })
+  return result.password
+}
+
+/** Emails the member a link to choose a new password. `to` is where it went. */
+export async function sendPasswordReset(memberId: string) {
+  return (await api<{ email: Delivery & { to: string } }>('POST', `/members/${memberId}/password-reset`)).email
+}
+
 export async function resendInvite(client: QueryClient, orgId: string, memberId: string) {
   const result = await api<{ member: OrgMember; email: Delivery }>('POST', `/members/${memberId}/invite`)
   put(client, orgId, result.member)

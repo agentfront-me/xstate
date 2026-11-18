@@ -19,8 +19,10 @@ import {
   inviteMember,
   removeMemberAddress,
   resendInvite,
+  sendPasswordReset,
   setMemberRole,
   setPrimaryAddress,
+  setTemporaryPassword,
   updateMember,
   type Delivery,
   type OrgMember,
@@ -35,7 +37,7 @@ export function DeliveryNote({ to, delivery }: { to: string; delivery: Delivery 
     <div className="invite-note" role="status">
       <Icon name="circle-alert" size={14} />
       <span>
-        The invite to {to} wasn't emailed: {delivery.reason ?? 'unknown reason'}.
+        The email to {to} wasn't sent: {delivery.reason ?? 'unknown reason'}.
         {delivery.inviteUrl ? ' Share this link with them instead:' : ' Try sending it again.'}
         {delivery.inviteUrl && (
           <span className="invite-link">
@@ -353,7 +355,13 @@ export function MemberDialog({
   const [newDomain, setNewDomain] = useState(domains[0]?.id ?? '')
   const [recovery, setRecovery] = useState(m.recoveryEmail ?? '')
   const [delivery, setDelivery] = useState<Delivery | null>(null)
+  const [tempPassword, setTempPassword] = useState<string | null>(null)
+  const [reset, setReset] = useState<(Delivery & { to: string }) | null>(null)
   const [busy, setBusy] = useState('')
+  // Admins help with someone else's password: never the owner's, and an admin's only by the owner.
+  const canHelpPassword = manage && !m.you && m.role !== 'owner' && (m.role !== 'admin' || account.org.role === 'owner')
+  // A temporary password only when their sign-in is an address of their mailbox here, not an email of their own.
+  const orgSignIn = !!m.mailbox?.addresses.some((a) => a.address === m.email)
 
   const act = async (what: string, fn: () => Promise<unknown>, done?: string) => {
     setBusy(what)
@@ -515,6 +523,48 @@ export function MemberDialog({
               </button>
             </div>
             {delivery && <DeliveryNote to={m.recoveryEmail ?? m.email} delivery={delivery} />}
+          </section>
+        )}
+
+        {canHelpPassword && (
+          <section>
+            <h3>Password</h3>
+            <p className="hint">
+              {orgSignIn ? 'Set a temporary password, or email them a link to choose a new one.' : 'Email them a link to choose a new password.'}
+            </p>
+            <span className="row-gap">
+              {orgSignIn && (
+                <button
+                  className="btn btn-sm"
+                  disabled={!!busy}
+                  onClick={() => void act('password', async () => setTempPassword(await setTemporaryPassword(client, orgId, m.id)))}
+                >
+                  <Icon name="key-round" size={14} />
+                  Set temporary password
+                </button>
+              )}
+              {!invited && (
+                <button className="btn btn-sm" disabled={!!busy} onClick={() => void act('reset', async () => setReset(await sendPasswordReset(m.id)))}>
+                  <Icon name="mail" size={14} />
+                  Email reset link
+                </button>
+              )}
+            </span>
+            {tempPassword && (
+              <>
+                <p className="hint">
+                  Give them this password. They choose their own when they next sign in. It isn't shown again.
+                </p>
+                <span className="inline-form">
+                  <input className="text-input mono" readOnly aria-label="Temporary password" value={tempPassword} />
+                  <button className="btn" type="button" onClick={() => void copyText(tempPassword).then((ok) => ok && toast('Password copied'))}>
+                    <Icon name="copy" size={14} />
+                    Copy
+                  </button>
+                </span>
+              </>
+            )}
+            {reset && (reset.sent ? <p className="hint">Reset link sent to {reset.to}. It works for 24 hours.</p> : <DeliveryNote to={reset.to} delivery={reset} />)}
           </section>
         )}
 

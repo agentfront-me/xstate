@@ -1,4 +1,4 @@
-// go.xstate.com: the dashboard (/app/), the sign-in pages (/login/, /signup/, /invite/, /connect/) and public file links (/s/), React built
+// go.xstate.com: the dashboard (/app/), the sign-in pages (/login/, /signup/, /invite/, /reset/, /connect/) and public file links (/s/), React built
 // by Vite from src/. Everything in public/ (brand files, the front page index.html) is copied as is. The output in dist/ is what
 // Cloudflare serves (wrangler.jsonc) and what the desktop app bundles (apps/desktop, resources/web). The marketing
 // site and docs on xstate.com are a separate app (apps/web).
@@ -57,6 +57,8 @@ export default defineConfig({
         signup: path.join(src, 'signup/index.html'),
         // Accepting an invite to an organization (go.xstate.com/invite/#token, from the invite email).
         invite: path.join(src, 'invite/index.html'),
+        // Choosing a new password from a link an admin emailed (go.xstate.com/reset/#token).
+        reset: path.join(src, 'reset/index.html'),
         // An AI app asking to connect over MCP (go.xstate.com/connect/#request, from mcp.xstate.com/authorize).
         connect: path.join(src, 'connect/index.html'),
         // Import from Google Workspace (Settings → Migration).

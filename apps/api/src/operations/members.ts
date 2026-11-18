@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { syncSeats } from '../billing/service'
+import { completeReset, lookupReset, sendResetLink, setTemporaryPassword } from '../members/passwords'
 import {
   acceptInvite,
   addMember,
@@ -121,6 +122,45 @@ export const membersRemove = defineOperation({
   run: ({ env, actor }, input) => removeMember(env, actor, input.memberId),
 })
 
+export const membersSetPassword = defineOperation({
+  name: 'members_set_password',
+  description:
+    "Gives a member a new temporary password, returned once. They must choose their own at their next sign-in. Only for members who sign in with an address of the organization's own; never the owner, and only the owner for an admin.",
+  input: z.object({ memberId: id }),
+  http: { method: 'POST', path: '/members/:memberId/password' },
+  mcp: false,
+  run: ({ env, actor }, input) => setTemporaryPassword(env, actor, input.memberId),
+})
+
+export const membersSendReset = defineOperation({
+  name: 'members_send_password_reset',
+  description: 'Emails a member a link to choose a new password (to their secondary email when they sign in with an organization address). It works for 24 hours.',
+  input: z.object({ memberId: id }),
+  http: { method: 'POST', path: '/members/:memberId/password-reset' },
+  mcp: false,
+  run: ({ env, actor }, input) => sendResetLink(env, actor, input.memberId),
+})
+
+export const passwordResetLookup = defineOperation({
+  name: 'auth_password_reset_lookup',
+  description: 'Which account a password reset link is for.',
+  input: z.object({ token }),
+  public: true,
+  http: { method: 'POST', path: '/auth/password-reset/lookup' },
+  mcp: false,
+  run: async ({ env }, input) => ({ reset: await lookupReset(env, input.token) }),
+})
+
+export const passwordResetComplete = defineOperation({
+  name: 'auth_password_reset_complete',
+  description: 'Sets a new password from a reset link and returns a session token. The link works once.',
+  input: z.object({ token, password: z.string().min(8, 'Password must be at least 8 characters').max(256) }),
+  public: true,
+  http: { method: 'POST', path: '/auth/password-reset/complete' },
+  mcp: false,
+  run: ({ env }, input) => completeReset(env, input),
+})
+
 // Public: the token from the invite link is the credential. POST, so the token never appears in a URL or log.
 
 export const invitationLookup = defineOperation({
@@ -156,6 +196,10 @@ export const memberOperations = [
   membersSendInvite,
   membersUpdate,
   membersRemove,
+  membersSetPassword,
+  membersSendReset,
   invitationLookup,
   invitationAccept,
+  passwordResetLookup,
+  passwordResetComplete,
 ]

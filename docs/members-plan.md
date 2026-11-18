@@ -1,7 +1,7 @@
 # Plan: managing members
 
 Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
-(see "Phase 1 as built" below). Phases 2–6 not started.
+(see "Phase 1 as built" below). **Phase 2 built and tested locally 2026-11-18.** Phases 3–6 not started.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -174,6 +174,17 @@ Differences from the plan above:
 - `POST /members/:id/reset-link`: emails a reset link to `recovery_email`. Reuse the token pattern from
   invitations (only the hash is stored, and it expires).
 - Nobody can do either to the owner. Admins can't do them to other admins. Only the owner can.
+
+#### Phase 2 as built (2026-11-18)
+
+- `POST /members/:id/password` and `POST /members/:id/password-reset`, in `members/passwords.ts`. Migration
+  `0041_password_resets.sql` holds one open link per user (hash only, 24 hours).
+- A temporary password needs the person's sign-in to be an address of their mailbox in this organization. Someone
+  who signs in with their own email may be in other organizations, so for them only the reset link is offered.
+- Setting a temporary password for someone still invited makes them a member straight away and ends the invite.
+- The link opens `go.xstate.com/reset/#token`, which sets the password and signs them in.
+- Until phase 3, setting a password doesn't sign out sessions that are already open.
+- There's still no "change my own password" screen for someone who is signed in. That's a small follow-up.
 
 ### Phase 3: sign out everywhere and suspend
 
