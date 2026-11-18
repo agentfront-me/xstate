@@ -2155,6 +2155,23 @@ that is only you; for customers it is announced, and `security.md` and the domai
    SPF changed from `v=spf1 mx -all` to `v=spf1 include:amazonses.com -all`. The DMARC record's
    `rua=mailto:postmaster@xstate.com` has no address on the domain, and none is wanted (decided 2026-11-18), so DMARC
    reports aren't received.
+
+   **Old Stalwart DNS records, and MTA-STS (2026-11-18, after the flip):**
+   - xstate.com still had 11 records pointing at `mx.xstate.com`, a name that no longer resolves: the `mta-sts`
+     CNAME, autoconfig, autodiscover and ua-auto-config, six SRV records (CalDAV, CardDAV, IMAP, JMAP, POP3,
+     submission), and the SPF on `mx.xstate.com` itself. All deleted in Cloudflare, along with spike.xstate.com's
+     test MX.
+   - The `_mta-sts` TXT (`id=20261105T1`) stayed, with nothing serving a policy. A sender holding an older policy
+     that listed only Stalwart could have refused SES until it expired.
+   - Now the API Worker serves `https://mta-sts.<domain>/.well-known/mta-sts.txt` for domains with `mail_path`
+     `store` (`mailbox/mta-sts.ts`): enforce, `mx: inbound-smtp.<region>.amazonaws.com`, max_age one week. Domains
+     on Stalwart or mid-switch get a 404.
+   - Each domain needs a custom-domain route in `wrangler.jsonc`; xstate.com's was added. Its `mta-sts` record must
+     not exist when the route is first deployed.
+   - After the deploy, `_mta-sts` gets a new id so senders fetch the new policy.
+   - When switching hireninja.com and the others: delete their old mail-app records and `mta-sts` CNAME, add the
+     route, then bump the id.
+   - Customer domains would need a CNAME to a host of ours instead; not built.
 2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
    xstate.com has had a quiet week.
 3. **asif.pk and upfold.me:** copy, then move.

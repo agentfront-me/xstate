@@ -29,6 +29,7 @@ import { handleAttachmentUpload } from './http/uploads'
 import { mountOperations, onError } from './http/router'
 import { sendingHourly } from './mailserver'
 import { handleMcpHost, purgeOAuth } from './mcp/oauth'
+import { handleMtaStsHost } from './mailbox/mta-sts'
 import { sesHourly } from './mailserver/domains'
 import type { AppEnv } from './http/types'
 import { operations } from './operations'
@@ -106,8 +107,9 @@ export { LiveHub } from './live/hub'
 export { MailboxStore } from './mailbox/store'
 
 export default {
-  // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) is this same Worker; everything else is the API.
-  fetch: (request, env, ctx) => handleMcpHost(request, env, ctx) ?? app.fetch(request, env, ctx),
+  // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) and the mta-sts.<domain> policy hosts
+  // (mailbox/mta-sts.ts) are this same Worker; everything else is the API.
+  fetch: (request, env, ctx) => handleMtaStsHost(request, env) ?? handleMcpHost(request, env, ctx) ?? app.fetch(request, env, ctx),
   // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).

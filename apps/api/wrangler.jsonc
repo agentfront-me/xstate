@@ -17,7 +17,10 @@
   "workers_dev": false,
   "routes": [
     { "pattern": "api.xstate.com", "custom_domain": true },
-    { "pattern": "mcp.xstate.com", "custom_domain": true }
+    { "pattern": "mcp.xstate.com", "custom_domain": true },
+    // MTA-STS policy for xstate.com, whose mail the store holds (mailbox/mta-sts.ts). One per store-held domain we
+    // run DNS for; the domain's own mta-sts record must not exist when it is first deployed.
+    { "pattern": "mta-sts.xstate.com", "custom_domain": true }
   ],
   "vars": {
     "ENVIRONMENT": "production",

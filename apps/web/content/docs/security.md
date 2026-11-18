@@ -52,6 +52,8 @@ change how something works. Recent changes are listed [at the end](#changes).
   to come from someone you know), or when it uses the name of someone in your organization from an outside address.
   Mail from people you've written to reaches your Inbox, and marking a sender as junk or not junk applies to their
   next messages.
+  xstate publishes an MTA-STS policy for these domains (in enforce mode, starting with xstate.com), so senders that
+  support it deliver only over encrypted connections to Amazon SES, with a verified certificate.
 - **Delivery log.** For mailboxes on the new mail path, xstate keeps a record of where each message went: delivered
   and to which folder (with the reasons it went to Junk), attachments scanned, sent, accepted or bounced by the
   receiving server, refused, or dropped for an address that doesn't exist. It holds ids, addresses and outcomes,
@@ -199,6 +201,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** MTA-STS in enforce mode for domains on the new mail path, starting with xstate.com:
+  supporting senders deliver only over verified TLS to Amazon SES.
 - **November 18, 2026:** On the new mail path, calendar emails update the calendar only when the sender is proven
   by DMARC or DKIM, and new invitations are added on their own only from people you know.
 - **November 18, 2026:** Calendars of mailboxes on the new mail path are kept in that mailbox's own store, with the
