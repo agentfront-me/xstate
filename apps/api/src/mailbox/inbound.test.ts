@@ -26,9 +26,15 @@ describe('inboundJob', () => {
       bucket: 'xstate-mail-inbound',
       key: 'inbound/abc',
       recipients: ['asif@pilot.xstate.com', 'team@pilot.xstate.com'],
-      verdicts: { spam: 'PASS', virus: 'FAIL', spf: 'PASS', dkim: 'GRAY', dmarc: '' },
+      verdicts: { spam: 'PASS', virus: 'FAIL', spf: 'PASS', dkim: 'GRAY', dmarc: '', dmarcPolicy: '' },
       receivedAt: '2026-11-17T18:00:01Z',
     })
+  })
+
+  it('keeps the sender domain\'s DMARC policy when DMARC fails', () => {
+    const job = inboundJob({ ...received(), receipt: { ...received().receipt, dmarcVerdict: { status: 'FAIL' }, dmarcPolicy: 'REJECT' } })!
+    assert.equal(job.verdicts.dmarc, 'FAIL')
+    assert.equal(job.verdicts.dmarcPolicy, 'reject')
   })
 
   it('carries a small message sent in the notification, as base64', () => {

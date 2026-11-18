@@ -1009,7 +1009,101 @@ email was skipped by the loop guard; archiving moved the search document's folde
 marked the file deleted and removed the document; the hourly catch-up queued the mailbox's four earlier messages
 once, filed nothing twice and offered nothing to the agent.
 
-**Before pushing:** create the queues `xstate-mail-events` and `xstate-mail-events-dlq`.
+**Deployed (2026-11-17, "Adde some more fixes"; queues created first).** On the pilot: a message with a PDF sent
+through SES at 20:12:42 UTC was stored at 20:12:53, its attachment filed as `gala-budget.pdf` (`files` ready,
+`received`, `part_id` `store:3959`) at 20:12:59, and both the email (Inbox) and the PDF indexed in Vectorize; the app's
+word search finds it by "catering". The catch-up of the pilot's older mail runs with the next hourly cron. Not yet
+tried on the pilot: an agent on a store-held mailbox (tried locally).
+
+#### Step 4b: spam layers 2 and 3 (approved and built 2026-11-18, uncommitted)
+
+**Goal:** decide Inbox or Junk for store-held mailboxes with more than SES's pass/fail ([Spam](#spam), layers 2 and
+3), and say why. Today the receiving consumer sends a message to Junk only when SES's spam verdict is FAIL. Rspamd
+(layer 4) and a model (layer 5) stay out until the pilot's numbers show they're needed.
+
+**One pure function decides** (`mailbox/spam.ts`, with tests): given the message's authentication results, its
+headers and what the mailbox and organization know about the sender, it returns `inbox` or `junk` and the reasons.
+The receiving consumer gathers the inputs, calls it, and delivers accordingly; the reasons are kept with the message
+(next to SES's verdicts) for the delivery log (4d) and for showing "why is this in Junk" later.
+
+**Inputs**
+
+- **SES:** the spam, SPF, DKIM and DMARC verdicts already in the job, plus the sender domain's DMARC policy
+  (`receipt.dmarcPolicy`: `none`, `quarantine` or `reject`, sent when DMARC fails), which the job doesn't keep yet.
+- **The message:** From address and display name, Reply-To.
+- **The mailbox** (one call to its store): whether it has written to this address before (a small `correspondents`
+  table the store keeps from its Sent copies: address and when last written to), and the mailbox's own verdict on
+  the sender if it has one (below).
+- **The organization:** whether the sender is one of its contacts (the audience store: a new internal
+  `knows(addresses)` lookup, no viewer needed), and the display names of its members and mailboxes (D1, for
+  impersonation).
+
+**Order of decisions** (the first that applies wins; a virus never reaches here):
+
+1. **The mailbox's own verdict on the sender:** a sender someone marked "Not junk" goes to Inbox; one marked "Junk"
+   goes to Junk.
+2. **Failed authentication of a domain that asks for it:** DMARC FAIL with the sender's policy `reject` or
+   `quarantine` goes to Junk, even for someone the mailbox knows. That is what a forged message from a known sender
+   looks like, so the trust in step 3 must not rescue it.
+3. **Someone the mailbox knows** (written to before, or an organization contact), with DMARC passing or not
+   failing: Inbox. This is layer 3: a reply from someone you've emailed should almost never be Junk.
+4. **Otherwise, a score**, Junk at 5 or more:
+
+| Signal | Points |
+|---|---|
+| SES spam verdict FAIL | 5 |
+| From's display name is a member's or mailbox's name in this organization, from an address outside its domains | 5 |
+| SPF and DKIM both FAIL | 3 |
+| DMARC FAIL with policy `none` | 2 |
+| Reply-To on a different domain from From | 1 |
+
+So SES's FAIL alone still means Junk, as today; impersonating a colleague's name is Junk on its own; failed
+authentication or a mismatched Reply-To only tips mail that has other problems.
+
+**Learning from people:** "Mark as junk" (a move from Inbox to Junk) records Junk for that sender address in the
+mailbox's store, and "Not junk" (Junk to Inbox) records Not junk, replacing any earlier one. Step 1 of the order
+then applies to their next message. Per mailbox, not organization-wide; an organization blocklist and allowlist,
+with somewhere in Settings to manage them, come later.
+
+**Where the store changes:** `correspondents` (address, last written) filled by each Sent copy, `sender_verdicts`
+(address, junk or not, when), both small; `update` records a verdict when a message moves between Inbox and Junk;
+`deliver` keeps the reasons in `verdicts`.
+
+**Measuring.** Each decision is logged (`mail-in` already logs per message: the folder, now with the reasons), so
+the pilot shows what reaches Junk and why, and what gets through. That decides whether Rspamd is worth adding.
+
+**Not in 4b:** Rspamd and blocklists (layer 4), a model (layer 5), bouncing or rejecting (we never bounce: see
+[Proposed decisions](#proposed-decisions)), showing the reason in the app, an organization-wide list.
+
+**Testing:** the decision function's tests (each rule, the order, the known-sender exception for DMARC failure);
+locally, fake deliveries for each case (spam FAIL, DMARC reject failing, a colleague's name from Gmail, a reply from
+someone the mailbox wrote to, "Junk" then the next message from that sender); on the pilot, the GTUBE test again and
+a "Not junk" followed by a second message from the same sender.
+
+**Built:** `mailbox/spam.ts` (`decideSpam`, with tests for each rule and the order), the DMARC policy kept from SES's
+notification (`inbound.ts`), `correspondents` and `sender_verdicts` in each store (the first filled once from Sent mail
+already there, then by every Sent copy, Bcc included; the second by moves between Inbox and Junk), the audience
+store's `knows` (contacts only: leads and identified users come from forms anyone can fill in), the organization's
+domains and display names from D1 (`db/organizations.ts` `identity`), and the decision in `receive.ts`, its score and
+reasons kept in the message's verdicts and logged on `mail-in`. `scripts/mail-in-fake.mjs` gained `--from-name`,
+`--reply-to` and `--dmarc-fail`.
+
+**Local test** (`dev@acme.test` on the store, its agent's trigger paused so no model ran):
+
+| Case | Folder | Reasons |
+|---|---|---|
+| New sender, clean | Inbox | none |
+| New sender, SES spam | Junk | SES spam check failed (+5) |
+| SES spam from someone the mailbox wrote to | Inbox | Known sender |
+| Known sender, DMARC fails, policy reject | Junk | Failed DMARC; example.org asks for reject |
+| "Dev Tester" (a member's name) from Gmail | Junk | Uses the name "Dev Tester" from outside the organization (+5) |
+| DMARC fails with policy none, Reply-To elsewhere | Inbox | score 3 |
+| Sender moved to Junk, then writes again | Junk | Marked junk before |
+| Same sender moved back, then SES spam | Inbox | Marked not junk before |
+
+Found while designing: a member writing from their personal address under their own name (the pilot's Gmail tests,
+"Asif Khan") would look like impersonation; the known-sender rule lets them through once the mailbox has written to
+that address, which is why existing Sent mail fills `correspondents` too.
 
 #### Our own MX name (discussed 2026-11-17, deferred)
 

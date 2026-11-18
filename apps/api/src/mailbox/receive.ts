@@ -10,6 +10,7 @@
 import * as accessDb from '../db/mailbox-access'
 import * as addressesDb from '../db/addresses'
 import * as mailboxesDb from '../db/mailboxes'
+import * as orgsDb from '../db/organizations'
 import type { MailboxRow } from '../db/mailboxes'
 import { announce } from '../live/announce'
 import { stripFooter } from '../mailserver/footer'
@@ -22,6 +23,7 @@ import { decodePart } from './mime'
 import { fileParts, parseRaw, partName, type ParsedMessage } from './parse'
 import { deleteInbound, getInbound, quarantineInbound, type InboundEnv } from './s3'
 import { rawKey } from './shadow'
+import { decideSpam } from './spam'
 import type { StoreDelivery } from './store'
 import { store } from './stub'
 
@@ -46,7 +48,7 @@ export async function consumeInbound(batch: MessageBatch<InboundJob>, env: Recei
 
 type ReceiveResult = {
   sesId: string
-  delivered: { mailboxId: string; id: string; folder: string; duplicate: boolean }[]
+  delivered: { mailboxId: string; id: string; folder: string; duplicate: boolean; spam?: { score: number; reasons: string[] } }[]
   dropped: { address: string; reason: 'unknown_address' | 'not_on_store' }[]
   /** SES found a virus: delivered nowhere. `quarantined` is where it was moved in S3, when it came through S3. */
   virus?: boolean
@@ -83,7 +85,11 @@ async function receive(env: ReceiveEnv, job: InboundJob): Promise<ReceiveResult>
     }
     if (raw.length > MAX_BYTES) throw new Error(`message is ${raw.length} bytes, over ${MAX_BYTES}`)
     const parsed = await parseRaw(raw)
-    for (const mailbox of mailboxes.values()) result.delivered.push(await deliverTo(env, mailbox, job, raw, parsed))
+    const orgs = new Map<string, Promise<OrgKnowledge>>()
+    for (const mailbox of mailboxes.values()) {
+      if (!orgs.has(mailbox.organization_id)) orgs.set(mailbox.organization_id, orgKnowledge(env, mailbox.organization_id, parsed))
+      result.delivered.push(await deliverTo(env, mailbox, job, raw, parsed, await orgs.get(mailbox.organization_id)!))
+    }
   }
   if (job.bucket && job.key) await deleteInbound(env, job.bucket, job.key)
   return result
@@ -95,16 +101,43 @@ async function rawMessage(env: ReceiveEnv, job: InboundJob): Promise<Uint8Array 
   return getInbound(env, job.bucket, job.key)
 }
 
+/** What the organization knows that bears on the spam decision: its domains and names, and whether the sender is a contact. */
+type OrgKnowledge = { domains: string[]; names: string[]; contact: boolean }
+
+async function orgKnowledge(env: ReceiveEnv, organizationId: string, parsed: ParsedMessage): Promise<OrgKnowledge> {
+  const from = parsed.from[0]?.email
+  const [identity, known] = await Promise.all([
+    orgsDb.identity(env.DB, organizationId),
+    from ? env.AUDIENCE.get(env.AUDIENCE.idFromName(organizationId)).knows([from]).catch((err) => (console.error('mail-in: contact lookup failed', err), [])) : [],
+  ])
+  return { ...identity, contact: known.length > 0 }
+}
+
 async function deliverTo(
   env: ReceiveEnv,
   mailbox: MailboxRow,
   job: InboundJob,
   raw: Uint8Array,
   parsed: ParsedMessage,
+  org: OrgKnowledge,
 ): Promise<ReceiveResult['delivered'][number]> {
   const stub = await store(env, mailbox.id)
   const already = await stub.findBySes(job.sesId)
   if (already) return { mailboxId: mailbox.id, id: already.id, folder: '', duplicate: true }
+
+  // Inbox or Junk (./spam.ts): SES's verdicts, the headers, and what this mailbox and its organization know.
+  const from = parsed.from[0] ?? null
+  const standing = from ? await stub.standing(from.email) : { wrote: false, verdict: null }
+  const spam = decideSpam({
+    ses: job.verdicts,
+    dmarcPolicy: job.verdicts.dmarcPolicy || null,
+    from,
+    replyTo: parsed.replyTo.map((a) => a.email),
+    senderVerdict: standing.verdict,
+    known: standing.wrote || org.contact,
+    orgDomains: org.domains,
+    orgNames: org.names,
+  })
 
   const id = ulid()
   const key = rawKey(mailbox.id, id)
@@ -139,8 +172,8 @@ async function deliverTo(
       length: p.length,
       encoding: p.encoding,
     })),
-    junk: job.verdicts.spam === 'FAIL',
-    verdicts: { ...job.verdicts },
+    junk: spam.folder === 'junk',
+    verdicts: { ...job.verdicts, spamScore: String(spam.score), spamReasons: spam.reasons.join('; ') },
   }
   const stored = await stub.deliver(delivery)
   if (stored.duplicate) {
@@ -157,5 +190,5 @@ async function deliverTo(
   await notifyDelivered(env, mailbox, { id, threadId: stored.threadId, folder: stored.folder, subject: parsed.subject, from: parsed.from[0] }).catch((err) =>
     console.error(`mail-in: push for ${mailbox.id} failed`, err),
   )
-  return { mailboxId: mailbox.id, id, folder: stored.folder, duplicate: false }
+  return { mailboxId: mailbox.id, id, folder: stored.folder, duplicate: false, spam: { score: spam.score, reasons: spam.reasons } }
 }

@@ -48,6 +48,10 @@ change how something works. Recent changes are listed [at the end](#changes).
   organization's own storage within seconds and deletes it from S3; anything left there is deleted after 7 days.
   A message SES finds a virus in is never delivered. Mail for addresses that don't exist is dropped, not bounced,
   so forged senders get no reply.
+  Mail goes to Junk when SES flags it as spam, when it fails the sender domain's own DMARC policy (even if it claims
+  to come from someone you know), or when it uses the name of someone in your organization from an outside address.
+  Mail from people you've written to reaches your Inbox, and marking a sender as junk or not junk applies to their
+  next messages.
 - **A mailbox's own index.** To make lists and search fast, a mailbox can have its own index of its messages:
   senders, recipients, subjects, folders, flags and body text, with a copy of each whole message (attachments
   included) in your organization's own storage bucket, from which the message and its attachments can be opened.

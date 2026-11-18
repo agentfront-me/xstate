@@ -77,6 +77,8 @@ export type StoreDelivery = {
   from: StoreAddress[]
   to: StoreAddress[]
   cc: StoreAddress[]
+  /** Mail the mailbox sent: its Bcc recipients, remembered as people it writes to (spam layer 3). */
+  bcc?: StoreAddress[]
   /** The mailbox's own addresses, left out when matching a conversation by subject. */
   own: string[]
   preview: string
@@ -204,6 +206,16 @@ export class MailboxStore extends Agent<Env> {
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
     sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_ses_id ON messages (ses_id) WHERE ses_id IS NOT NULL`)
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_subject_key ON messages (subject_key, received_s) WHERE subject_key IS NOT NULL`)
+    // Spam layer 3 (phase 2 step 4b): who the mailbox has written to, and its people's verdicts on senders.
+    sql.exec(`CREATE TABLE IF NOT EXISTS correspondents (address TEXT PRIMARY KEY, last_s INTEGER NOT NULL) WITHOUT ROWID`)
+    sql.exec(`CREATE TABLE IF NOT EXISTS sender_verdicts (address TEXT PRIMARY KEY, verdict TEXT NOT NULL, at_s INTEGER NOT NULL) WITHOUT ROWID`)
+    // Sent mail from before the table existed, once.
+    if (this.meta('owner') === 'store' && this.meta('correspondents_filled') !== '1') {
+      for (const row of sql.exec(`SELECT to_json, received_s FROM messages WHERE folder = 'sent'`)) {
+        this.wroteTo((JSON.parse(row.to_json as string) as StoreAddress[]).map((a) => a.email), row.received_s as number)
+      }
+      this.setMeta('correspondents_filled', '1')
+    }
     sql.exec(`CREATE TABLE IF NOT EXISTS attachments (
       n INTEGER NOT NULL, seq INTEGER NOT NULL, file_id TEXT, name TEXT, type TEXT NOT NULL, size INTEGER NOT NULL,
       start INTEGER NOT NULL, length INTEGER NOT NULL, encoding TEXT NOT NULL, verified INTEGER,
@@ -590,6 +602,7 @@ export class MailboxStore extends Agent<Env> {
       const folder = [...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, folderId)][0] as { uid_next: number }
       this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, folder.uid_next, folderId, n)
       this.db.exec(`UPDATE folders SET uid_next = uid_next + 1, highest_modseq = ? WHERE id = ?`, modseq, folderId)
+      if (d.folder === 'sent') this.wroteTo([...d.to, ...d.cc, ...(d.bcc ?? [])].map((a) => a.email), Math.floor(Date.parse(d.receivedAt) / 1000))
       d.attachments.forEach((a, seq) => {
         this.db.exec(
           `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
@@ -653,6 +666,17 @@ export class MailboxStore extends Agent<Env> {
         }
         if (c.pinned !== undefined) this.db.exec(`UPDATE messages SET pinned = ? WHERE n = ?`, c.pinned ? 1 : 0, c.n)
         if (c.folder) {
+          // "Junk" and "Not junk": a move between Inbox and Junk is the mailbox's verdict on the sender (spam layer 3).
+          const before = rows.find((r) => r.n === c.n)?.folder
+          if ((before === 'inbox' && c.folder === 'junk') || (before === 'junk' && c.folder === 'inbox')) {
+            const sender = [...this.db.exec(`SELECT from_addr FROM messages WHERE n = ?`, c.n)][0]?.from_addr as string | undefined
+            if (sender) {
+              this.db.exec(
+                `INSERT OR REPLACE INTO sender_verdicts (address, verdict, at_s) VALUES (?, ?, ?)`,
+                sender, c.folder === 'junk' ? 'junk' : 'notjunk', now,
+              )
+            }
+          }
           const target = folderIds.get(c.folder)
           if (!target) throw new Error(`No ${c.folder} folder`)
           const row = [...this.db.exec(`SELECT received_s, seen FROM messages WHERE n = ?`, c.n)][0] as { received_s: number; seen: number }
@@ -719,6 +743,21 @@ export class MailboxStore extends Agent<Env> {
     const gone = this.remove([id])
     this.nextModseq()
     return gone.rawKeys
+  }
+
+  /** Records addresses the mailbox has written to, at `at` (seconds). */
+  private wroteTo(addresses: string[], at: number) {
+    for (const a of new Set(addresses.map((x) => x.trim().toLowerCase()).filter(Boolean))) {
+      this.db.exec(`INSERT INTO correspondents (address, last_s) VALUES (?, ?) ON CONFLICT (address) DO UPDATE SET last_s = MAX(last_s, excluded.last_s)`, a, at)
+    }
+  }
+
+  /** What the mailbox knows of a sender, for the spam decision (./spam.ts): written to before, and its verdict. */
+  standing(address: string): { wrote: boolean; verdict: 'junk' | 'notjunk' | null } {
+    const a = address.trim().toLowerCase()
+    const wrote = [...this.db.exec(`SELECT 1 FROM correspondents WHERE address = ?`, a)].length > 0
+    const verdict = ([...this.db.exec(`SELECT verdict FROM sender_verdicts WHERE address = ?`, a)][0]?.verdict as 'junk' | 'notjunk' | undefined) ?? null
+    return { wrote, verdict }
   }
 
   /** What the new-mail events (./events.ts) need of each message; ones that are gone are left out. */

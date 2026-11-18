@@ -7,6 +7,7 @@
 //   node scripts/mail-in-fake.mjs --to sofia@example.test --eml path/to/message.eml
 //   options: --api http://localhost:8788  --ses-id <id> (reuse one to try a repeated delivery)
 //            --reply-to-id <Message-ID> (sets In-Reply-To and References)  --spam  --virus
+//            --from-name <name>  --reply-to <address>  --dmarc-fail <none|quarantine|reject>
 //
 // Messages over about 70 KB don't fit in the queue job; use the real S3 path for those.
 
@@ -29,12 +30,16 @@ const api = opt('api', 'http://localhost:8788')
 const sesId = opt('ses-id', `fake-${randomUUID()}`)
 const from = opt('from', 'someone@example.org')
 const replyTo = opt('reply-to-id')
+const fromName = opt('from-name')
+const replyToAddress = opt('reply-to')
+const dmarcFail = opt('dmarc-fail')
 
 const eml = opt('eml')
   ? readFileSync(opt('eml'))
   : Buffer.from(
       [
-        `From: ${from}`,
+        `From: ${fromName ? `"${fromName}" <${from}>` : from}`,
+        ...(replyToAddress ? [`Reply-To: ${replyToAddress}`] : []),
         `To: ${to}`,
         `Subject: ${opt('subject', 'Hello from fake SES')}`,
         `Date: ${new Date().toUTCString()}`,
@@ -59,7 +64,8 @@ const notification = {
     virusVerdict: verdict(flag('virus') ? 'FAIL' : 'PASS'),
     spfVerdict: verdict('PASS'),
     dkimVerdict: verdict('PASS'),
-    dmarcVerdict: verdict('PASS'),
+    dmarcVerdict: verdict(dmarcFail ? 'FAIL' : 'PASS'),
+    ...(dmarcFail ? { dmarcPolicy: dmarcFail } : {}),
     action: { type: 'SNS', topicArn: 'arn:aws:sns:us-east-2:000000000000:fake', encoding: 'BASE64' },
   },
   content: eml.toString('base64'),

@@ -3,7 +3,15 @@
 // so `pnpm test` runs this file directly under Node. The consumer is ./receive.ts.
 
 /** SES's verdicts on a received message: 'PASS', 'FAIL', 'GRAY' or 'PROCESSING_FAILED' ('' when missing). */
-export type Verdicts = { spam: string; virus: string; spf: string; dkim: string; dmarc: string }
+export type Verdicts = {
+  spam: string
+  virus: string
+  spf: string
+  dkim: string
+  dmarc: string
+  /** The sender domain's DMARC policy ('none', 'quarantine', 'reject'), which SES reports when DMARC fails; '' otherwise. */
+  dmarcPolicy?: string
+}
 
 /** One received message, as the webhook queues it for the consumer. */
 export type InboundJob = {
@@ -32,6 +40,7 @@ type SesReceived = {
     spfVerdict?: Verdict
     dkimVerdict?: Verdict
     dmarcVerdict?: Verdict
+    dmarcPolicy?: string
     action?: { type?: string; bucketName?: string; objectKey?: string; encoding?: string }
   }
   mail?: { messageId?: string; timestamp?: string }
@@ -53,7 +62,14 @@ export function inboundJob(notification: unknown): InboundJob | null {
     bucket: r.action?.type === 'S3' ? (r.action.bucketName ?? null) : null,
     key: r.action?.type === 'S3' ? (r.action.objectKey ?? null) : null,
     recipients: [...new Set((r.recipients ?? []).map((a) => a.trim().toLowerCase()).filter(Boolean))],
-    verdicts: { spam: status(r.spamVerdict), virus: status(r.virusVerdict), spf: status(r.spfVerdict), dkim: status(r.dkimVerdict), dmarc: status(r.dmarcVerdict) },
+    verdicts: {
+      spam: status(r.spamVerdict),
+      virus: status(r.virusVerdict),
+      spf: status(r.spfVerdict),
+      dkim: status(r.dkimVerdict),
+      dmarc: status(r.dmarcVerdict),
+      dmarcPolicy: (r.dmarcPolicy ?? '').toLowerCase(),
+    },
     receivedAt: new Date(Number.isNaN(time) ? Date.now() : time).toISOString().replace(/\.\d{3}Z$/, 'Z'),
   }
   if (n.content) {

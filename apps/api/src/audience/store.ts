@@ -643,6 +643,20 @@ export class AudienceStore extends DurableObject<Env> {
   }
 
   /** Contacts the viewer can see whose name or email contains `q`, for compose: real contacts first. */
+  /**
+   * Which of these addresses are the organization's contacts (any member's, or shared), for the spam decision of
+   * received mail (mailbox/spam.ts, layer 3). Contacts only: leads and identified users come from forms and sign-ups,
+   * which anyone can fill in with their own address. Says only yes or no, so it needs no viewer.
+   */
+  async knows(addresses: string[]): Promise<string[]> {
+    const list = [...new Set(addresses.map((x) => x.trim().toLowerCase()).filter(Boolean))].slice(0, 50)
+    if (!list.length) return []
+    return this.all<{ email: string }>(
+      `SELECT DISTINCT email FROM people WHERE kind = 'contact' AND email IN (${list.map(() => '?').join(', ')})`,
+      ...list,
+    ).map((r) => r.email)
+  }
+
   async suggest(viewer: Viewer, q: string, limit: number): Promise<{ name: string | null; email: string }[]> {
     const term = q.trim().toLowerCase()
     if (!term) return []

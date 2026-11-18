@@ -237,6 +237,7 @@ function own(
     from: [m.from],
     to: m.to,
     cc: m.cc ?? [],
+    bcc: m.bcc ?? [],
     own: [o.mailbox.address, ...(JSON.parse(o.mailbox.aliases || '[]') as string[])],
     preview: previewOf(m.text),
     text: m.text,
