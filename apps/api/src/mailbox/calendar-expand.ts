@@ -101,6 +101,13 @@ export function occurrenceOf(series: JmapEvent, recurrenceId: string): JmapEvent
   return withTimes({ ...occurrence, id: occurrenceId(series.id, key), baseEventId: series.id, recurrenceId: key })
 }
 
+/** An occurrence as it was before it was deleted (for telling guests which one was cancelled). */
+export function cancelledOccurrence(series: JmapEvent, recurrenceId: string): JmapEvent | null {
+  const key = withSeconds(recurrenceId)
+  const { excluded: _gone, ...change } = ((series.recurrenceOverrides ?? {})[key] ?? {}) as Record<string, unknown>
+  return occurrenceOf({ ...series, recurrenceOverrides: { ...(series.recurrenceOverrides ?? {}), [key]: change } }, key)
+}
+
 /**
  * The event's entries overlapping [afterMs, beforeMs): itself for a single event, its occurrences for a series
  * (moved ones where they were moved to, deleted ones left out), sorted by start.

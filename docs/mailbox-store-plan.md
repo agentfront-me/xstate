@@ -1553,7 +1553,18 @@ together. Building 3b first keeps each step small; I'd push them one after the o
   cases; subjects; HTML escaping; the message structure. 415 tests pass.
 
 **Not yet:** guests' answers update the organizer's guest list only from 3c on (until then they arrive as emails).
-Not tried against real Gmail and Outlook yet: that is the pilot test after the push.
+
+**Deployed (2026-11-18, "Added calendar support").** From `hello@99events.com` to Gmail, each accepted by Gmail's
+server within two seconds (`ses_delivered`):
+- invitation, weekly × 3 at 4pm Karachi: Gmail showed its own invitation card ("Weekly on Monday", organizer
+  99events, Yes / No / Maybe) at the right time;
+- moved to 5pm: "Updated invitation";
+- one occurrence (30 Nov) cancelled: Gmail's card showed Mon 30 Nov 5:00–5:30 PM, but **our subject and summary
+  named the series' first date** (23 Nov). Fixed after the test (`cancelledOccurrence` in `calendar-expand.ts`,
+  used by both the file and the text; test added; 416 tests pass), uncommitted;
+- series deleted: "Cancelled", grouped by Gmail with the occurrence's cancellation.
+Not tried yet: answering from Gmail (sends a reply from the user's account, so it needs their go-ahead), Outlook
+(needs a test address), and an invitation from Gmail answered from `hello@`.
 
 #### Open questions
 

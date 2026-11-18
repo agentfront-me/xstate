@@ -178,6 +178,13 @@ describe('invitation emails', () => {
     assert.equal(whenText(event({ start: '2026-12-24T00:00:00', duration: 'P1D', showWithoutTime: true, timeZone: null })), 'Thu 24 Dec 2026')
   })
 
+  it('names the cancelled occurrence, not the series, when one occurrence is cancelled', () => {
+    const series = event({ recurrenceRule: { frequency: 'weekly', count: 3 }, recurrenceOverrides: { '2026-03-09T09:00:00': { excluded: true } } })
+    const text = inviteText('cancel', series, { occurrence: '2026-03-09T09:00:00' })
+    assert.equal(text.subject, 'Cancelled: Planning, Q1; draft @ Mon 9 Mar 2026 9am – 9:45am (GMT-4)')
+    assert.match(text.text, /^This occurrence has been cancelled\./)
+  })
+
   it('escapes the HTML', () => {
     assert.match(inviteText('invitation', event({ title: '<b>x</b> & y' })).html, /&lt;b&gt;x&lt;\/b&gt; &amp; y/)
   })

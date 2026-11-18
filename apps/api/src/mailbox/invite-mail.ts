@@ -4,7 +4,7 @@
 
 import { addDays, durationMinutes, mailto, withSeconds, zonedToUtc } from '../mailserver/calendar-events.ts'
 import type { JmapEvent } from '../mailserver/stalwart/calendar'
-import { occurrenceOf } from './calendar-expand.ts'
+import { cancelledOccurrence } from './calendar-expand.ts'
 import type { ItipMethod } from './ical-out.ts'
 
 export type InviteKind = 'invitation' | 'update' | 'cancel' | 'accepted' | 'declined' | 'tentative'
@@ -29,7 +29,7 @@ export type InviteText = { subject: string; text: string; html: string }
  * answer, the person answering (shown as "Sam accepted").
  */
 export function inviteText(kind: InviteKind, event: JmapEvent, options: { occurrence?: string; who?: { name: string | null; email: string } } = {}): InviteText {
-  const shown = options.occurrence ? (occurrenceOf(event, options.occurrence) ?? event) : event
+  const shown = options.occurrence ? (cancelledOccurrence(event, options.occurrence) ?? event) : event
   const title = shown.title?.trim() || '(No title)'
   const when = whenText(shown)
   const subject = `${PREFIX[kind]}: ${title} @ ${when}`

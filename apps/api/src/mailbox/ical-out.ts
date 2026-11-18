@@ -6,7 +6,7 @@
 import ICAL from 'ical.js'
 import { addDays, addMinutes, durationMinutes, mailto, withSeconds, zoneOffsetMinutes, zonedToUtc } from '../mailserver/calendar-events.ts'
 import type { JmapEvent, JmapParticipant } from '../mailserver/stalwart/calendar'
-import { occurrenceOf, timeColumns, toRrule } from './calendar-expand.ts'
+import { cancelledOccurrence, occurrenceOf, timeColumns, toRrule } from './calendar-expand.ts'
 
 export type ItipMethod = 'REQUEST' | 'CANCEL' | 'REPLY'
 
@@ -36,7 +36,7 @@ export function buildIcs(o: BuildOptions): string {
   const events: JCalComp[] = []
 
   if (o.method === 'CANCEL' && o.occurrence) {
-    const one = occurrenceOf({ ...e, recurrenceOverrides: { ...(e.recurrenceOverrides ?? {}), [withSeconds(o.occurrence)]: {} } }, o.occurrence)
+    const one = cancelledOccurrence(e, o.occurrence)
     if (one) events.push(vevent(one, o, stamp, zone, { recurrenceId: o.occurrence, status: 'CANCELLED' }))
   } else {
     const main = vevent(e, o, stamp, zone, { status: o.method === 'CANCEL' ? 'CANCELLED' : undefined })
