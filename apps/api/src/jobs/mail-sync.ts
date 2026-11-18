@@ -16,6 +16,8 @@ import { DELIVERY_LOG_DAYS } from '../mailbox/delivery-log'
 import * as dropsDb from '../db/mail-drops'
 import { catchUpHeld } from '../mailbox/events'
 import { copyHeldCalendars } from '../mailbox/calendar-store'
+import { sweepHeld } from '../mailbox/stalwart-sweep'
+import { syncStoreRouting } from '../mailserver/stalwart/routing'
 
 export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
 
@@ -119,6 +121,12 @@ export async function hourly(env: Env): Promise<void> {
   if (caught?.queued) console.log('mail-events catch-up', JSON.stringify(caught))
   // Their calendars, copied from Stalwart once (phase 3a; also done the first time one is opened).
   await copyHeldCalendars(env).catch((err) => console.error('calendar-copy failed', err))
+  // Stalwart sends mail for their domains out through SES instead of to its own old accounts; then anything it did
+  // deliver there is moved into the store ("Mail from Stalwart mailboxes to store-held ones" in the plan).
+  const routing = await syncStoreRouting(env).catch((err) => (console.error('stalwart-routing failed', err), null))
+  if (routing?.changed) console.log('stalwart-routing changed', JSON.stringify(routing))
+  const swept = await sweepHeld(env).catch((err) => (console.error('stalwart-sweep failed', err), null))
+  if (swept?.swept || swept?.events || swept?.failed) console.log('stalwart-sweep', JSON.stringify(swept))
   if (purge.purged || purge.failed) console.log('purge', JSON.stringify(purge))
   // The virus scanner on the mail server: down, or its signatures have stopped updating.
   const scanner = await scannerHealth(env)

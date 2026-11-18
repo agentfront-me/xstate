@@ -81,3 +81,20 @@ export function setSes(db: D1Database, id: string, ses: { status: string; dkimTo
 export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM domains WHERE id = ?').bind(id)
 }
+
+/**
+ * Domains whose addresses all deliver to store-held mailboxes (at least one), and domains with addresses on both
+ * sides. Stalwart must send mail for the first kind out to their MX (mailserver/stalwart/routing.ts).
+ */
+export async function storeHeldNames(db: D1Database): Promise<{ held: string[]; mixed: string[] }> {
+  const { results } = await db
+    .prepare(
+      `SELECT d.name AS name,
+              SUM(CASE WHEN m.backend = 'store' THEN 1 ELSE 0 END) AS store,
+              SUM(CASE WHEN m.backend != 'store' THEN 1 ELSE 0 END) AS other
+         FROM domains d JOIN addresses a ON a.domain_id = d.id JOIN mailboxes m ON m.id = a.mailbox_id
+        GROUP BY d.id HAVING store > 0`,
+    )
+    .all<{ name: string; store: number; other: number }>()
+  return { held: results.filter((r) => r.other === 0).map((r) => r.name), mixed: results.filter((r) => r.other > 0).map((r) => r.name) }
+}

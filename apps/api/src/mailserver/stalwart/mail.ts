@@ -780,3 +780,24 @@ export async function newestIn(env: StalwartEnv, accountId: string, folderId: st
   ])
   return (result!.ids as string[]) ?? []
 }
+
+/**
+ * Messages that arrived in these folders after `after` (ISO), oldest first, with what is needed to move them
+ * elsewhere: their raw message's blob, Message-ID and received time. For sweeping mail Stalwart delivered to an
+ * account whose mailbox the store now holds (mailbox/stalwart-sweep.ts).
+ */
+export async function receivedSince(
+  env: StalwartEnv,
+  accountId: string,
+  folderIds: string[],
+  after: string,
+  limit = 200,
+): Promise<{ id: string; blobId: string; messageId: string[] | null; receivedAt: string; from: JmapAddress[] | null }[]> {
+  if (!folderIds.length) return []
+  const filter = { operator: 'AND', conditions: [{ after }, { operator: 'OR', conditions: folderIds.map((inMailbox) => ({ inMailbox })) }] }
+  const [, got] = await mail(env, [
+    ['Email/query', { accountId, filter, sort: [{ property: 'receivedAt', isAscending: true }], limit }],
+    ['Email/get', { accountId, '#ids': { resultOf: 'c0', name: 'Email/query', path: '/ids' }, properties: ['blobId', 'messageId', 'receivedAt', 'from'] }],
+  ])
+  return (got?.list as { id: string; blobId: string; messageId: string[] | null; receivedAt: string; from: JmapAddress[] | null }[] | undefined) ?? []
+}

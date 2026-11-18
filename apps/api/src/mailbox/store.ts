@@ -221,8 +221,6 @@ export class MailboxStore extends Agent<Env> {
     }
     addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER', 'answered INTEGER', 'forwarded INTEGER', 'is_draft INTEGER'])
     addColumns('placements', ['uid INTEGER'])
-    // Virus scanning of received attachments (phase 2 step 4c, ./scan-state.ts): null when not gated.
-    addColumns('attachments', ['scan TEXT', 'virus TEXT'])
     addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
     sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_ses_id ON messages (ses_id) WHERE ses_id IS NOT NULL`)
@@ -254,8 +252,12 @@ export class MailboxStore extends Agent<Env> {
     }
     sql.exec(`CREATE TABLE IF NOT EXISTS attachments (
       n INTEGER NOT NULL, seq INTEGER NOT NULL, file_id TEXT, name TEXT, type TEXT NOT NULL, size INTEGER NOT NULL,
-      start INTEGER NOT NULL, length INTEGER NOT NULL, encoding TEXT NOT NULL, verified INTEGER,
+      start INTEGER NOT NULL, length INTEGER NOT NULL, encoding TEXT NOT NULL, verified INTEGER, scan TEXT, virus TEXT,
       PRIMARY KEY (n, seq)) WITHOUT ROWID`)
+    // Virus scanning of received attachments (phase 2 step 4c, ./scan-state.ts): null when not gated. In the CREATE
+    // above for new stores; added here for stores made before. (This ran before the CREATE until 2026-11-18, so a
+    // brand-new store's first activation had no such columns: its first delivery failed and the retry worked.)
+    addColumns('attachments', ['scan TEXT', 'virus TEXT'])
     // Headers by trigram, so part of an address, a domain or a subject matches. Bodies by word, without positions:
     // a tenth of the size, at the cost of exact phrases (spike findings in the plan).
     sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS headers_fts USING fts5(sender, recipients, subject, tokenize='trigram', content='', contentless_delete=1)`)
@@ -982,6 +984,20 @@ export class MailboxStore extends Agent<Env> {
       this.setMeta('calendar_copy', `running:${now}`)
     })
     return 'claimed'
+  }
+
+  /** Which of these Message-IDs the store already has (for the sweep from Stalwart: never twice). */
+  knownMessageIds(ids: string[]): string[] {
+    if (!ids.length) return []
+    return [...this.db.exec(`SELECT DISTINCT message_id FROM messages WHERE message_id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids))].map(
+      (r) => r.message_id as string,
+    )
+  }
+
+  /** How far the sweep from Stalwart has got (ISO), or null; with `set`, moves it on. */
+  sweptUntil(set?: string): string | null {
+    if (set) this.setMeta('stalwart_swept_until', set)
+    return this.meta('stalwart_swept_until')
   }
 
   calendarCounts(): { calendars: number; events: number } {

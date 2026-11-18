@@ -1242,6 +1242,103 @@ automatic suspension included; `delivery_counts` stops on 2026-11-17). Fixed wit
 from `hello@` to Gmail at 05:51:36 UTC logged `ses_delivered` a second later (found by its message id with the `sent`
 line), and `delivery_counts` has a row for 2026-11-18. Deliveries between the two fixes were never counted.
 
+#### Mail from Stalwart mailboxes to store-held ones (approved and built 2026-11-18, uncommitted)
+
+**Problem** (found in the 3c pilot test): Stalwart still has 99events.com and the `hello@`/`team@` accounts, so mail
+and invitations from a Stalwart mailbox (asif@xstate.com) to a pilot address are delivered inside Stalwart, into
+accounts nobody reads, and never reach SES or the store. Every domain moved in phase 4 would have the same gap.
+
+**What was tried on the local Stalwart (2026-11-18):**
+
+| Change | Plain email | Invitation |
+|---|---|---|
+| Domain disabled (`x:Domain enable: false`) | still delivered locally | — |
+| Account deleted, domain kept | not delivered, not queued, no bounce: lost | — |
+| Routing rule for the domain (below), after `ReloadSettings` | queued for relay, not delivered locally | queued for relay, not filed in the local calendar |
+
+**Proposed fix: a routing rule, not deletion.** Stalwart decides where queued mail goes with
+`x:MtaOutboundStrategy` (`route` and `schedule`), today "local domains → `'local'`, everything else → `'ses'`". A
+first rule ahead of that sends store-held domains out like any outside domain:
+
+```
+route:    if rcpt_domain == '99events.com' || …  then 'ses'      (then: is_local_domain → 'local'; else 'ses')
+schedule: if rcpt_domain == '99events.com' || …  then 'remote'   (then the existing local / dsn / report / remote)
+```
+
+Through SES, the message reaches the domain's MX (SES receiving) and the store, exactly as mail from Gmail does,
+with SES's checks and the delivery log. Why this and not deleting the domain from Stalwart:
+- **Nothing is deleted,** and it is undone by removing the rule. The old accounts keep whatever they hold.
+- **The DNS records page keeps working.** `email_get_dns_records` and `verifyDomain` build the records from
+  Stalwart's zone file for the domain; deleting the domain would break both until phase 5 rewrites them.
+- Deleting only the accounts loses mail silently (table above).
+
+**Kept in step with D1 by the API, not by hand:**
+- `mailserver/stalwart/routing.ts`: reads the strategy, removes our own rule (recognised by a marker comment in the
+  expression), adds the current one built from D1 (every domain whose mailboxes are all `backend = 'store'`), writes
+  it and runs `ReloadSettings`. Run when a mailbox's backend changes (phase 4's switch) and by the hourly job if the
+  rule on Stalwart doesn't match D1, so a hand edit or a Stalwart reinstall can't leave it stale.
+- A domain with mailboxes on both sides is not supported: domains move whole (phase 4). Until then such a domain
+  keeps local delivery and the hourly job logs it.
+- Production's previous `route`/`schedule` values are recorded here before the first change, for rollback.
+
+**Mail already delivered into the old accounts** (at least today's "Internal routing test" and the invitation from
+asif@xstate.com): a one-time sweep per store-held mailbox lists messages its Stalwart account received after the
+mailbox switched to the store, and delivers each into the store as received mail (Inbox, through the normal receive
+path, so search, files, agents and the calendar rules see it; marked in the delivery log as `swept_from_stalwart`).
+Calendar items Stalwart filed directly into the old account's calendar since the switch are copied the same way.
+The sweep is part of every phase 4 switch too, run after the rule is in place.
+
+**Not affected:** mail from outside (MX already points at SES); mail from store-held mailboxes to Stalwart ones
+(sent through SES to their MX, which is Stalwart); Stalwart users' own IMAP/SMTP use.
+
+**Tests:**
+- Pure: building and replacing the rule (none before, ours before, someone else's rules kept, no store-held
+  domains → our rule removed).
+- Locally: the experiment above, but through `routing.ts`: plain email and invitation from dev@acme.test to a
+  store-held local domain end up queued for relay, not local; removing the domain from the set restores local
+  delivery; the sweep moves a message from a Stalwart account into the store once (a second run moves nothing).
+- On production: record the current strategy, apply the rule for 99events.com, then from asif@xstate.com send a
+  plain email and an invitation to `hello@`; both arrive through SES (delivery log `delivered` and `calendar`
+  lines), and the sweep brings in today's two stray items.
+
+**Built:**
+- `mailserver/stalwart/routing-rule.ts` (pure, tested): `withStoreRule` puts our rule first, sending the domains
+  wherever the expression sends outside mail (its own `else`: `'ses'` in production, the dead-end `'nowhere'`
+  locally), and recognises its own rule by the always-true term `!is_empty('xstate:store-held')`; other rules are
+  kept in order; names that aren't plain domain names are refused. `storeRuleDomains` reads ours back.
+- `db/domains.ts` `storeHeldNames`: domains with at least one address on a store-held mailbox, split into held
+  (all of its addresses, aliases included, on the store) and mixed.
+- `mailserver/stalwart/routing.ts` `syncStoreRouting`: compares, and only on a difference writes both expressions
+  and runs `ReloadSettings`. The log line `stalwart-routing` carries the previous expressions, so production's
+  values before the first change are in the Worker logs for rollback. Mixed domains are logged and keep local
+  delivery.
+- `mailbox/stalwart-sweep.ts` `sweepHeld`: per store-held mailbox with a Stalwart account, messages in received
+  folders (Inbox, Junk, Archive, custom) after the remembered point (`stalwart_swept_until` in the store, from
+  2026-11-01 the first time), skipping Message-IDs the store has, delivered through `receive.ts` `deliverSwept`
+  (verdicts GRAY, `sweptFromStalwart` in the delivery log, `sesId` `stalwart.<account>.<id>` so a repeat is a
+  duplicate). Then `sweepStalwartCalendar` copies events whose UID the store doesn't have.
+- Hourly job: routing sync first, then the sweep.
+
+**Found while testing:** the store added its `scan`/`virus` columns before creating the `attachments` table, so a
+brand-new store's first activation created the table without them and its first delivery failed (the queue's retry
+then worked). The columns are now in the `CREATE` too.
+
+**Local test:**
+- priya's domain (conp3-8329.test) has other mailboxes on Stalwart: reported as mixed, no rule (as intended).
+- dev@acme.test (the only address on acme.test) put on the store: the hourly run added the rule for acme.test and
+  logged the previous expressions; a plain email and an invitation from priya (Stalwart) to dev were queued for
+  relay (queue `remote`), not delivered to dev's old account or calendar; the sweep moved the 53 messages in dev's old
+  Stalwart Inbox into the store (none were there: this mailbox never had a shadow copy). A second run moved nothing
+  and left the rule alone. dev back on Stalwart: the next run removed the rule and the strategy was exactly as before.
+- 4 new unit tests; 436 tests pass.
+
+**On production after the push:** the first hourly run adds the rule for 99events.com and sweeps `hello@` and
+`team@` (expected: today's "Internal routing test" and the invitation from asif@xstate.com, plus anything else
+Stalwart kept). The docs say outbound-strategy changes needed a restart in production on 2026-11-05;
+`ReloadSettings` was enough locally, so the test after the push checks it: from asif@xstate.com, a plain email and
+an invitation to `hello@` must arrive through SES. If they don't, Stalwart needs a restart (`systemctl restart
+stalwart` on deepo).
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's
@@ -1671,8 +1768,16 @@ dev@acme.test held by the store:
   one-occurrence cancellation; sender proof (DMARC, DKIM, subdomain, SPF only, another domain, a forged second
   header, a non-SES header, none); every decision. 432 tests pass.
 
-**Not checked yet:** whether Stalwart files a Stalwart user's invitation to a store-held address into the Stalwart
-calendar (point 3); that is part of the pilot test.
+**Deployed (2026-11-18, commit d07fb1c).** On the pilot:
+- an invitation from `hello@` to Gmail, answered Yes in Gmail: the reply reached `hello@` at 07:26:00 and 8 seconds
+  later the `calendar` line recorded `reply → answer accepted`; `hello@`'s guest list showed the guest accepted.
+- **Found:** an invitation from asif@xstate.com (on Stalwart) to `hello@99events.com` never reached SES or the store
+  in 1½ minutes; the organizer's copy kept `hello@` at needs-action. Stalwart still lists 99events.com and the pilot
+  accounts as its own, so it delivers to them internally (here into `hello@`'s old Stalwart calendar). The same must
+  hold for plain email from a Stalwart mailbox to a pilot address, and it does: "Internal routing test" sent from
+  asif@xstate.com to `hello@` at 07:28:44 UTC never reached the store; it is in the old Stalwart account, which nobody
+  reads now. Fix: when a domain moves to the store, remove it (and its accounts) from Stalwart, so Stalwart
+  sends to it by MX like any outside domain. Needed for the pilot now and part of every domain switch in phase 4.
 
 #### Open questions
 

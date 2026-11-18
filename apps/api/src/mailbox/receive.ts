@@ -47,6 +47,33 @@ export async function consumeInbound(batch: MessageBatch<InboundJob>, env: Recei
   }
 }
 
+/**
+ * Delivers a message the mailbox's old Stalwart account received (mail Stalwart kept inside instead of sending it
+ * out, mailbox/stalwart-sweep.ts) as if it had come through SES: Inbox or Junk, search, files, agents, calendar.
+ * SES never checked it, so its verdicts are recorded as GRAY ("not checked"), and the calendar rules, which need SES's
+ * proof of the sender, leave its invitations to the card. `sesId` is `stalwart.<account>.<email id>`, so a repeat is
+ * recognised as a duplicate.
+ */
+export async function deliverSwept(
+  env: ReceiveEnv,
+  mailbox: MailboxRow,
+  raw: Uint8Array,
+  meta: { accountId: string; emailId: string; receivedAt: string; source: string | null },
+): Promise<ReceiveResult['delivered'][number]> {
+  const parsed = await parseRaw(raw)
+  const job: InboundJob = {
+    sesId: `stalwart.${meta.accountId}.${meta.emailId}`,
+    bucket: null,
+    key: null,
+    recipients: [mailbox.address],
+    verdicts: { spam: 'GRAY', virus: 'GRAY', spf: 'GRAY', dkim: 'GRAY', dmarc: 'GRAY' },
+    receivedAt: meta.receivedAt.replace(/\.\d{3}Z$/, 'Z'),
+    source: meta.source,
+    sweptFromStalwart: meta.emailId,
+  }
+  return deliverTo(env, mailbox, job, raw, parsed, await orgKnowledge(env, mailbox.organization_id, parsed))
+}
+
 type ReceiveResult = {
   sesId: string
   delivered: { mailboxId: string; id: string; folder: string; duplicate: boolean; spam?: { score: number; reasons: string[] } }[]
@@ -217,6 +244,7 @@ async function deliverTo(
         size: raw.length,
         verdicts: job.verdicts,
         spam: { score: spam.score, reasons: spam.reasons },
+        ...(job.sweptFromStalwart && { sweptFromStalwart: job.sweptFromStalwart }),
       },
     },
   ])

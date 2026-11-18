@@ -206,3 +206,26 @@ export async function copyHeldCalendars(env: EmailEnv): Promise<number> {
   }
   return done
 }
+
+/**
+ * Copies events Stalwart filed into the mailbox's old account after the one-time copy (an invitation from a Stalwart
+ * mailbox, delivered inside Stalwart): any whose UID the store doesn't have. Returns how many were copied.
+ */
+export async function sweepStalwartCalendar(env: EmailEnv, mailbox: MailboxRow): Promise<number> {
+  if (!mailbox.stalwart_id) return 0
+  await ensureCopied(env, mailbox)
+  const stub = await store(env, mailbox.id)
+  const events = await jmap.allEvents(env, mailbox.stalwart_id)
+  const calendars = await stub.calendarRows()
+  const fallback = (calendars.find((c) => c.isDefault) ?? calendars[0])?.id
+  const missing: StoreEventPut[] = []
+  for (const e of events) {
+    if (!e.uid || (await stub.eventByUid(e.uid))) continue
+    // Into the same calendar when the store has it (copied ids), else the default one.
+    const calendarId = Object.keys(e.calendarIds ?? {}).find((id) => calendars.some((c) => c.id === id)) ?? fallback
+    if (!calendarId) continue
+    missing.push(toRow({ ...e, calendarIds: { [calendarId]: true } }))
+  }
+  if (missing.length) await stub.putEvents(missing)
+  return missing.length
+}
