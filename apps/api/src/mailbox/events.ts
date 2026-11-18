@@ -10,7 +10,8 @@ import type { MailboxRow } from '../db/mailboxes'
 import { offerStoredEmail } from '../agents/email-trigger'
 import { refreshEmailFolders, removeEmails } from '../search/indexer'
 import { enqueueEmails, enqueueIndex } from '../search/jobs'
-import { encodeSafety, inspectStream } from '../security/attachments'
+import { SAFE, encodeSafety, inspectStream, worst } from '../security/attachments'
+import { ScanUnavailable, scanFile, scanMode } from '../security/scan'
 import { organizationBucket } from '../storage/buckets'
 import { cleanFileName, fileKey } from '../storage/files'
 import { deleteObject, getObject, putObject } from '../storage/r2'
@@ -19,6 +20,7 @@ import { fileParts, parseRaw, partName, type ParsedMessage } from './parse'
 import type { StoreEventRow } from './store'
 import { store } from './stub'
 import { triggerEmailOf } from './trigger-email'
+import { scanSafety, scanState, type ScanOutcome, type ScanState } from './scan-state'
 
 /**
  * A change to messages of one store-held mailbox. `direction` says whether `new` mail came in or was sent;
@@ -27,11 +29,15 @@ import { triggerEmailOf } from './trigger-email'
 export type MailEvent =
   | { kind: 'new'; mailboxId: string; ids: string[]; direction: 'in' | 'out'; offer?: boolean }
   | { kind: 'moved' | 'removed'; mailboxId: string; ids: string[] }
+  /** Scan received attachments that never were (mail from before scanning existed): no filing, no agents. */
+  | { kind: 'scan'; mailboxId: string; ids: string[] }
 
 /** Messages per event: a `new` event reads each message's raw copy. */
 const PER_EVENT = 10
 /** Inline parts smaller than this (signature logos, tracking pixels) aren't filed, as for Stalwart mail. */
 const SMALL_INLINE_BYTES = 20_000
+/** The queue delivers an event at most this many times (max_retries 8 in wrangler.jsonc, plus the first). */
+const LAST_ATTEMPT = 9
 
 /** Queues an event, split so each job stays small. Never fails the caller: a lost event is logged. */
 export async function queueMailEvent(env: Pick<Env, 'MAIL_EVENTS'>, event: MailEvent): Promise<void> {
@@ -48,7 +54,7 @@ export async function queueMailEvent(env: Pick<Env, 'MAIL_EVENTS'>, event: MailE
 export async function consumeMailEvents(batch: MessageBatch<MailEvent>, env: Env): Promise<void> {
   for (const message of batch.messages) {
     try {
-      const result = await handle(env, message.body)
+      const result = await handle(env, message.body, message.attempts)
       if (result) console.log('mail-events', JSON.stringify(result))
       message.ack()
     } catch (err) {
@@ -58,7 +64,7 @@ export async function consumeMailEvents(batch: MessageBatch<MailEvent>, env: Env
   }
 }
 
-async function handle(env: Env, event: MailEvent) {
+async function handle(env: Env, event: MailEvent, attempts: number) {
   const mailbox = await mailboxesDb.find(env.DB, event.mailboxId)
   if (!mailbox || mailbox.backend !== 'store') return null
   if (event.kind === 'moved') return { kind: event.kind, mailboxId: mailbox.id, moved: await refreshEmailFolders(env, mailbox.id, event.ids) }
@@ -67,9 +73,10 @@ async function handle(env: Env, event: MailEvent) {
     return { kind: event.kind, mailboxId: mailbox.id, files: meta.changes, unindexed: await removeEmails(env, mailbox.id, event.ids) }
   }
 
-  const fresh = event as Extract<MailEvent, { kind: 'new' }>
-  const result = { kind: event.kind, mailboxId: mailbox.id, messages: 0, filed: 0, blocked: 0, fired: 0, skipped: 0 }
-  const rows = await (await store(env, mailbox.id)).rows(event.ids)
+  const fresh = event.kind === 'new' ? event : null
+  const result = { kind: event.kind, mailboxId: mailbox.id, messages: 0, filed: 0, blocked: 0, infected: 0, fired: 0, skipped: 0 }
+  const stub = await store(env, mailbox.id)
+  const rows = await stub.rows(event.ids)
   const bucket = await organizationBucket(env, mailbox.organization_id)
   const indexed: string[] = []
   // One message at a time: a raw copy can be 40 MB.
@@ -80,12 +87,17 @@ async function handle(env: Env, event: MailEvent) {
     const raw = new Uint8Array(await res.arrayBuffer())
     const parsed = await parseRaw(raw)
     result.messages++
-    const filed = await fileAttachments(env, mailbox, bucket, row, raw, parsed, fresh.direction)
+    // Received attachments are scanned for viruses before anything else (step 4c); sent ones were, when uploaded.
+    const scans = !fresh || fresh.direction === 'in' ? await scanAttachments(env, stub, row, raw, parsed, attempts) : new Map<number, Scanned>()
+    const infected = [...scans.values()].some((s) => s.state === 'infected')
+    if (infected) result.infected++
+    if (!fresh) continue
+    const filed = await fileAttachments(env, mailbox, bucket, row, raw, parsed, fresh.direction, scans)
     result.filed += filed.filed
     result.blocked += filed.blocked
     indexed.push(row.id)
-    // Agents see received mail that is in the Inbox, as with Stalwart mail.
-    if (fresh.direction === 'in' && fresh.offer !== false && row.folder === 'inbox') {
+    // Agents see received mail that is in the Inbox, as with Stalwart mail; never mail carrying a virus.
+    if (fresh.direction === 'in' && fresh.offer !== false && row.folder === 'inbox' && !infected) {
       const offered = await offerStoredEmail(
         env,
         mailbox,
@@ -97,6 +109,48 @@ async function handle(env: Env, event: MailEvent) {
   }
   await enqueueEmails(env, mailbox.id, indexed)
   return result
+}
+
+type Scanned = { state: ScanState; virus: string | null }
+
+/**
+ * Scans a received message's attachments that have no result yet, records the results in the store, and moves the
+ * message to Junk when one has a virus (a system move: it doesn't count as the person's verdict on the sender). An
+ * unreachable scanner fails the event so the queue retries it, until the last try, when the attachment becomes
+ * `unscannable` (./scan-state.ts).
+ */
+async function scanAttachments(
+  env: Env,
+  stub: Awaited<ReturnType<typeof store>>,
+  row: StoreEventRow,
+  raw: Uint8Array,
+  parsed: ParsedMessage,
+  attempts: number,
+): Promise<Map<number, Scanned>> {
+  const mode = scanMode(env)
+  const results = new Map<number, Scanned>()
+  for (const part of fileParts(parsed.parts)) {
+    const bytes = decodePart(raw.subarray(part.start, part.start + part.length), part.encoding)
+    const name = partName(part) ?? 'attachment'
+    let outcome: ScanOutcome
+    try {
+      outcome = await scanFile(env, bytes, name)
+    } catch (err) {
+      if (!(err instanceof ScanUnavailable)) throw err
+      outcome = { unavailable: true }
+    }
+    const state = scanState(mode, outcome, attempts >= LAST_ATTEMPT)
+    if (state === 'retry') throw new Error(`scanner unreachable while checking ${name}; the event will be retried`)
+    results.set(part.start, { state, virus: 'infected' in outcome && outcome.infected ? outcome.virus : null })
+  }
+  if (!results.size) return results
+  await stub.setScan(row.id, [...results].map(([start, r]) => ({ start, ...r })))
+  const infected = [...results.values()].filter((r) => r.state === 'infected')
+  if (infected.length) {
+    console.log('mail-events: virus', JSON.stringify({ emailId: row.id, viruses: infected.map((r) => r.virus) }))
+    if (row.folder !== 'junk') await stub.update({ id: row.id, folder: 'junk', system: true })
+  }
+  return results
 }
 
 /**
@@ -112,6 +166,7 @@ async function fileAttachments(
   raw: Uint8Array,
   parsed: ParsedMessage,
   direction: 'in' | 'out',
+  scans: Map<number, Scanned>,
 ): Promise<{ filed: number; blocked: number }> {
   const out = { filed: 0, blocked: 0 }
   for (const part of fileParts(parsed.parts)) {
@@ -150,8 +205,11 @@ async function fileAttachments(
       if (!meta.changes) continue
     }
     try {
-      const { safety, body } = await inspectStream(new Response(bytes).body!, name)
+      const { safety: byRules, body } = await inspectStream(new Response(bytes).body!, name)
       await body.cancel().catch(() => null)
+      // A virus or an unscannable file shows on the file as on the attachment (./scan-state.ts).
+      const scanned = scans.get(part.start)
+      const safety = scanned ? worst(byRules, scanSafety(scanned.state, scanned.virus) ?? SAFE) : byRules
       if (safety.level === 'blocked') {
         await filesDb.markBlocked(env.DB, id, encodeSafety(safety), new Date().toISOString()).run()
         out.blocked++
@@ -176,10 +234,16 @@ async function fileAttachments(
  * Hourly: a store-held mailbox's messages from before events existed are queued once, so they are filed, indexed
  * and offered to agents too. Each mailbox's store remembers it was done.
  */
-export async function catchUpHeld(env: Env): Promise<{ mailboxes: number; queued: number }> {
-  const result = { mailboxes: 0, queued: 0 }
+export async function catchUpHeld(env: Env): Promise<{ mailboxes: number; queued: number; scans: number }> {
+  const result = { mailboxes: 0, queued: 0, scans: 0 }
   for (const { id } of await mailboxesDb.heldByStore(env.DB)) {
     const stub = await store(env, id)
+    // Received attachments from before scanning existed: scanned once (step 4c).
+    const unscanned = await stub.unscanned()
+    if (unscanned.length) {
+      await queueMailEvent(env, { kind: 'scan', mailboxId: id, ids: unscanned })
+      result.scans += unscanned.length
+    }
     if (await stub.caughtUp()) continue
     const ids = await stub.allIds()
     const rows = await stub.rows(ids)

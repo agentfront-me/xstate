@@ -7,7 +7,8 @@ import type { MailboxRow } from '../db/mailboxes'
 import { EmailError } from '../mailserver/errors'
 import * as jmap from '../mailserver/stalwart/mail'
 import type { EmailEnv } from '../mailserver/types'
-import { checkName } from '../security/attachments'
+import { SAFE, checkName, worst } from '../security/attachments'
+import { scanAllows, scanSafety } from './scan-state'
 import { organizationBucket, storageConfigured } from '../storage/buckets'
 import { getObject, getObjectRange } from '../storage/r2'
 import { decodePart, isBodyText, locateParts, type MimePart, type PartEncoding } from './mime'
@@ -78,6 +79,7 @@ export async function storeThread(
 async function toMessage(row: StoreThreadMessage, raw: Uint8Array, summary: MessageSummary): Promise<Message> {
   const parsed = await parseRaw(raw)
   const sizes = new Map(row.attachments.map((a) => [a.start, a.size]))
+  const scans = new Map(row.attachments.map((a) => [a.start, a]))
   return {
     ...summary,
     cc: parsed.cc,
@@ -96,7 +98,8 @@ async function toMessage(row: StoreThreadMessage, raw: Uint8Array, summary: Mess
         size: sizes.get(part.start) ?? encodedSize(part),
         inline: part.disposition === 'inline',
         cid: part.contentId,
-        safety: checkName(name),
+        // The file-type rules, and for received mail the virus scan (./scan-state.ts).
+        safety: worst(checkName(name), scanSafety(scans.get(part.start)?.scan ?? null, scans.get(part.start)?.virus ?? null) ?? SAFE),
       }
     }),
   }
@@ -111,6 +114,9 @@ export async function storeBlob(env: EmailEnv, mailbox: MailboxRow, blobId: stri
   if (!id || !storageConfigured(env)) return null
   const place = await (await store(env, mailbox.id)).attachmentAt(id.emailId, id.start)
   if (!place) return null
+  // Never handed out while it is being checked for viruses, or when it has one (./scan-state.ts).
+  const allowed = scanAllows(place.scan)
+  if (!allowed.ok) throw new EmailError(allowed.code, allowed.message, allowed.status)
   const bucket = await organizationBucket(env, mailbox.organization_id)
   if (place.length >= 0) {
     const range = await getObjectRange(env, bucket, place.rawKey, place.start, place.length)

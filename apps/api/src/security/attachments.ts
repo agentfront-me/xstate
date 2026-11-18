@@ -22,6 +22,10 @@ export type SafetyCode =
   | 'macros'
   | 'encrypted_archive'
   | 'unchecked_archive'
+  // Received into a store-held mailbox (mailbox/scan-state.ts): ClamAV hasn't answered yet, found a virus, or couldn't.
+  | 'scanning'
+  | 'virus'
+  | 'unscanned'
 
 export type Safety = { level: SafetyLevel; code?: SafetyCode; message?: string }
 

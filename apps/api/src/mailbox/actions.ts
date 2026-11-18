@@ -11,6 +11,8 @@ export type StoreUpdate = {
   pinned?: boolean
   folder?: StoreFolderRole
   thread?: boolean
+  /** A move the system makes (an infected message to Junk), not a person: it doesn't teach the spam filter. */
+  system?: boolean
 }
 
 /** A message of the conversation as the store has it. */

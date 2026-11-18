@@ -24,6 +24,7 @@ import {
 } from './query'
 import { subjectKey, ulid } from './inbound'
 import { planUpdate, type StoreUpdate } from './actions'
+import type { ScanState } from './scan-state'
 
 /** Where the copy from the mail server stands. */
 export type StoreSync = {
@@ -117,18 +118,18 @@ export type StoreReplySource = {
   messageId: string | null
   references: string[]
   rawKey: string | null
-  attachments: { name: string | null; type: string; size: number; start: number; length: number; encoding: string }[]
+  attachments: { name: string | null; type: string; size: number; start: number; length: number; encoding: string; scan: ScanState | null; virus: string | null }[]
 }
 
 /** A message of a conversation, as `thread` gives it. */
 export type StoreThreadMessage = StoreListRow & {
   rawKey: string | null
   rawSize: number | null
-  attachments: { start: number; size: number }[]
+  attachments: { start: number; size: number; scan: ScanState | null; virus: string | null }[]
 }
 
 /** Where to read an attachment. `length` is -1 when the store has no record of it: look in the raw copy. */
-export type StoreAttachmentPlace = { rawKey: string; start: number; length: number; encoding: string; type: string }
+export type StoreAttachmentPlace = { rawKey: string; start: number; length: number; encoding: string; type: string; scan: ScanState | null; virus: string | null }
 
 export type RawStats = {
   messages: number
@@ -148,6 +149,9 @@ export type RawStats = {
   /** A few message ids that differ, to look at. */
   diffSample: string[]
 }
+
+/** A received attachment still `scanning` this long after delivery is scanned again by the hourly catch-up. */
+const STUCK_SCAN_SECONDS = 3600
 
 /** How far back a message with the same subject and people joins its conversation, without a reply header. */
 const THREAD_BY_SUBJECT_SECONDS = 30 * 24 * 3600
@@ -202,6 +206,8 @@ export class MailboxStore extends Agent<Env> {
     }
     addColumns('messages', ['message_id TEXT', 'in_reply_to TEXT', 'refs TEXT', 'subject_key TEXT', 'ses_id TEXT', 'verdicts TEXT', 'modseq INTEGER', 'trashed_s INTEGER', 'answered INTEGER', 'forwarded INTEGER', 'is_draft INTEGER'])
     addColumns('placements', ['uid INTEGER'])
+    // Virus scanning of received attachments (phase 2 step 4c, ./scan-state.ts): null when not gated.
+    addColumns('attachments', ['scan TEXT', 'virus TEXT'])
     addColumns('folders', ['uid_validity INTEGER', 'uid_next INTEGER', 'highest_modseq INTEGER'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_message_id ON messages (message_id) WHERE message_id IS NOT NULL`)
     sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS messages_ses_id ON messages (ses_id) WHERE ses_id IS NOT NULL`)
@@ -497,21 +503,21 @@ export class MailboxStore extends Agent<Env> {
       ...rowToList(row, rows.length),
       rawKey: row.raw_key,
       rawSize: row.raw_size,
-      attachments: [...this.db.exec(`SELECT start, size FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as { start: number; size: number }[],
+      attachments: [...this.db.exec(`SELECT start, size, scan, virus FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as StoreThreadMessage['attachments'],
     }))
   }
 
   /** Where an attachment sits: its message's raw copy and the encoded range, found by the range's start. */
   attachmentAt(emailId: string, start: number): StoreAttachmentPlace | null {
     const row = [...this.db.exec(
-      `SELECT m.raw_key AS rawKey, a.start, a.length, a.encoding, a.type FROM messages m JOIN attachments a ON a.n = m.n
+      `SELECT m.raw_key AS rawKey, a.start, a.length, a.encoding, a.type, a.scan, a.virus FROM messages m JOIN attachments a ON a.n = m.n
         WHERE m.id = ? AND a.start = ?`,
       emailId, start,
     )][0] as StoreAttachmentPlace | undefined
     if (row) return row
     // Not recorded (or recorded under another part): the caller can still find it in the raw copy.
     const msg = [...this.db.exec(`SELECT raw_key AS rawKey FROM messages WHERE id = ?`, emailId)][0] as { rawKey: string | null } | undefined
-    return msg?.rawKey ? { rawKey: msg.rawKey, start, length: -1, encoding: '', type: '' } : null
+    return msg?.rawKey ? { rawKey: msg.rawKey, start, length: -1, encoding: '', type: '', scan: null, virus: null } : null
   }
 
   /** Senders and arrival times, for search results that need them. Messages the store doesn't have are left out. */
@@ -605,8 +611,8 @@ export class MailboxStore extends Agent<Env> {
       if (d.folder === 'sent') this.wroteTo([...d.to, ...d.cc, ...(d.bcc ?? [])].map((a) => a.email), Math.floor(Date.parse(d.receivedAt) / 1000))
       d.attachments.forEach((a, seq) => {
         this.db.exec(
-          `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
-          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding,
+          `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified, scan) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding, d.folder ? null : 'scanning',
         )
       })
       return { id: d.id, threadId, folder: role, duplicate: false }
@@ -668,7 +674,7 @@ export class MailboxStore extends Agent<Env> {
         if (c.folder) {
           // "Junk" and "Not junk": a move between Inbox and Junk is the mailbox's verdict on the sender (spam layer 3).
           const before = rows.find((r) => r.n === c.n)?.folder
-          if ((before === 'inbox' && c.folder === 'junk') || (before === 'junk' && c.folder === 'inbox')) {
+          if (!u.system && ((before === 'inbox' && c.folder === 'junk') || (before === 'junk' && c.folder === 'inbox'))) {
             const sender = [...this.db.exec(`SELECT from_addr FROM messages WHERE n = ?`, c.n)][0]?.from_addr as string | undefined
             if (sender) {
               this.db.exec(
@@ -717,7 +723,7 @@ export class MailboxStore extends Agent<Env> {
       | { n: number; message_id: string | null; refs: string | null; raw_key: string | null }
       | undefined
     if (!row) return null
-    const attachments = [...this.db.exec(`SELECT name, type, size, start, length, encoding FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as StoreReplySource['attachments']
+    const attachments = [...this.db.exec(`SELECT name, type, size, start, length, encoding, scan, virus FROM attachments WHERE n = ? ORDER BY seq`, row.n)] as unknown as StoreReplySource['attachments']
     return { id, messageId: row.message_id, references: row.refs ? row.refs.split(' ') : [], rawKey: row.raw_key, attachments }
   }
 
@@ -795,6 +801,29 @@ export class MailboxStore extends Agent<Env> {
   caughtUp(set = false): boolean {
     if (set) this.setMeta('events_caught_up', '1')
     return this.meta('owner') !== 'store' || this.meta('events_caught_up') === '1'
+  }
+
+  /** Records virus-scan results for a message's attachments, by their start in the raw copy; the apps reload. */
+  setScan(emailId: string, results: { start: number; state: ScanState; virus: string | null }[]) {
+    const n = [...this.db.exec(`SELECT n FROM messages WHERE id = ?`, emailId)][0]?.n as number | undefined
+    if (n === undefined || !results.length) return
+    this.ctx.storage.transactionSync(() => {
+      for (const r of results) this.db.exec(`UPDATE attachments SET scan = ?, virus = ? WHERE n = ? AND start = ?`, r.state, r.virus, n, r.start)
+      this.db.exec(`UPDATE messages SET modseq = ? WHERE n = ?`, this.nextModseq(), n)
+    })
+  }
+
+  /**
+   * Received messages whose attachments need a scan: never scanned (from before scanning existed), or still
+   * `scanning` after `stuckSeconds` (an event that never ran would otherwise leave them blocked for good).
+   */
+  unscanned(stuckSeconds = STUCK_SCAN_SECONDS, limit = 500): string[] {
+    const before = Math.floor(Date.now() / 1000) - stuckSeconds
+    return [...this.db.exec(
+      `SELECT DISTINCT m.id FROM messages m JOIN attachments a ON a.n = m.n
+        WHERE (a.scan IS NULL OR (a.scan = 'scanning' AND m.received_s < ?)) AND m.folder IS NOT 'sent' AND m.is_draft IS NOT 1 LIMIT ?`,
+      before, limit,
+    )].map((r) => r.id as string)
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

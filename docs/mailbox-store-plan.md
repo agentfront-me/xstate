@@ -1116,6 +1116,80 @@ junk". Fixed in the web app (2026-11-18, uncommitted): the reader has **Junk** f
 Archive and **Not junk** in Spam (`apps/app/src/mail/Reader.tsx`), for every mailbox; tried in demo mode at 1280 px
 (one toolbar line: Pin, Archive, Junk, Mark read). The mobile app still has neither.
 
+#### Step 4c: virus scanning of received attachments (approved and built 2026-11-18, uncommitted)
+
+**Goal:** every attachment that reaches a store-held mailbox is scanned by ClamAV before anyone can download it, as
+[Attachments and viruses](#attachments-and-viruses) planned. Today SES's coarse verdict is the only check for these
+mailboxes: Stalwart mailboxes get ClamAV at SMTP time through the scanner's MTA hook on deepo, which store-held mail
+never passes. The scanner itself stays where it is (`apps/scanner`, `SCAN_URL`), until Stalwart is retired.
+
+**When:** in the new-mail event (4a), before filing. For each file part of a received message, the consumer sends
+its decoded bytes to the scanner (`security/scan.ts`, `scanFile`, the same call composer uploads use), then records
+the result. Sent mail isn't scanned again: its attachments were scanned when uploaded.
+
+**Each attachment's state**, kept in the store's `attachments` table (a new `scan` column) so the reader and downloads
+see it without D1:
+
+| State | Meaning | Download | In the reader |
+|---|---|---|---|
+| `scanning` | Delivered, not scanned yet (seconds, usually) | Refused, 409 "being checked; try again in a moment" | Blocked, "Being checked for viruses" |
+| `clean` | ClamAV found nothing | Allowed (file-type rules still apply) | As now |
+| `infected` | ClamAV found a virus | Refused for good, 403 | Blocked, "Contains a virus (<name>)" |
+| `unscannable` | The scanner couldn't take it after every retry (down, or the file over its size limit) | Allowed with a warning | Warning, as the rules already do for archives they can't open |
+
+`deliver` sets `scanning` on every file part of received mail, so nothing is downloadable before it's checked; mail
+the mailbox sends is `clean` at once. The reader shows the state through the attachment's existing `safety` (two new
+codes, `scanning` and `virus`), which the web app already shows as blocked or warned, so it needs no change. A scan
+result bumps the store's change token, so the app reloads and the attachment becomes downloadable on its own.
+
+**An infected attachment:** the message moves to Junk (without counting as a "Junk" verdict on the sender), its `files`
+row is marked blocked and never copied, and the result is logged with the virus name. The rest of the message stays
+readable.
+
+**The scanner down:** the event retries with backoff (the queue's own retries, about half an hour in all); after the
+last one the attachment becomes `unscannable`, so mail is never held back for hours by a broken scanner. Files over
+the scanner's size limit become `unscannable` at once.
+
+**Modes,** as `SCAN_MODE` sets them for uploads today: `log` scans and logs but marks every attachment `clean`
+(nothing refused; the first days on the pilot); `live` enforces the table above; `fake` (local) flags only EICAR;
+`off` marks everything `clean` without scanning. Production is on `log` now; the change to `live` is a one-line
+config change, and also makes composer and Storage uploads refuse viruses (the rollout the scanner's README
+describes). Turning `live` on is the user's call after the pilot (the earlier log-only week is over; the user chose not
+to review its log).
+
+**Mail already there:** the pilot's existing attachments are scanned once by the 4a catch-up path (a `scan` event for
+messages with attachments and no scan state), so they don't stay unknown.
+
+**Not in 4c:** moving ClamAV off deepo (phase 5), scanning inside attached emails beyond what ClamAV does itself,
+rescanning old files when signatures update.
+
+**Testing:** pure tests for the state rules (each mode, scanner down, size limit); locally with `SCAN_MODE=fake`, an
+EICAR attachment (infected: message to Junk, download 403, file blocked), a clean one (downloadable after the scan, 409
+before), and the scanner unreachable in `live` (retries, then `unscannable`); on the pilot, in `log`, a real attachment
+reaching `clean` through the real scanner on deepo.
+
+**Built:** `mailbox/scan-state.ts` (the states, what each means for the reader and downloads, with tests), a `scan`
+and `virus` column on the store's `attachments` (`scanning` on received mail at delivery, none on mail the mailbox
+writes or copies from Stalwart, which are never gated), `setScan`, `unscanned`, the scan in the new-mail event before
+filing (`scanAttachments` in `events.ts`: `security/scan.ts` `scanFile`, a retry while the scanner is unreachable, an
+infected message moved to Junk as a system move that doesn't teach the spam filter, and agents never offered it), a
+`scan` event for the catch-up, `storeBlob` refusing a file that is `scanning` (409) or `infected` (403) for every path
+(download, attaching to a reply, reading an invitation), forwards skipping an infected original and waiting for one
+still being checked, and three new safety codes (`scanning`, `virus`, `unscanned`) the web app already shows.
+
+**Found while testing:** a scan event that never runs (lost when enqueueing, or here a local restart) would leave its
+attachments `scanning`, so blocked, for good. The hourly catch-up now also rescans attachments still `scanning` an
+hour after delivery.
+
+**Local test:** with `SCAN_MODE=live` and no scanner, a clean file stayed `scanning` (reader "Being checked for
+viruses", download 409) and the event was retried; with `fake`, a clean file was `ok` and downloadable, and an EICAR
+file put its message in Junk, showed "Contains a virus (Eicar-Test-Signature)", refused the download
+(`attachment_blocked`) and left its `files` row blocked (`blocked:virus`); the hourly run rescanned the stuck clean file,
+which then downloaded.
+
+**Docs:** `security.md` will say received attachments are scanned by ClamAV only once `SCAN_MODE` is `live` in
+production (today `log`), so the public page never claims more than is enforced.
+
 #### Our own MX name (discussed 2026-11-17, deferred)
 
 Customer domains publish SES's own hostname for now (`MX 10 inbound-smtp.us-east-2.amazonaws.com`), the user's

@@ -140,6 +140,9 @@ async function prepare(env: OutboundEnv, mailbox: MailboxRow, input: SendInput, 
     const raw = res ? new Uint8Array(await res.arrayBuffer()) : null
     for (const part of raw ? original.attachments : []) {
       if (chosen.has(storeBlobId(original.id, part.start))) continue
+      // A virus never travels on; a file still being checked holds the forward until it has been (./scan-state.ts).
+      if (part.scan === 'infected') continue
+      if (part.scan === 'scanning') throw new EmailError('attachment_scanning', 'An attachment of this message is still being checked for viruses. Try again in a moment.', 409)
       const bytes = decodePart(raw!.subarray(part.start, part.start + part.length), part.encoding as PartEncoding)
       const name = part.name ?? 'attachment'
       if ((await safetyOf(bytes, name)).level === 'blocked') continue
