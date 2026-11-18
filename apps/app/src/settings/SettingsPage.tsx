@@ -496,7 +496,7 @@ function LiveMembers({ account }: { account: Account }) {
               const invited = m.status === 'invited'
               const label = m.name || m.email
               return (
-                <button className="card-row member-row" key={m.id} onClick={() => setOpenId(m.id)}>
+                <button className={`card-row member-row${m.suspendedAt ? ' is-suspended' : ''}`} key={m.id} onClick={() => setOpenId(m.id)}>
                   <span className="avatar md">{invited && !m.name ? m.email[0]!.toUpperCase() : initials(label)}</span>
                   <div className="text">
                     <span className="name ellipsis">
@@ -507,6 +507,7 @@ function LiveMembers({ account }: { account: Account }) {
                   </div>
                   <span className="right">
                     {invited && <span className="tag">Invite pending</span>}
+                    {m.suspendedAt && <span className="tag">Suspended</span>}
                     <span className="muted">{cap(m.role)}</span>
                     <Icon name="chevron-right" size={14} />
                   </span>

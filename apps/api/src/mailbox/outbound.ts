@@ -287,6 +287,6 @@ async function afterWriting(env: OutboundEnv, mailbox: MailboxRow, p: Prepared, 
     const keys = await (await store(env, mailbox.id)).removeDraft(input.draftId)
     for (const key of keys) await deleteObject(env, p.bucket, key).catch((err) => console.error(`drafts: deleting ${key} failed`, err))
   }
-  const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
+  const userIds = (await accessDb.listToNotify(env.DB, mailbox.id)).map((a) => a.user_id)
   if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId: mailbox.id }, userIds)
 }

@@ -10,12 +10,12 @@ export type Permissions = { org: OrgPermission[]; domains: Record<string, Domain
 
 export type Member = { id: string; role: Role; permissions: Permissions }
 
-/** The user's active membership in the organization. Invited members don't count until they accept. */
+/** The user's active membership in the organization. Invited and suspended members don't count. */
 export async function find(db: D1Database, organizationId: string, userId: string): Promise<Member | null> {
   const row = await db
     .prepare(
       `SELECT id, role, json(permissions) AS permissions FROM members
-       WHERE organization_id = ? AND user_id = ? AND status = 'active'`,
+       WHERE organization_id = ? AND user_id = ? AND status = 'active' AND suspended_at IS NULL`,
     )
     .bind(organizationId, userId)
     .first<{ id: string; role: Role; permissions: string }>()
@@ -30,7 +30,7 @@ export async function listForUser(db: D1Database, userId: string) {
     .prepare(
       `SELECT m.id AS member_id, m.role, o.id AS organization_id, o.name AS organization_name, o.plan
        FROM members m JOIN organizations o ON o.id = m.organization_id
-       WHERE m.user_id = ? AND m.status = 'active' ORDER BY o.created_at`,
+       WHERE m.user_id = ? AND m.status = 'active' AND m.suspended_at IS NULL ORDER BY o.created_at`,
     )
     .bind(userId)
     .all<{ member_id: string; role: Role; organization_id: string; organization_name: string; plan: 'free' | 'pro' | 'team' }>()
@@ -46,6 +46,8 @@ export type MemberRow = {
   name: string | null
   email: string
   recovery_email: string | null
+  /** Set while the member is suspended (migrations/0042). */
+  suspended_at: string | null
   created_at: string
   /** From the open invitation, for invited members. */
   invited_by_name: string | null
@@ -54,7 +56,7 @@ export type MemberRow = {
 }
 
 const MEMBER_SELECT = `
-  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, u.recovery_email, m.created_at,
+  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, u.recovery_email, m.suspended_at, m.created_at,
          ib.name AS invited_by_name, i.sent_at, i.expires_at
   FROM members m
   JOIN users u ON u.id = m.user_id

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { syncSeats } from '../billing/service'
 import { completeReset, lookupReset, sendResetLink, setTemporaryPassword } from '../members/passwords'
+import { restoreMember, signOutEverywhere, suspendMember } from '../members/security'
 import {
   acceptInvite,
   addMember,
@@ -141,6 +142,34 @@ export const membersSendReset = defineOperation({
   run: ({ env, actor }, input) => sendResetLink(env, actor, input.memberId),
 })
 
+export const membersSignOut = defineOperation({
+  name: 'members_sign_out_everywhere',
+  description: 'Signs a member out of xstate on every device, and stops alerts on their phones until they sign in again.',
+  input: z.object({ memberId: id }),
+  http: { method: 'POST', path: '/members/:memberId/sign-out' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ member: await signOutEverywhere(env, actor, input.memberId) }),
+})
+
+export const membersSuspend = defineOperation({
+  name: 'members_suspend',
+  description:
+    "Suspends a member: they're signed out and can't sign in to the organization or reach anything in it, through the app, API tokens or connected AI apps. Their mailbox keeps receiving mail. members_restore undoes it.",
+  input: z.object({ memberId: id }),
+  http: { method: 'POST', path: '/members/:memberId/suspend' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ member: await suspendMember(env, actor, input.memberId) }),
+})
+
+export const membersRestore = defineOperation({
+  name: 'members_restore',
+  description: 'Gives a suspended member their access back.',
+  input: z.object({ memberId: id }),
+  http: { method: 'POST', path: '/members/:memberId/restore' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ member: await restoreMember(env, actor, input.memberId) }),
+})
+
 export const passwordResetLookup = defineOperation({
   name: 'auth_password_reset_lookup',
   description: 'Which account a password reset link is for.',
@@ -198,6 +227,9 @@ export const memberOperations = [
   membersRemove,
   membersSetPassword,
   membersSendReset,
+  membersSignOut,
+  membersSuspend,
+  membersRestore,
   invitationLookup,
   invitationAccept,
   passwordResetLookup,

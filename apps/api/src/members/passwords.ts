@@ -16,6 +16,7 @@ import { requireOrgPermission } from '../mailserver/access'
 import { sendSystemEmail } from '../mailserver/system-mail'
 import { generatePassword } from '../mailserver/validation'
 import { resetEmail } from './reset-email'
+import { requireNotSuspended, signOutUser } from './security'
 import type { Delivery, MembersEnv } from './service'
 
 const RESET_HOURS = 24
@@ -55,6 +56,8 @@ export async function setTemporaryPassword(env: MembersEnv, actor: Actor, member
   const now = new Date().toISOString()
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 1, updated_at = ? WHERE id = ?').bind(await hashPassword(password), now, row.user_id),
+    // Whoever had their old password is signed out.
+    ...signOutUser(env, row.user_id, now),
     ...(row.status === 'invited' ? [membersDb.activate(env.DB, row.id, now), invitationsDb.remove(env.DB, row.id)] : []),
     env.DB.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(row.user_id),
   ])
@@ -129,8 +132,13 @@ export async function completeReset(env: MembersEnv, input: { token: string; pas
        WHERE id = ? AND EXISTS (SELECT 1 FROM password_resets WHERE user_id = ? AND token_hash = ?)`,
     ).bind(await hashPassword(input.password), now, row.user_id, row.user_id, tokenHash),
     env.DB.prepare('DELETE FROM password_resets WHERE user_id = ? AND token_hash = ?').bind(row.user_id, tokenHash),
+    // Other sessions end; the one issued below (same second) still works.
+    env.DB.prepare(
+      'UPDATE users SET sessions_after = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM password_resets WHERE user_id = ? AND token_hash = ?)',
+    ).bind(now, row.user_id, row.user_id, tokenHash),
   ])
   if (!set!.meta.changes) throw new ApiError('reset_not_found', 'This link was just used. Sign in with your new password.', 404)
+  await requireNotSuspended(env, row.user_id)
   return { ...(await issueToken(env, row.user_id)), user: { id: row.user_id, email: row.email, name: row.name, createdAt: now } }
 }
 

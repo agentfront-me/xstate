@@ -474,3 +474,5 @@ button.sender { width: 100%; text-align: left; }
 button.card-row { width: 100%; text-align: left; cursor: pointer; }
 button.card-row:hover { background: var(--bg-hover); }
 .member-row .right { display: flex; align-items: center; gap: 10px; color: var(--text-dim); }
+.member-row.is-suspended .avatar, .member-row.is-suspended .text { opacity: 0.55; }
+.member-detail .md-row > div > span { color: var(--text-hi); }

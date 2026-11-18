@@ -375,7 +375,7 @@ async function deliverTo(
   // Filing, search and agents, on their own queue (./events.ts).
   await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'in' })
   // The apps: a live update for whoever has the mailbox open, and "new email" on phones.
-  const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
+  const userIds = (await accessDb.listToNotify(env.DB, mailbox.id)).map((a) => a.user_id)
   if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId: mailbox.id }, userIds)
   await notifyDelivered(env, mailbox, { id, threadId: stored.threadId, folder: stored.folder, subject: parsed.subject, from: parsed.from[0] }).catch((err) =>
     console.error(`mail-in: push for ${mailbox.id} failed`, err),

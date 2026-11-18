@@ -17,6 +17,7 @@ import {
   addMember,
   addMemberAddress,
   inviteMember,
+  memberAction,
   removeMemberAddress,
   resendInvite,
   sendPasswordReset,
@@ -360,6 +361,9 @@ export function MemberDialog({
   const [busy, setBusy] = useState('')
   // Admins help with someone else's password: never the owner's, and an admin's only by the owner.
   const canHelpPassword = manage && !m.you && m.role !== 'owner' && (m.role !== 'admin' || account.org.role === 'owner')
+  // Sign out everywhere and suspend: the same people, but suspending never yourself.
+  const canSecure = manage && m.role !== 'owner' && (m.role !== 'admin' || account.org.role === 'owner' || account.org.role === 'admin')
+  const suspended = !!m.suspendedAt
   // A temporary password only when their sign-in is an address of their mailbox here, not an email of their own.
   const orgSignIn = !!m.mailbox?.addresses.some((a) => a.address === m.email)
 
@@ -387,6 +391,7 @@ export function MemberDialog({
             <span className="name ellipsis">
               {label}
               {invited && <span className="tag">Invite pending</span>}
+              {suspended && <span className="tag">Suspended</span>}
             </span>
             <span className="sub ellipsis">{m.email}</span>
           </div>
@@ -565,6 +570,50 @@ export function MemberDialog({
               </>
             )}
             {reset && (reset.sent ? <p className="hint">Reset link sent to {reset.to}. It works for 24 hours.</p> : <DeliveryNote to={reset.to} delivery={reset} />)}
+          </section>
+        )}
+
+        {(canSecure || m.you) && !invited && (
+          <section>
+            <h3>Security</h3>
+            <div className="md-row">
+              <div>
+                <span>Signed-in devices</span>
+                <p className="hint">Signs {m.you ? 'you' : 'them'} out of xstate on every computer and phone.</p>
+              </div>
+              <button
+                className="btn btn-sm"
+                disabled={!!busy}
+                onClick={() => void act('sign-out', () => memberAction(client, orgId, m.id, 'sign-out'), m.you ? 'Signed out on every device' : `${label} was signed out everywhere`)}
+              >
+                <Icon name="monitor" size={14} />
+                Sign out everywhere
+              </button>
+            </div>
+          </section>
+        )}
+
+        {canSecure && !m.you && !invited && (
+          <section>
+            <div className="md-row">
+              <div>
+                <h3>{suspended ? 'Access suspended' : 'Suspend access'}</h3>
+                <p className="hint">
+                  {suspended
+                    ? `Since ${new Date(m.suspendedAt!).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}. Mail to their addresses is still kept.`
+                    : 'Blocks sign-in and signs them out of all devices. Mail and data are kept.'}
+                </p>
+              </div>
+              <button
+                className="btn btn-sm"
+                disabled={!!busy}
+                onClick={() =>
+                  void act(suspended ? 'restore' : 'suspend', () => memberAction(client, orgId, m.id, suspended ? 'restore' : 'suspend'), suspended ? 'Access restored' : `${label} is suspended`)
+                }
+              >
+                {suspended ? 'Restore access' : 'Suspend access'}
+              </button>
+            </div>
           </section>
         )}
 

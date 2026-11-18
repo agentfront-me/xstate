@@ -22,6 +22,22 @@ export async function list(db: D1Database, mailboxId: string) {
 }
 
 /** The member's access to every mailbox they have a row for, keyed by mailbox id. */
+/**
+ * The users to tell when the mailbox's mail changes (live updates, phone alerts): everyone with access except
+ * members who are suspended or haven't accepted their invite.
+ */
+export async function listToNotify(db: D1Database, mailboxId: string) {
+  const { results } = await db
+    .prepare(
+      `SELECT ma.member_id, mb.user_id, ma.access FROM mailbox_access ma
+       JOIN members mb ON mb.id = ma.member_id
+       WHERE ma.mailbox_id = ? AND mb.status = 'active' AND mb.suspended_at IS NULL ORDER BY ma.created_at`,
+    )
+    .bind(mailboxId)
+    .all<{ member_id: string; user_id: string; access: AccessLevel }>()
+  return results
+}
+
 export async function forMember(db: D1Database, memberId: string): Promise<Map<string, AccessLevel>> {
   const { results } = await db
     .prepare('SELECT mailbox_id, access FROM mailbox_access WHERE member_id = ?')

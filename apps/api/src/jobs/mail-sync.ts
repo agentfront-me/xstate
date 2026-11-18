@@ -91,7 +91,7 @@ async function announceMailbox(env: Env, mailboxId: string): Promise<void> {
   try {
     const mailbox = await mailboxesDb.find(env.DB, mailboxId)
     if (!mailbox) return
-    const userIds = (await accessDb.list(env.DB, mailboxId)).map((a) => a.user_id)
+    const userIds = (await accessDb.listToNotify(env.DB, mailboxId)).map((a) => a.user_id)
     if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId }, userIds)
   } catch (err) {
     console.warn(`live: mailbox ${mailboxId} failed`, err)

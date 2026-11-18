@@ -1,7 +1,7 @@
 # Plan: managing members
 
 Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
-(see "Phase 1 as built" below). **Phase 2 built and tested locally 2026-11-18.** Phases 3–6 not started.
+(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18.** Phases 4–6 not started.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -201,6 +201,22 @@ Differences from the plan above:
   - Restore sets them back to `active`. API tokens and AI app connections stay revoked and have to be set up
     again, which is safer.
 - `members.last_seen_at`: update at most once an hour per member, in the auth middleware.
+
+#### Phase 3 as built (2026-11-18)
+
+- Migration `0042_member_suspension.sql`: `users.sessions_after` and `members.suspended_at`. A column, not a new
+  `members.status` value. Rebuilding `members` to change its CHECK would drop a table that many others reference
+  with ON DELETE CASCADE, and in SQLite that drop can delete child rows.
+- `verifyToken` reads `users.sessions_after` on every request (one D1 read) and refuses tokens issued before it.
+  It compares whole seconds, so a session issued in the same second as the cutoff still works.
+- `POST /members/:id/sign-out`, `/suspend` and `/restore`, in `members/security.ts`. Signing out also deletes the
+  user's phone registrations (`devices`).
+- Suspension doesn't revoke API tokens or connected AI apps. Every operation checks membership (`db/members.ts`
+  find skips suspended members), so they stop working while suspended and work again on restore. Live updates
+  and phone alerts skip suspended members (`mailbox-access.ts` listToNotify).
+- Sign-in is refused when every membership of the account is suspended. A temporary password and a password
+  reset also end other sessions.
+- Not built: `members.last_seen_at` and "Active 2 h ago" in the list.
 
 ### Phase 4: deleting a member
 

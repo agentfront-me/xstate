@@ -6,6 +6,7 @@ import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
 import { hashPassword, verifyPassword } from './password'
 import { loginThrottled, registerThrottled, type ThrottleEnv } from './throttle'
+import { requireNotSuspended } from '../members/security'
 import { issuePasswordChangeToken, issueToken, verifyPasswordChangeToken } from './token'
 import type { Actor, User } from './types'
 
@@ -64,6 +65,7 @@ export async function login(env: AuthEnv, input: { email: string; password: stri
   // Hash even when there's no such user, so response time doesn't reveal which emails are registered.
   const ok = await verifyPassword(input.password, user?.password_hash ?? (await dummyHash()))
   if (!user || !user.password_hash || !ok) throw new ApiError('invalid_credentials', 'Email or password is incorrect', 401)
+  await requireNotSuspended(env, user.id)
   // A temporary password an admin set: it only lets them choose their own (changePassword). An error rather than a
   // different success shape, so an app that doesn't know about this shows the message instead of signing in.
   if (user.must_change_password) {

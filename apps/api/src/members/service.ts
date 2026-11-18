@@ -47,6 +47,8 @@ export type OrgMember = {
   recoveryEmail: string | null
   /** Their own mailbox in the organization, if they have one: every address, the primary (their sign-in) first. */
   mailbox: MemberMailbox | null
+  /** When they were suspended, while they are (members/security.ts). */
+  suspendedAt: string | null
 }
 
 export type MemberMailbox = {
@@ -92,7 +94,14 @@ function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
         : null,
     recoveryEmail: you || extras?.canManage ? row.recovery_email : null,
     mailbox: extras?.mailboxes.get(row.id) ?? null,
+    suspendedAt: row.suspended_at,
   }
+}
+
+/** One member as the list shows them, for someone in the same organization. */
+export async function getMember(env: MembersEnv, actor: Actor, memberId: string): Promise<OrgMember> {
+  const { me } = await memberContext(env, actor, memberId)
+  return reload(env, actor, me, memberId)
 }
 
 /** The member as the list shows them, after a change. */

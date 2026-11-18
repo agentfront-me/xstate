@@ -332,7 +332,7 @@ export async function updateMessage(
 
 /** Tells the people who can open the mailbox that its mail changed, so the apps reload it. Never fails the caller. */
 async function announceMailChange(env: EmailEnv, mailbox: MailboxRow): Promise<void> {
-  const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
+  const userIds = (await accessDb.listToNotify(env.DB, mailbox.id)).map((a) => a.user_id)
   if (userIds.length) await announce(env, mailbox.organization_id, { type: 'mail', mailboxId: mailbox.id }, userIds)
 }
 

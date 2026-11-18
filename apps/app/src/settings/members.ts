@@ -19,6 +19,8 @@ export type OrgMember = {
   recoveryEmail: string | null
   /** Their own mailbox: every address, the primary one (their sign-in) first. */
   mailbox: MemberMailbox | null
+  /** When they were suspended, while they are. */
+  suspendedAt: string | null
 }
 
 export type MemberMailbox = {
@@ -104,6 +106,13 @@ export async function setTemporaryPassword(client: QueryClient, orgId: string, m
 /** Emails the member a link to choose a new password. `to` is where it went. */
 export async function sendPasswordReset(memberId: string) {
   return (await api<{ email: Delivery & { to: string } }>('POST', `/members/${memberId}/password-reset`)).email
+}
+
+/** Sign out everywhere, suspend or restore: the member comes back as they now are. */
+export async function memberAction(client: QueryClient, orgId: string, memberId: string, action: 'sign-out' | 'suspend' | 'restore') {
+  const { member } = await api<{ member: OrgMember }>('POST', `/members/${memberId}/${action}`)
+  put(client, orgId, member)
+  return member
 }
 
 export async function resendInvite(client: QueryClient, orgId: string, memberId: string) {

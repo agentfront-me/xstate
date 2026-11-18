@@ -19,7 +19,7 @@ export async function notifyNewMail(env: Env, mailboxId: string): Promise<{ noti
   const none = { notified: 0 }
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
   if (!mailbox || mailbox.kind === 'agent') return none
-  const userIds = (await accessDb.list(env.DB, mailboxId)).map((a) => a.user_id)
+  const userIds = (await accessDb.listToNotify(env.DB, mailboxId)).map((a) => a.user_id)
   // Nobody with the app and the switch on: nothing to ask Stalwart for. The saved state is cleared, so the first
   // sync after someone installs the app starts from then, not from mail that arrived before.
   const key = `mail:${mailboxId}`
@@ -101,7 +101,7 @@ export async function notifyDelivered(
   if (mailbox.kind === 'agent' || message.folder !== 'inbox') return { notified: 0 }
   const own = [mailbox.address, ...(JSON.parse(mailbox.aliases || '[]') as string[])].map((a) => a.toLowerCase())
   if (own.includes(message.from?.email.toLowerCase() ?? '')) return { notified: 0 }
-  const userIds = (await accessDb.list(env.DB, mailbox.id)).map((a) => a.user_id)
+  const userIds = (await accessDb.listToNotify(env.DB, mailbox.id)).map((a) => a.user_id)
   if (!(await devices.forUsers(env.DB, userIds, 'email', mailbox.domain_id)).length) return { notified: 0 }
   const subject = message.subject.trim() || '(no subject)'
   const query = new URLSearchParams({ mailboxId: mailbox.id, threadId: message.threadId, id: message.id, subject })

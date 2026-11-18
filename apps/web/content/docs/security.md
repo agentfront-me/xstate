@@ -17,7 +17,9 @@ change how something works. Recent changes are listed [at the end](#changes).
 - **Sign-in attempts are limited** to 5 a minute for each email address and 10 a minute from each network, so
   passwords can't be guessed at speed. Sign-ups are limited to 5 a minute from each network. Going over pauses
   attempts for the rest of the minute; accounts are never locked.
-- **Sessions** are signed tokens that expire after 7 days. In the mobile app they're kept in the device keychain.
+- **Sessions** are signed tokens that expire after 7 days. Every request also checks that the account hasn't been
+  signed out since the token was issued, so "Sign out everywhere", a suspension, a new temporary password and a
+  password reset end existing sessions at once. In the mobile app they're kept in the device keychain.
   On the web the token stays on go.xstate.com and is never put in a cookie. xstate.com only sees a `signed_in`
   cookie that says you're signed in, so it can show "Open app"; it holds no token and grants no access.
 - **Invitations** use a long random link. We store only a hash of it, and it expires after 14 days. Sending a new
@@ -208,6 +210,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Sessions can be ended: admins can sign a member out everywhere or suspend them, and a
+  password reset signs out other sessions. A suspended member can't reach the organization through the app, API
+  tokens or connected AI apps, and their phones stop getting alerts.
 - **November 18, 2026:** Admins can give a member a new temporary password or email them a link to choose a new
   one.
 - **November 18, 2026:** Members can be added with their own mailbox and sign in with its address. Admins can
