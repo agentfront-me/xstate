@@ -42,9 +42,8 @@ change how something works. Recent changes are listed [at the end](#changes).
   Links open in a new window.
 - **Proving mail is yours.** When you add a domain, xstate asks you to publish SPF and DKIM records, and
   recommends DMARC. Mail you send leaves through Amazon SES, signed with your domain's own DKIM key.
-- **Receiving through Amazon SES.** For domains moved to xstate's new mail path (being tried on one test domain
-  now), incoming mail is received by Amazon SES, which checks it for viruses and spam, saves it briefly in a
-  private Amazon S3 bucket that only SES can write to, and notifies xstate. xstate copies it into your
+- **Receiving through Amazon SES.** Incoming mail is received by Amazon SES, which checks it for viruses and
+  spam, saves it briefly in a private Amazon S3 bucket that only SES can write to, and notifies xstate. xstate copies it into your
   organization's own storage within seconds and deletes it from S3; anything left there is deleted after 7 days.
   A message SES finds a virus in is never delivered. Mail for addresses that don't exist is dropped, not bounced,
   so forged senders get no reply.
@@ -104,18 +103,9 @@ file yourself, the message isn't sent and xstate tells you why.
 **Downloads.** Attachments and files always download as files and are never opened inside xstate's web pages.
 Browsers are told not to guess their type, and download links expire after 5 minutes.
 
-**Virus scanning.** On top of these rules, xstate scans for viruses with ClamAV, whose signatures update several
-times a day:
-
-- **Mail you receive** is scanned before it's accepted. A message with a virus, or with a blocked file type, is
-  refused during delivery, so the sender's own mail server tells them why, and nothing is stored. Mail apps
-  connected over IMAP don't receive it either. On xstate's new mail path, Amazon SES scans incoming mail too, and an
-  attachment found infected is blocked and its message moved to Junk.
-- **Files you upload**, in the composer and in Storage, are scanned as they arrive, and a file with a virus is
-  refused. If the scanner can't be reached, uploads are refused until it's back rather than stored unchecked.
-
-Mail and files that were already in xstate before scanning started, and mail imported from Google Workspace (which
-Google has scanned already), aren't rescanned. The file-type rules still apply to them.
+**Virus scanning.** Mail you receive is scanned by Amazon SES as it arrives, and a message SES finds a virus in is
+never delivered. Files you upload, in the composer and in Storage, aren't virus-scanned; the file-type rules above
+still apply to them.
 
 ## Files and sharing
 
@@ -211,6 +201,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** xstate's old mail server and its ClamAV scanner were shut down. Received mail is
+  virus-scanned by Amazon SES; uploads are no longer virus-scanned (the file-type rules still apply).
 - **November 18, 2026:** Virus scanning is enforced: incoming mail with a virus is refused during delivery,
   and infected uploads are refused.
 - **November 18, 2026:** MTA-STS in enforce mode for domains on the new mail path, starting with xstate.com:

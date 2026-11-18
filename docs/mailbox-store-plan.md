@@ -2192,6 +2192,12 @@ that is only you; for customers it is announced, and `security.md` and the domai
     route deployed (2847797), `_mta-sts id=20261118T1` added. Tests, all delivered to the store: Gmail, asif@xstate.com
     (store), mohammad@asif.pk (Stalwart, relayed) to the `hello@` alias, and a reply that joined the old "Testing"
     thread (`co`, now 7 messages). Phase 5 note: hireninja.com's root A record points at deepo (3.130.37.150).
+1d. **asif.pk: switched 2026-11-18.** Start 12:19, MX to SES 12:20, flip 12:26 UTC (fired without waiting, then
+    polled; finished in about 1.5 minutes). Own step: 27,767 messages; calendars: 3 calendars, 74 events. Its two
+    SPF records were merged into `v=spf1 include:amazonses.com include:_spf.google.com ~all`; DMARC (p=none) left
+    as it was; no old mail-app records. MTA-STS route deployed (8d0e6f7), `_mta-sts id=20261118T1` added. Tests, all
+    delivered: asif@xstate.com to mohammad@, to the `connect@` alias, and Gmail. Only xstate.io is left on
+    Stalwart.
 2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
    xstate.com has had a quiet week.
 3. **asif.pk and upfold.me:** copy, then move.
