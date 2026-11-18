@@ -1,12 +1,12 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import { applyPatch, changesSchedule, expand, occurrenceId, parseOccurrenceId, timeColumns, toRrule } from './calendar-expand.ts'
 
 const ms = (iso: string) => Date.parse(iso)
-const base = (over: Partial<JmapEvent>): JmapEvent => ({ id: 'E1', calendarIds: { c1: true }, title: 'Standup', start: '2026-03-02T09:00:00', duration: 'PT30M', timeZone: 'America/New_York', ...over })
-const starts = (list: JmapEvent[]) => list.map((e) => e.utcStart)
+const base = (over: Partial<StoredEvent>): StoredEvent => ({ id: 'E1', calendarIds: { c1: true }, title: 'Standup', start: '2026-03-02T09:00:00', duration: 'PT30M', timeZone: 'America/New_York', ...over })
+const starts = (list: StoredEvent[]) => list.map((e) => e.utcStart)
 
 describe('expand', () => {
   it('keeps the local time across a daylight-saving change', () => {

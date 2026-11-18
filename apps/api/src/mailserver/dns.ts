@@ -54,40 +54,8 @@ export async function lookupDomain(name: string): Promise<{ registered: boolean;
 }
 
 /**
- * Picks the records mail depends on out of Stalwart's zone file: MX, SPF, DKIM and DMARC. The rest (SRV,
- * MTA-STS, autoconfig, CAA) help mail apps and hardening but aren't needed to send and receive.
- *
- * Outbound mail goes through Amazon SES, which signs it, so when the domain is registered with SES its three
- * Easy DKIM CNAMEs (`sesDkim`) replace Stalwart's own DKIM keys (Stalwart no longer signs).
- */
-export function essentialRecords(
-  zoneFile: string,
-  domain: string,
-  sesDkim: Omit<DnsRecord, 'found'>[] = [],
-): Omit<DnsRecord, 'found'>[] {
-  const records: Omit<DnsRecord, 'found'>[] = []
-  for (const { owner, type, value } of parseZone(zoneFile)) {
-    const name = owner === domain ? '@' : owner.endsWith(`.${domain}`) ? owner.slice(0, -domain.length - 1) : owner
-    if (type === 'MX' && name === '@') records.push({ type, name, value, purpose: 'Mail', required: true })
-    else if (type === 'TXT' && name === '@' && value.startsWith('v=spf1')) {
-      records.push({ type, name, value, purpose: 'SPF', required: true })
-    } else if (type === 'TXT' && name.endsWith('._domainkey')) {
-      if (!sesDkim.length) records.push({ type, name, value, purpose: 'DKIM', required: true })
-    } else if (type === 'TXT' && name === '_dmarc') records.push({ type, name, value, purpose: 'DMARC', required: false })
-  }
-  // SES's DKIM keys go where Stalwart's were: after SPF, before DMARC.
-  if (sesDkim.length) {
-    const at = records.findIndex((r) => r.purpose === 'DMARC')
-    records.splice(at === -1 ? records.length : at, 0, ...sesDkim)
-  }
-  return records
-}
-
-/**
- * The records for a domain whose mail the mailbox store holds, or is moving to it (docs/mailbox-store-plan.md,
- * phase 4a): SES receives (MX) and sends (SPF, SES's DKIM keys). Nothing points at Stalwart, so its IMAP/CalDAV SRV,
- * autoconfig and MTA-STS records are left out. DMARC is recommended, not required; any policy the owner already has
- * counts.
+ * A domain's mail records (docs/mailbox-store-plan.md, phase 4a): SES receives (MX) and sends (SPF, SES's DKIM keys).
+ * DMARC is recommended, not required; any policy the owner already has counts.
  */
 export function storeRecords(region: string, sesDkim: Omit<DnsRecord, 'found'>[]): Omit<DnsRecord, 'found'>[] {
   return [
@@ -190,23 +158,6 @@ async function resolve(name: string, type: RecordType): Promise<string[] | null>
 }
 
 /** Reads `owner IN TYPE value` lines, including TXT values split over several quoted strings in parentheses. */
-function parseZone(zoneFile: string): { owner: string; type: string; value: string }[] {
-  const entries: { owner: string; type: string; value: string }[] = []
-  const flat = zoneFile.replace(/\(([^)]*)\)/g, (_, inner: string) => inner.replace(/\s*\n\s*/g, ' '))
-  for (const line of flat.split('\n')) {
-    const match = line.trim().match(/^(\S+)\s+IN\s+(\S+)\s+(.+)$/i)
-    if (!match) continue
-    const [, owner, type, data] = match as unknown as [string, string, string, string]
-    const upper = type.toUpperCase()
-    entries.push({
-      owner: owner.toLowerCase().replace(/\.$/, ''),
-      type: upper,
-      value: upper === 'TXT' ? joinTxt(data) : data.trim().replace(/\.$/, ''),
-    })
-  }
-  return entries
-}
-
 /** `"v=DKIM1; p=abc" "def"` → `v=DKIM1; p=abcdef`. Unquoted data is returned as is. */
 function joinTxt(data: string): string {
   const parts = [...data.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!.replace(/\\(.)/g, '$1'))

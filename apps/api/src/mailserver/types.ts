@@ -11,15 +11,11 @@ export type EmailEnv = Pick<
   Env,
   | 'DB'
   | 'ENVIRONMENT'
-  | 'STALWART_URL'
-  | 'STALWART_API_KEY'
   | 'AWS_SES_ACCESS_KEY_ID'
   | 'AWS_SES_SECRET_ACCESS_KEY'
   | 'AWS_SES_REGION'
   | 'SES_SNS_TOPIC_ARNS'
   | 'SES_MODE'
-  | 'SCAN_MODE'
-  | 'SCAN_URL'
   | 'MAILBOX_STORE'
   // Live updates to the apps when mail changes in a mailbox the store holds (mailbox/store.ts).
   | 'LIVE'
@@ -33,7 +29,6 @@ export type EmailEnv = Pick<
   | 'R2_BUCKET'
   | 'APP_ORIGINS'
 > & {
-  SCAN_SECRET?: string
   // Sending from mailboxes the store holds, straight through SES (mailbox/ses-send.ts): IAM user xstate-mail-send.
   MAIL_SEND_ACCESS_KEY_ID?: string
   MAIL_SEND_SECRET_ACCESS_KEY?: string
@@ -50,7 +45,7 @@ export type Domain = {
   /** Sending to outside addresses: Amazon SES has verified the domain. null when it isn't registered with SES. */
   sending: 'pending' | 'verified' | 'failed' | null
   enabled: boolean
-  /** Where its mail lives: Stalwart, moving to the mailbox store (MX on its way to SES), or the store. */
+  /** Always 'store' now; the other values are from the move off Stalwart. */
   mailPath: 'stalwart' | 'switching' | 'store'
   verifiedAt: string | null
   createdAt: string

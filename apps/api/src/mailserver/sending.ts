@@ -69,8 +69,7 @@ export async function reserveSend(
 
 /**
  * Reserves invitation emails (invites, updates, cancellations, answers: one per recipient, internal ones included)
- * against CALENDAR_LIMITS before a calendar change, or throws 429 invite_limit_reached. Stalwart would otherwise drop
- * them past its throttles without the API knowing. Call release() if the change then fails.
+ * against CALENDAR_LIMITS before a calendar change, or throws 429 invite_limit_reached. Call release() if the change then fails.
  */
 export async function reserveCalendarSends(
   env: EmailEnv,

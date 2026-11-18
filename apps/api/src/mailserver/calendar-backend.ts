@@ -3,19 +3,19 @@
 
 import type { MailboxRow } from '../db/mailboxes'
 import { storeCalendars } from '../mailbox/calendar-store'
-import type { JmapCalendar, JmapEvent, JmapRecurrenceRule } from './stalwart/calendar'
+import type { StoredCalendar, StoredEvent, StoredRecurrenceRule } from './calendar-types'
 import type { EmailEnv } from './types'
 
 export type CalendarBackend = {
   kind: 'store'
-  getCalendars(): Promise<JmapCalendar[]>
+  getCalendars(): Promise<StoredCalendar[]>
   /** The calendars, set up the first time: "Work" (the default) and "Personal". */
-  setUp(): Promise<JmapCalendar[]>
+  setUp(): Promise<StoredCalendar[]>
   /** Events overlapping [after, before) (UTC), series expanded into occurrences, sorted by start. */
-  queryEvents(range: { after: string; before: string; calendarId?: string }): Promise<JmapEvent[]>
-  getRecurrenceRules(ids: string[]): Promise<Map<string, JmapRecurrenceRule | null>>
+  queryEvents(range: { after: string; before: string; calendarId?: string }): Promise<StoredEvent[]>
+  getRecurrenceRules(ids: string[]): Promise<Map<string, StoredRecurrenceRule | null>>
   findByUid(uid: string): Promise<string | null>
-  getEvent(id: string): Promise<JmapEvent | null>
+  getEvent(id: string): Promise<StoredEvent | null>
   /** With `notify`, guests are emailed through SES (mailbox/scheduling.ts). */
   createEvent(event: Record<string, unknown>, notify: boolean): Promise<string>
   updateEvent(id: string, patch: Record<string, unknown>, notify: boolean): Promise<void>

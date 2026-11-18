@@ -1,13 +1,13 @@
-// A Google Calendar event as a JSCalendar event for the mailbox's calendar (Stalwart, or the store). Pure (tested in calendar-rules.test.ts); the copy job
+// A Google Calendar event as a JSCalendar event for the mailbox's calendar. Pure (tested in calendar-rules.test.ts); the copy job
 // is ./calendar.ts. Times stay in the event's own zone, repeat rules are translated from Google's RRULE lines, and
 // the person's own Google address becomes their xstate address on the guest list.
 
 import { toDuration, withSeconds } from '../mailserver/calendar-events.ts'
 import type { GAttendee, GEvent, GEventTime } from './google/workspace'
 
-/** Stalwart stores at most this many participants per event, the organizer included. */
+/** The participant limit for events made in xstate (mailserver/calendar.ts MAX_GUESTS + 1). */
 export const MAX_PARTICIPANTS = 20
-/** For a mailbox whose calendars the store holds (no Stalwart limit): imported events email nobody. */
+/** For imported events, which email nobody: a higher limit. */
 export const MAX_PARTICIPANTS_STORE = 100
 
 export type ConvertContext = {
@@ -16,7 +16,7 @@ export type ConvertContext = {
   /** The person's Google address(es) and their xstate address: their own entries become the latter. */
   googleAddresses: string[]
   address: string
-  /** Most participants kept per event, the organizer included; MAX_PARTICIPANTS when left out (Stalwart). */
+  /** Most participants kept per event, the organizer included; MAX_PARTICIPANTS when left out. */
   maxParticipants?: number
 }
 

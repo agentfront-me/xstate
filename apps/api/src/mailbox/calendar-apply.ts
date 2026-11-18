@@ -7,7 +7,7 @@
 import type { MailboxRow } from '../db/mailboxes'
 import * as orgsDb from '../db/organizations'
 import { mailto } from '../mailserver/calendar-events'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import type { EmailEnv } from '../mailserver/types'
 import { decide, timeMoved, type Decision } from './calendar-in'
 import { ownAddresses, storeCalendars } from './calendar-store'
@@ -55,7 +55,7 @@ export async function applyCalendarMail(env: Env, mailbox: MailboxRow, row: Stor
       const overrides = { ...(series.recurrenceOverrides ?? {}) }
       for (const occurrence of decision.occurrences) {
         const current = (overrides[occurrence] ?? {}) as Record<string, unknown>
-        const people = structuredClone((current.participants as JmapEvent['participants']) ?? series.participants ?? {})
+        const people = structuredClone((current.participants as StoredEvent['participants']) ?? series.participants ?? {})
         if (people[key]) people[key] = { ...people[key], participationStatus: decision.status }
         overrides[occurrence] = { ...current, participants: people }
       }
@@ -114,7 +114,7 @@ export async function applyCalendarMail(env: Env, mailbox: MailboxRow, row: Stor
  * The participants from the organizer's update, with this mailbox's own answer carried over, unless the time moved:
  * then it is back to "needs action", as Google does.
  */
-function keepOwnAnswer(before: JmapEvent, after: JmapEvent, own: string[], moved: boolean): JmapEvent['participants'] {
+function keepOwnAnswer(before: StoredEvent, after: StoredEvent, own: string[], moved: boolean): StoredEvent['participants'] {
   const people = structuredClone(after.participants ?? {})
   if (moved) return people
   const mine = Object.values(before.participants ?? {}).find((p) => own.includes(mailto(p.calendarAddress) ?? ''))

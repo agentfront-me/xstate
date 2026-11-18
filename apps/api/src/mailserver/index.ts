@@ -1,11 +1,9 @@
 // Mail server operations for the /email API.
 //
-// Every function takes the acting user, checks their access in D1, changes Stalwart (the source of truth for
-// mail), then mirrors the change in D1. If the D1 write fails after Stalwart changed, the Stalwart change is
-// undone so the two don't drift. Import from here, not from the files inside this folder.
+// Every function takes the acting user and checks their access in D1 before acting. Mail itself is in each
+// mailbox's store (../mailbox/). Import from here, not from the files inside this folder.
 //
-// Layers: the files here are services that orchestrate; stalwart/ holds every JMAP call and payload shape;
-// ../db/ holds the SQL, with write helpers returning prepared statements so a service can batch them atomically.
+// Layers: the files here are services that orchestrate; ../db/ holds the SQL, with write helpers returning prepared statements so a service can batch them atomically.
 
 export { addAlias, removeAlias } from './aliases'
 export {

@@ -5,7 +5,7 @@
 
 import ICAL from 'ical.js'
 import { addDays, addMinutes, durationMinutes, mailto, withSeconds, zoneOffsetMinutes, zonedToUtc } from '../mailserver/calendar-events.ts'
-import type { JmapEvent, JmapParticipant } from '../mailserver/stalwart/calendar'
+import type { StoredEvent, StoredParticipant } from '../mailserver/calendar-types'
 import { cancelledOccurrence, occurrenceOf, timeColumns, toRrule } from './calendar-expand.ts'
 
 export type ItipMethod = 'REQUEST' | 'CANCEL' | 'REPLY'
@@ -19,7 +19,7 @@ const YEAR_MS = 366 * 86_400_000
 export type BuildOptions = {
   method: ItipMethod
   /** The series (or single event) as stored, with its overrides. */
-  event: JmapEvent
+  event: StoredEvent
   /** REPLY: the replying mailbox's own address; only its attendee line is sent. */
   replyFrom?: string
   /** CANCEL of one occurrence: its original local start (a recurrence id). */
@@ -74,7 +74,7 @@ export function buildIcs(o: BuildOptions): string {
   return new ICAL.Component(calendar as unknown as unknown[]).toString().replace(/\r?\n/g, '\r\n') + '\r\n'
 }
 
-function vevent(e: JmapEvent, o: BuildOptions, stamp: string, zone: string | null, extra: { recurrenceId?: string; status?: string }): JCalComp {
+function vevent(e: StoredEvent, o: BuildOptions, stamp: string, zone: string | null, extra: { recurrenceId?: string; status?: string }): JCalComp {
   const allDay = !!e.showWithoutTime
   const props: JCalProp[] = [
     ['uid', {}, 'text', e.uid ?? e.id],
@@ -103,7 +103,7 @@ function vevent(e: JmapEvent, o: BuildOptions, stamp: string, zone: string | nul
   return ['vevent', props, []]
 }
 
-function attendee(p: JmapParticipant, method: ItipMethod): JCalProp {
+function attendee(p: StoredParticipant, method: ItipMethod): JCalProp {
   const params: Record<string, string> = {}
   if (p.name) params.cn = p.name
   params.role = p.roles?.owner ? 'CHAIR' : p.roles?.optional ? 'OPT-PARTICIPANT' : 'REQ-PARTICIPANT'
@@ -122,7 +122,7 @@ function timeProp(name: string, local: string, zone: string | null, allDay: bool
 }
 
 /** The RRULE as jCal: the 3a converter's rule, with UNTIL in UTC for a zoned series (RFC 5545 requires it). */
-function recurValue(e: JmapEvent, zone: string | null): unknown {
+function recurValue(e: StoredEvent, zone: string | null): unknown {
   const rule = toRrule(e.recurrenceRule)
   if (!rule) return null
   const fixed = rule.replace(/UNTIL=(\d{8})T(\d{6})/, (_, d: string, t: string) => {
@@ -142,7 +142,7 @@ function utcStamp(d: Date): string {
 // VTIMEZONE
 
 /** The span of time the zone block has to cover: from a year before the event to a year after it ends (5 for open series). */
-function zoneSpan(e: JmapEvent): [number, number] {
+function zoneSpan(e: StoredEvent): [number, number] {
   const time = timeColumns(e)
   const start = Date.parse(time.startUtc)
   const end = time.endUtc ? Date.parse(time.endUtc) : Math.max(start, Date.now()) + 4 * YEAR_MS

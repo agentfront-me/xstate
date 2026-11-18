@@ -1,5 +1,5 @@
 // Builds the MIME message a store-held mailbox sends or keeps as a draft (docs/mailbox-store-plan.md, phase 2 step
-// 3), as Stalwart builds it from a JMAP email for the others. Written here rather than taken from a library so its
+// 3). Written here rather than taken from a library so its
 // output is ours to test: mime.test-style tests read every message back with our own parser. Pure: no runtime
 // imports, so `pnpm test` runs it directly under Node.
 //

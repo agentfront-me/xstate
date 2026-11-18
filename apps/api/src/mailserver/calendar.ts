@@ -27,23 +27,23 @@ import { storeBlob } from '../mailbox/read'
 import { EmailError, forbidden, notFound as missing } from './errors'
 import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
 import { calendarsOf, type CalendarBackend } from './calendar-backend'
-import type { JmapEvent, ParsedInvite } from './stalwart/calendar'
+import type { StoredEvent, ParsedInvite } from './calendar-types'
 import type { Actor, EmailEnv } from './types'
 
 export type Calendar = { id: string; name: string; isDefault: boolean; color: string | null }
 export type { CalendarEvent, EventInput, Guest, GuestStatus, Repeat } from './calendar-events'
 
-/** Most guests one event can have: Stalwart stores at most 20 participants per event, the organizer included. */
+/** Most guests one event can have (20 participants with the organizer), the limit since calendars began. */
 export const MAX_GUESTS = 19
-/** Widest range one list call may cover: Stalwart expands repeats over at most 52 weeks and a day. */
+/** Widest range one list call may cover, so expanding repeats stays cheap. */
 const MAX_RANGE_DAYS = 365
 
 // ---------------------------------------------------------------------------------------------------------------
 // Calendars
 
 /**
- * The mailbox's calendars, default first. The first time its owner looks, Stalwart's automatic calendar is renamed
- * "Work" and a "Personal" one is added.
+ * The mailbox's calendars, default first. The first time its owner looks, "Work" and "Personal" calendars
+ * are set up.
  */
 export async function listCalendars(env: EmailEnv, actor: Actor, mailboxId: string): Promise<Calendar[]> {
   const { cal, write } = await context(env, actor, mailboxId, 'read')
@@ -140,7 +140,7 @@ export async function updateEvent(
     }
     const time = readable(() => timeFields(input))
     const key = localKey(input.occurrence)
-    // Overrides are written as a whole map: a patch path into a map that doesn't exist yet fails on Stalwart.
+    // Overrides are written as a whole map.
     const overrides = { ...(current.recurrenceOverrides ?? {}) }
     const change: Record<string, unknown> = {
       title: input.title,
@@ -229,8 +229,7 @@ export async function respondToEvent(
 
 // ---------------------------------------------------------------------------------------------------------------
 // Invites in email. An invitation email carries a text/calendar part with an iTIP method: request (an invite or
-// an update), reply (a guest's answer) or cancel. Stalwart files invites from other xstate mailboxes straight into
-// the calendar; ones from outside arrive as mail only, so these let the email view add, update, answer or remove.
+// an update), reply (a guest's answer) or cancel. These let the email view add, update, answer or remove.
 
 export type InviteMethod = 'request' | 'reply' | 'cancel' | 'other'
 export type Invite = {
@@ -345,10 +344,10 @@ function inviteMethod(method: string | null | undefined): InviteMethod {
 }
 
 /**
- * The event fields to store from a parsed invite. organizerCalendarAddress must be set: without it Stalwart takes
- * the mailbox for the organizer and would email the real organizer a new invitation instead of an answer.
+ * The event fields to store from a parsed invite. organizerCalendarAddress must be set: without it the mailbox
+ * counts as the organizer and would email the real organizer a new invitation instead of an answer.
  */
-function inviteFields(parsed: JmapEvent, organizer: string): Record<string, unknown> {
+function inviteFields(parsed: StoredEvent, organizer: string): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     '@type': 'Event',
     uid: parsed.uid,

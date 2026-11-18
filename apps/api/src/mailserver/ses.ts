@@ -1,10 +1,9 @@
-// Amazon SES, for outbound mail. Stalwart relays every message for a non-local domain to SES (docs/stalwart-api.md
-// §8). SES only sends for verified identities and signs with each domain's own DKIM key, so every customer domain
+// Amazon SES domain identities, for sending and receiving mail. SES only sends for verified identities and signs with each domain's own DKIM key, so every customer domain
 // is registered here: Easy DKIM (three CNAMEs the customer publishes) plus bounce, complaint and delivery notifications
 // to our SNS topic (POST /webhooks/ses).
 //
 // Credentials: AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY, an IAM user allowed to manage identities only
-// (not send). Without them, registration is skipped and domains fall back to Stalwart's DKIM record.
+// (not send). Without them, registration is skipped.
 //
 // SES_MODE picks what happens: "live" calls SES; "fake" (local dev) never calls AWS, hands out made-up DKIM tokens
 // and reports the domain verified from the next check on; "off" skips SES as if it weren't configured.

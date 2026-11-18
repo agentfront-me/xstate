@@ -1,8 +1,7 @@
 // MTA-STS (RFC 8461) for domains whose mail the store holds: senders that support it (Gmail among them) fetch
 // https://mta-sts.<domain>/.well-known/mta-sts.txt and then deliver only over verified TLS to the MX hosts it lists,
 // here Amazon SES receiving. Served by this Worker on a custom-domain route per domain (wrangler.jsonc), with a
-// `_mta-sts` TXT record whose id changes whenever the policy does. Domains still on Stalwart, or in the middle of a
-// switch (their MX may still be Stalwart), get no policy. No imports, so `pnpm test` runs it under Node.
+// `_mta-sts` TXT record whose id changes whenever the policy does. No imports, so `pnpm test` runs it under Node.
 
 const PATH = '/.well-known/mta-sts.txt'
 const HOST_PREFIX = 'mta-sts.'

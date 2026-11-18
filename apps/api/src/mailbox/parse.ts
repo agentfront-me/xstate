@@ -1,4 +1,4 @@
-// Reads a raw message the way the mailbox store will once mail arrives without Stalwart: where its parts are
+// Reads a raw message for the mailbox store: where its parts are
 // (./mime.ts) and, through postal-mime, its headers and text. The parser is given the message with the files cut
 // out, so memory stays near the size of the text (a 35 MB message otherwise needs about 126 MB; see the spike
 // findings in docs/mailbox-store-plan.md).

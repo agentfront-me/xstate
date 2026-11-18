@@ -48,18 +48,6 @@ export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM addresses WHERE id = ?').bind(id)
 }
 
-/** A mailbox's aliases with the Stalwart id of each alias's domain, oldest first. */
-export async function listAliases(db: D1Database, mailboxId: string) {
-  const { results } = await db
-    .prepare(
-      `SELECT a.id, a.local_part, d.stalwart_id AS domain_stalwart_id FROM addresses a JOIN domains d ON d.id = a.domain_id
-       WHERE a.mailbox_id = ? AND a.is_primary = 0 ORDER BY a.created_at`,
-    )
-    .bind(mailboxId)
-    .all<{ id: string; local_part: string; domain_stalwart_id: string }>()
-  return results
-}
-
 /** The mailbox and organization an address delivers to, or null if it isn't an xstate address. */
 export function findByAddress(db: D1Database, address: string) {
   return db

@@ -1,7 +1,7 @@
 // Sending, drafts and attachment uploads for mailboxes whose mail the store holds (docs/mailbox-store-plan.md,
 // phase 2 step 3). mailserver/messages.ts makes the checks every message passes (checkOutgoing, reserveSend) and
 // hands store-held mailboxes here: the message is built (./compose.ts), sent through SES (./ses-send.ts), and its
-// Sent copy, or the draft, kept in R2 and the mailbox's store. Nothing goes through Stalwart.
+// Sent copy, or the draft, kept in R2 and the mailbox's store.
 
 import type { MailboxRow } from '../db/mailboxes'
 import { announce } from '../live/announce'
@@ -34,7 +34,7 @@ export type Checked = { recipients: { name?: string | null; email: string }[]; f
 const uploadKey = (mailboxId: string, id: string) => `${mailboxId}/uploads/${id}`
 export const parseUploadId = (blobId: string) => /^upload\.([0-9A-HJKMNP-TV-Z]{26})$/.exec(blobId)?.[1] ?? null
 
-/** Keeps an uploaded attachment (already checked and scanned) until it is sent; returns its id. */
+/** Keeps an uploaded attachment (already checked) until it is sent; returns its id. */
 export async function uploadToStore(env: OutboundEnv, mailbox: MailboxRow, bytes: Uint8Array, contentType: string): Promise<string> {
   const id = ulid()
   const bucket = await organizationBucket(env, mailbox.organization_id)
@@ -158,9 +158,8 @@ async function prepare(env: OutboundEnv, mailbox: MailboxRow, input: SendInput, 
     const raw = res ? new Uint8Array(await res.arrayBuffer()) : null
     for (const part of raw ? original.attachments : []) {
       if (chosen.has(storeBlobId(original.id, part.start))) continue
-      // A virus never travels on; a file still being checked holds the forward until it has been (./scan-state.ts).
+      // A virus never travels on (./scan-state.ts).
       if (part.scan === 'infected') continue
-      if (part.scan === 'scanning') throw new EmailError('attachment_scanning', 'An attachment of this message is still being checked for viruses. Try again in a moment.', 409)
       const bytes = decodePart(raw!.subarray(part.start, part.start + part.length), part.encoding as PartEncoding)
       const name = part.name ?? 'attachment'
       if ((await safetyOf(bytes, name)).level === 'blocked') continue

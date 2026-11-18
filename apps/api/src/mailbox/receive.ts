@@ -1,4 +1,4 @@
-// Receiving mail without Stalwart (docs/mailbox-store-plan.md, phase 2 step 1). SES saves each message to S3 and
+// Receiving mail (docs/mailbox-store-plan.md, phase 2 step 1). SES saves each message to S3 and
 // tells /webhooks/ses-inbound (jobs/ses-inbound.ts), which queues an InboundJob on MAIL_IN. This consumer finds the
 // recipient mailboxes, keeps the raw message in the organization's bucket, delivers it into each mailbox's store,
 // tells the apps, and deletes it from S3. Every step is safe to repeat: a retried job finds what was delivered by
@@ -190,8 +190,8 @@ function deliveryOf(
  * Stores a message copied in from another provider (the Google Workspace import, docs/mailbox-store-plan.md phase
  * 4f) in a store-held mailbox: its raw copy in R2, then the store with the folders, read and starred state and
  * received time it had there. `sourceKey` (e.g. the Gmail id) makes a repeat a duplicate. No spam decision, no
- * pushes; the new-mail event files its attachments and indexes it but doesn't offer it to agents, apply calendar
- * rules or scan it (mail copied from Stalwart isn't scanned either).
+ * pushes; the new-mail event files its attachments and indexes it but doesn't offer it to agents or apply calendar
+ * rules.
  */
 export async function deliverMigrated(
   env: ReceiveEnv,
@@ -219,7 +219,7 @@ export async function deliverMigrated(
     await deleteObject(env, bucket, key).catch((err) => console.error(`migration: deleting spare copy ${key} failed`, err))
     return { id: stored.id, duplicate: true }
   }
-  await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: meta.role === 'sent' ? 'out' : 'in', offer: false, scan: false })
+  await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: meta.role === 'sent' ? 'out' : 'in', offer: false })
   return { id, duplicate: false }
 }
 
@@ -278,7 +278,6 @@ async function deliverTo(
         size: raw.length,
         verdicts: job.verdicts,
         spam: { score: spam.score, reasons: spam.reasons },
-        ...(job.sweptFromStalwart && { sweptFromStalwart: job.sweptFromStalwart }),
       },
     },
   ])

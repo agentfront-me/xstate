@@ -1,7 +1,7 @@
 // Emptying Trash, and old unsent attachment uploads, in mailboxes whose mail the store holds
 // (docs/mailbox-store-plan.md, phase 2 steps 2 and 3): a message that has been in Trash for TRASH_DAYS is deleted for
 // good, its store rows and its raw copy in R2, and an upload never sent is deleted after UPLOAD_HOURS. Runs from the
-// hourly cron (jobs/mail-sync.ts); each run takes at most a few hundred messages per mailbox, so a large Trash
+// hourly cron (jobs/hourly.ts); each run takes at most a few hundred messages per mailbox, so a large Trash
 // empties over several hours. Delivery-log lines (./delivery-log.ts) older than DELIVERY_LOG_DAYS go in the same pass.
 
 import * as mailboxesDb from '../db/mailboxes'

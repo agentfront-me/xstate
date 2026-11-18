@@ -1,12 +1,12 @@
 // Repeating events and the time columns for events kept in a mailbox's store (docs/mailbox-store-plan.md, phase 3a).
-// Events are JSCalendar, as Stalwart keeps them and ../mailserver/calendar-events.ts reads them: a series is stored
+// Events are JSCalendar, as ../mailserver/calendar-events.ts reads them: a series is stored
 // once and expanded here into the occurrences a range needs, with its per-occurrence changes applied. Occurrences are
 // counted in local (wall-clock) time with ical.js, then each is placed in UTC with its time zone, so daylight saving
 // moves them the way the people in that zone expect. Pure: no runtime imports, so `pnpm test` runs it under Node.
 
 import ICAL from 'ical.js'
 import { addMinutes, durationMinutes, withSeconds, zonedToUtc } from '../mailserver/calendar-events.ts'
-import type { JmapEvent, JmapRecurrenceRule } from '../mailserver/stalwart/calendar'
+import type { StoredEvent, StoredRecurrenceRule } from '../mailserver/calendar-types'
 
 /** A series is never expanded past this many occurrences in one go (a daily event from 1990 still fits). */
 const MAX_STEPS = 20_000
@@ -24,7 +24,7 @@ export function parseOccurrenceId(id: string): { seriesId: string; recurrenceId:
 }
 
 /** A JSCalendar repeat rule as an iCalendar RRULE value (without "RRULE:"). Null when it has no frequency. */
-export function toRrule(rule: JmapRecurrenceRule | Record<string, unknown> | null | undefined): string | null {
+export function toRrule(rule: StoredRecurrenceRule | Record<string, unknown> | null | undefined): string | null {
   const r = (rule ?? {}) as Record<string, unknown>
   const frequency = typeof r.frequency === 'string' ? r.frequency.toUpperCase() : null
   if (!frequency) return null
@@ -59,15 +59,15 @@ function utcEndOf(utcStart: string, duration: string | undefined, allDay: boolea
   return `${addMinutes(utcStart.replace(/Z$/, ''), minutes)}Z`
 }
 
-/** A single event (or a series' first occurrence) with its UTC times, as Stalwart returns them. */
-export function withTimes(e: JmapEvent): JmapEvent {
+/** A single event (or a series' first occurrence) with its UTC times. */
+export function withTimes(e: StoredEvent): StoredEvent {
   const allDay = !!e.showWithoutTime
   const utcStart = utcOf(e.start, e.timeZone, allDay)
   return { ...e, utcStart, utcEnd: utcEndOf(utcStart, e.duration, allDay) }
 }
 
 /** The local starts of a series in order, from its own start, up to (not including) `untilLocal` if given. */
-function* localStarts(e: JmapEvent, untilLocal?: string): Generator<string> {
+function* localStarts(e: StoredEvent, untilLocal?: string): Generator<string> {
   const rrule = toRrule(e.recurrenceRule)
   if (!rrule) {
     yield withSeconds(e.start)
@@ -89,20 +89,20 @@ function* localStarts(e: JmapEvent, untilLocal?: string): Generator<string> {
 }
 
 /**
- * One occurrence of a series as Stalwart's expanded query returns it: its own id, `baseEventId`, `recurrenceId`, the
+ * One occurrence of a series: its own id, `baseEventId`, `recurrenceId`, the
  * series' fields with this occurrence's changes on top, and UTC times. Null when that occurrence was deleted.
  */
-export function occurrenceOf(series: JmapEvent, recurrenceId: string): JmapEvent | null {
+export function occurrenceOf(series: StoredEvent, recurrenceId: string): StoredEvent | null {
   const key = withSeconds(recurrenceId)
   const change = (series.recurrenceOverrides ?? {})[key] as Record<string, unknown> | undefined
   if (change?.excluded) return null
   const { recurrenceRule: _rule, recurrenceOverrides: _overrides, ...base } = series
-  const occurrence = { ...base, ...(change ?? {}), start: (change?.start as string | undefined) ?? key } as JmapEvent
+  const occurrence = { ...base, ...(change ?? {}), start: (change?.start as string | undefined) ?? key } as StoredEvent
   return withTimes({ ...occurrence, id: occurrenceId(series.id, key), baseEventId: series.id, recurrenceId: key })
 }
 
 /** An occurrence as it was before it was deleted (for telling guests which one was cancelled). */
-export function cancelledOccurrence(series: JmapEvent, recurrenceId: string): JmapEvent | null {
+export function cancelledOccurrence(series: StoredEvent, recurrenceId: string): StoredEvent | null {
   const key = withSeconds(recurrenceId)
   const { excluded: _gone, ...change } = ((series.recurrenceOverrides ?? {})[key] ?? {}) as Record<string, unknown>
   return occurrenceOf({ ...series, recurrenceOverrides: { ...(series.recurrenceOverrides ?? {}), [key]: change } }, key)
@@ -112,8 +112,8 @@ export function cancelledOccurrence(series: JmapEvent, recurrenceId: string): Jm
  * The event's entries overlapping [afterMs, beforeMs): itself for a single event, its occurrences for a series
  * (moved ones where they were moved to, deleted ones left out), sorted by start.
  */
-export function expand(e: JmapEvent, afterMs: number, beforeMs: number): JmapEvent[] {
-  const overlaps = (x: JmapEvent) => Date.parse(x.utcStart!) < beforeMs && (Date.parse(x.utcEnd!) > afterMs || (x.utcEnd === x.utcStart && Date.parse(x.utcStart!) >= afterMs))
+export function expand(e: StoredEvent, afterMs: number, beforeMs: number): StoredEvent[] {
+  const overlaps = (x: StoredEvent) => Date.parse(x.utcStart!) < beforeMs && (Date.parse(x.utcEnd!) > afterMs || (x.utcEnd === x.utcStart && Date.parse(x.utcStart!) >= afterMs))
   if (!e.recurrenceRule) {
     const single = withTimes(e)
     return overlaps(single) ? [single] : []
@@ -124,7 +124,7 @@ export function expand(e: JmapEvent, afterMs: number, beforeMs: number): JmapEve
   const earliest = new Date(afterMs - (span + 15 * 60) * 60_000).toISOString().slice(0, 19)
   const latest = new Date(beforeMs + 15 * 3600_000).toISOString().slice(0, 19)
   const keys = new Set<string>()
-  const out: JmapEvent[] = []
+  const out: StoredEvent[] = []
   for (const local of localStarts(e, latest)) {
     keys.add(local)
     if (local < earliest) continue
@@ -144,7 +144,7 @@ export function expand(e: JmapEvent, afterMs: number, beforeMs: number): JmapEve
  * Where an event sits in time, for finding it by range: a single event's real start and end; a series' first start
  * and the end of its last occurrence, or null when it never ends. Moved occurrences widen the span.
  */
-export function timeColumns(e: JmapEvent): { startUtc: string; endUtc: string | null; recurring: boolean } {
+export function timeColumns(e: StoredEvent): { startUtc: string; endUtc: string | null; recurring: boolean } {
   const first = withTimes(e)
   if (!e.recurrenceRule) return { startUtc: first.utcStart!, endUtc: first.utcEnd!, recurring: false }
   const rule = e.recurrenceRule as Record<string, unknown>

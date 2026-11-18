@@ -59,7 +59,7 @@ describe('calendarOverLimit', () => {
     assert.match(calendarOverLimit({ ...ok, day: CALENDAR_LIMITS.day + 1 })!, /a day from one calendar/)
     assert.match(calendarOverLimit({ ...ok, topRecipient: 'a@b.co', topRecipientHour: CALENDAR_LIMITS.perRecipientHour + 1 })!, /to a@b\.co/)
   })
-  it('stays under Stalwart: 40 an hour and 200 a day per sender, 25 an hour per recipient', () => {
+  it('keeps invitations below 40 an hour and 200 a day per sender, 25 an hour per recipient', () => {
     assert.ok(CALENDAR_LIMITS.hour < 40 && CALENDAR_LIMITS.day < 200 && CALENDAR_LIMITS.perRecipientHour < 25)
   })
 })

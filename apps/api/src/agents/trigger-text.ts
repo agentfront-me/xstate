@@ -1,7 +1,7 @@
 // Pure helpers for triggers (no Workers APIs), so they run under node:test: the email loop guard and rules, and the
 // task text a run gets from an email or a webhook payload.
 
-import type { TriggerEmail } from '../mailserver/stalwart/mail'
+import type { TriggerEmail } from '../mailbox/trigger-email'
 
 export type EmailRules = { from: string; subjectContains: string; hasAttachment: boolean | null }
 

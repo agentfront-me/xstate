@@ -29,8 +29,6 @@ export type InboundJob = {
   receivedAt: string
   /** The envelope sender (SMTP MAIL FROM), for the delivery log; may differ from the From header, or be empty. */
   source?: string | null
-  /** Moved from the mailbox's old Stalwart account, not received through SES (mailbox/stalwart-sweep.ts). */
-  sweptFromStalwart?: string
 }
 
 type Verdict = { status?: string } | undefined

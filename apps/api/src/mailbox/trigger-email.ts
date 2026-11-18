@@ -1,11 +1,34 @@
-// A store-held message as agents' email triggers read it (agents/email-trigger.ts): the same shape Stalwart's
-// getTriggerEmails returns, built from our own reading of the raw message, so the rules, the loop guard and the task
-// text work unchanged. Pure: no runtime imports, so `pnpm test` runs it directly under Node.
+// A message as agents' email triggers read it (agents/email-trigger.ts), built from our own reading of the raw
+// message. The shape (JMAP-style field names) is the one the trigger rules, the loop guard and the task text were
+// written against. Pure: no runtime imports, so `pnpm test` runs it directly under Node.
 
-import type { TriggerEmail } from '../mailserver/stalwart/mail'
 import type { StoreAddress } from './query'
 
-/** Plain text handed to the agent, as Stalwart's trigger read caps it. */
+type Address = { name: string | null; email: string }
+
+/** A new message as an email trigger sees it: who and what, the headers that mark automated mail, and its text. */
+export type TriggerEmail = {
+  id: string
+  threadId: string
+  mailboxIds: Record<string, true>
+  keywords: Record<string, true>
+  from: Address[] | null
+  to: Address[] | null
+  cc: Address[] | null
+  subject: string | null
+  receivedAt: string
+  hasAttachment: boolean
+  preview: string
+  textBody: { partId: string | null }[]
+  bodyValues: Record<string, { value: string; isTruncated: boolean }>
+  'header:Auto-Submitted:asText': string | null
+  'header:Precedence:asText': string | null
+  'header:List-Id:asText': string | null
+  'header:List-Unsubscribe:asURLs': string[] | null
+  'header:X-Autoreply:asText': string | null
+}
+
+/** Plain text handed to the agent is capped at this. */
 const MAX_BODY_CHARS = 16_000
 
 export type TriggerSource = {

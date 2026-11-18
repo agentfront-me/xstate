@@ -5,7 +5,7 @@
 
 import ICAL from 'ical.js'
 import { mailto, toDuration, withSeconds, zoneOffsetMinutes } from '../mailserver/calendar-events.ts'
-import type { JmapEvent, JmapParticipant } from '../mailserver/stalwart/calendar'
+import type { StoredEvent, StoredParticipant } from '../mailserver/calendar-types'
 import { exdateKeys, parseRrule } from '../migration/calendar-rules.ts'
 
 export type ItipIn = 'request' | 'reply' | 'cancel' | 'other'
@@ -14,9 +14,9 @@ export type ParsedCalendar = {
   method: ItipIn
   uid: string
   /** The event as the file describes it (id and calendar empty), or null when the file only has single occurrences. */
-  event: JmapEvent | null
+  event: StoredEvent | null
   /** Occurrences the file speaks about on their own (RECURRENCE-ID), by original local start in the event's zone. */
-  occurrences: Record<string, JmapEvent>
+  occurrences: Record<string, StoredEvent>
 }
 
 /** The first event in an iCalendar text, or null when there is none. Throws nothing: a broken file reads as null. */
@@ -42,7 +42,7 @@ export function parseIcs(text: string): ParsedCalendar | null {
   // The zone everything is keyed in: the master's, else the first occurrence's.
   const zone = zoneOf((master ?? mine[0]!).getFirstProperty('dtstart'), zones)
   const event = master ? toEvent(master, zones, zone) : null
-  const occurrences: Record<string, JmapEvent> = {}
+  const occurrences: Record<string, StoredEvent> = {}
   for (const v of mine) {
     if (v === master) continue
     const key = localIn(v.getFirstProperty('recurrence-id'), zones, zone)
@@ -57,7 +57,7 @@ export function parseIcs(text: string): ParsedCalendar | null {
   return { method: (['request', 'reply', 'cancel'].includes(method) ? method : 'other') as ItipIn, uid, event, occurrences }
 }
 
-function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZone: string | null): JmapEvent {
+function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZone: string | null): StoredEvent {
   const start = v.getFirstProperty('dtstart')
   const allDay = start?.getFirstValue() instanceof ICAL.Time && (start.getFirstValue() as ICAL.Time).isDate
   const zone = allDay ? null : (zoneOf(start, zones) ?? seriesZone)
@@ -70,7 +70,7 @@ function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZon
   else if (duration) minutes = Math.round(duration.toSeconds() / 60)
   else if (allDay) minutes = 1440
 
-  const e: JmapEvent = {
+  const e: StoredEvent = {
     id: '',
     calendarIds: {},
     '@type': 'Event',
@@ -82,7 +82,7 @@ function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZon
     duration: allDay ? `P${Math.max(1, Math.round(minutes / 1440))}D` : toDuration(Math.max(0, minutes)),
     timeZone: zone,
     showWithoutTime: allDay,
-  } as JmapEvent
+  } as StoredEvent
   const location = String(v.getFirstPropertyValue('location') ?? '').trim()
   e.locations = location ? { l: { '@type': 'Location', name: location } } : null
   const status = String(v.getFirstPropertyValue('status') ?? '').toLowerCase()
@@ -98,7 +98,7 @@ function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZon
       const ms = Date.UTC(+utcUntil[1]!, +utcUntil[2]! - 1, +utcUntil[3]!, +utcUntil[4]!, +utcUntil[5]!, +utcUntil[6]!)
       rule.until = new Date(ms + zoneOffsetMinutes(zone, ms) * 60_000).toISOString().slice(0, 19)
     }
-    if (rule) e.recurrenceRule = rule as JmapEvent['recurrenceRule']
+    if (rule) e.recurrenceRule = rule as StoredEvent['recurrenceRule']
     const excluded = v
       .getAllProperties('exdate')
       .flatMap((p) => exdateLine(p, zones, zone ?? 'UTC', allDay))
@@ -112,8 +112,8 @@ function toEvent(v: ICAL.Component, zones: Map<string, ICAL.Timezone>, seriesZon
 }
 
 /** ORGANIZER and ATTENDEE lines as JSCalendar participants; the organizer is the owner (and an attendee if listed). */
-function participantsOf(v: ICAL.Component, organizer: string | null): Record<string, JmapParticipant> | null {
-  const out: Record<string, JmapParticipant> = {}
+function participantsOf(v: ICAL.Component, organizer: string | null): Record<string, StoredParticipant> | null {
+  const out: Record<string, StoredParticipant> = {}
   const orgProp = v.getFirstProperty('organizer')
   if (organizer) {
     out.o = { '@type': 'Participant', name: (orgProp?.getParameter('cn') as string | undefined) ?? null, calendarAddress: `mailto:${organizer}`, roles: { owner: true } }
@@ -145,13 +145,13 @@ function participantsOf(v: ICAL.Component, organizer: string | null): Record<str
 const PARTSTAT: Record<string, string> = { ACCEPTED: 'accepted', DECLINED: 'declined', TENTATIVE: 'tentative', 'NEEDS-ACTION': 'needs-action', DELEGATED: 'declined' }
 
 /** What an occurrence changes compared with its series, as a JSCalendar override. */
-export function overrideOf(series: JmapEvent, o: JmapEvent): Record<string, unknown> {
+export function overrideOf(series: StoredEvent, o: StoredEvent): Record<string, unknown> {
   const change: Record<string, unknown> = {}
   for (const field of ['start', 'duration', 'title', 'description', 'locations', 'status', 'participants'] as const) {
     // An exception that leaves a field out (Outlook often drops the location, status and guests) keeps the series'.
     const value = o[field]
     if (field !== 'start' && field !== 'duration' && (value === undefined || value === null || value === '')) continue
-    if (field === 'participants' && !Object.values(value as NonNullable<JmapEvent['participants']>).some((p) => !p.roles?.owner)) continue
+    if (field === 'participants' && !Object.values(value as NonNullable<StoredEvent['participants']>).some((p) => !p.roles?.owner)) continue
     if (JSON.stringify(value ?? null) !== JSON.stringify(series[field] ?? null)) change[field] = value ?? null
   }
   if (o.status === 'cancelled') change.excluded = true

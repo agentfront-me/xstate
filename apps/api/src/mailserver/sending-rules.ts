@@ -22,10 +22,8 @@ export const SUSPEND = {
 }
 
 /**
- * Invitation emails (one per guest per change, internal guests included) per mailbox. Kept under Stalwart's own
- * throttles, which drop mail past them without telling the API: 40 messages an hour and 200 a day per signed-in
- * sender (scripts/stalwart-limits.mjs; shared with mail apps, hence the headroom) and its default of 25 an hour from
- * one sender to one recipient.
+ * Invitation emails (one per guest per change, internal guests included) per mailbox, so a calendar can't be used
+ * to send bulk mail. Set when Stalwart's throttles applied, and kept.
  */
 export const CALENDAR_LIMITS = { hour: 30, day: 150, perRecipientHour: 20 }
 

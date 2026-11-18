@@ -3,7 +3,7 @@
 // guests' zones aren't known; their calendar app shows the event in their own. Pure: `pnpm test` runs it.
 
 import { addDays, durationMinutes, mailto, withSeconds, zonedToUtc } from '../mailserver/calendar-events.ts'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import { cancelledOccurrence } from './calendar-expand.ts'
 import type { ItipMethod } from './ical-out.ts'
 
@@ -28,7 +28,7 @@ export type InviteText = { subject: string; text: string; html: string }
  * Subject and body for one invitation email. `occurrence`: a cancellation of that one occurrence. `who`: for an
  * answer, the person answering (shown as "Sam accepted").
  */
-export function inviteText(kind: InviteKind, event: JmapEvent, options: { occurrence?: string; who?: { name: string | null; email: string } } = {}): InviteText {
+export function inviteText(kind: InviteKind, event: StoredEvent, options: { occurrence?: string; who?: { name: string | null; email: string } } = {}): InviteText {
   const shown = options.occurrence ? (cancelledOccurrence(event, options.occurrence) ?? event) : event
   const title = shown.title?.trim() || '(No title)'
   const when = whenText(shown)
@@ -72,7 +72,7 @@ export function inviteText(kind: InviteKind, event: JmapEvent, options: { occurr
 }
 
 /** "Thu 19 Nov 2026 3pm – 3:30pm (GMT+5)", "Thu 19 Nov 2026" or "Thu 24 Dec – Fri 25 Dec 2026" for all-day. */
-export function whenText(e: JmapEvent): string {
+export function whenText(e: StoredEvent): string {
   const minutes = durationMinutes(e.duration ?? (e.showWithoutTime ? 'P1D' : 'PT0S'))
   if (e.showWithoutTime) {
     const first = e.start.slice(0, 10)
@@ -91,7 +91,7 @@ export function whenText(e: JmapEvent): string {
   return sameDay ? `${date(start)} ${time(start)} – ${time(end)} (${zoneName})` : `${date(start)} ${time(start)} – ${date(end)} ${time(end)} (${zoneName})`
 }
 
-function repeatText(e: JmapEvent): string {
+function repeatText(e: StoredEvent): string {
   const rule = (e.recurrenceRule ?? {}) as { frequency?: string; interval?: number; count?: number; until?: string }
   const unit = { daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year' }[rule.frequency ?? ''] ?? 'time'
   const every = rule.interval && rule.interval > 1 ? `every ${rule.interval} ${unit}s` : `every ${unit}`

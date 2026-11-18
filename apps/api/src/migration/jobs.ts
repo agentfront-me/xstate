@@ -44,7 +44,7 @@ export type MigrationJob =
   | DriveFinalJob
   | MailFinalJob
 
-/** Users handled per apply job: each is a few Stalwart calls. */
+/** Users handled per apply job. */
 const APPLY_BATCH = 5
 /** Small groups (likely shared inboxes) start ticked in the plan; bigger ones are usually mailing lists. */
 export const GROUP_DEFAULT_MAX_MEMBERS = 12

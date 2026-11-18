@@ -42,22 +42,15 @@ Set `XSTATE_API_URL=http://localhost:8788/v1` to point `start` at a local API. I
 missing after install, run `node apps/desktop/node_modules/electron/install.js`. Auto-update reads the `publish` URL
 in `apps/desktop/package.json`; point it at wherever release builds are uploaded.
 
-## Background mail sync
+## Mail
 
-Stalwart calls `POST /webhooks/stalwart` when mail arrives. The API queues a sync of that mailbox on the
-`xstate-mail-sync` queue, which copies new attachments into the organization's R2 bucket. An hourly cron syncs
-every mailbox in case webhooks were lost, and permanently removes files whose message was deleted more than 30
-days ago. See `docs/stalwart-api.md` §7.
+Mail is received by Amazon SES, which saves it to S3 and notifies `POST /webhooks/ses-inbound`; the `xstate-mail-in`
+queue delivers it into each mailbox's store (a Durable Object, `apps/api/src/mailbox/`). Sending goes straight
+through SES. See `docs/mailbox-store-plan.md`.
 
-One-time production setup:
-
-```bash
-pnpm --filter @xstate/api exec wrangler queues create xstate-mail-sync
-pnpm --filter @xstate/api exec wrangler secret put STALWART_WEBHOOK_SECRET   # also R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, CLOUDFLARE_API_TOKEN
-```
-
-Then create the WebHook on Stalwart with the same secret (`docs/stalwart-api.md` §7). Locally,
-`wrangler dev --test-scheduled` lets you run the hourly job with `curl "localhost:8788/__scheduled?cron=0+*+*+*+*"`.
+Locally, `SES_MODE=fake` (in `.dev.vars`) logs outgoing mail instead of sending it, and received mail is posted
+with `node apps/api/scripts/mail-in-fake.mjs --to someone@acme.test`. `wrangler dev --test-scheduled` runs the
+hourly clean-up with `curl "localhost:8788/__scheduled?cron=0+*+*+*+*"`.
 
 ## Deploy
 

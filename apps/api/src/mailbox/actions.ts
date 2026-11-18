@@ -1,6 +1,5 @@
 // What a change to a message does in a mailbox whose mail the store holds (docs/mailbox-store-plan.md, phase 2
-// step 2): which messages it touches and how, with the same rules as Stalwart mailboxes (mailserver/stalwart/mail.ts
-// updateThreadOf). No runtime imports, so `pnpm test` runs it directly under Node. The store applies the plan.
+// step 2): which messages it touches and how. No runtime imports, so `pnpm test` runs it directly under Node. The store applies the plan.
 
 import type { StoreFolderRole } from './query'
 

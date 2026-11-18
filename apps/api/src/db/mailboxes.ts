@@ -1,4 +1,4 @@
-// mailboxes table: mail stores, mirrored from Stalwart x:Account objects. Reads join the primary address.
+// mailboxes table. Reads join the primary address.
 
 export type MailboxKind = 'personal' | 'shared' | 'agent'
 export type StoreMode = 'off' | 'shadow' | 'read'
@@ -13,15 +13,13 @@ export type MailboxRow = {
   quota_bytes: number | null
   stalwart_id: string
   /**
-   * The mailbox store (mailbox/store.ts): 'off', 'shadow' (kept in step with Stalwart) or 'read' (lists and
-   * filters are answered from it). Set by hand for now; see docs/mailbox-store-plan.md.
+   * Left from the move off Stalwart (dropped in phase 5c); nothing reads it.
    */
   store_mode: StoreMode
   /** 1 to also copy each raw message into the organization's bucket and record where its attachments sit. */
   store_raw: number
   /**
-   * Which side holds the mail: 'stalwart', or 'store' (mail arrives through SES into the mailbox store and nothing
-   * syncs from Stalwart; docs/mailbox-store-plan.md, phase 2). Set by hand for the pilot.
+   * Always 'store' now (docs/mailbox-store-plan.md); 'stalwart' is from before the move. Dropped in phase 5c.
    */
   backend: MailBackend
   created_at: string
@@ -130,24 +128,8 @@ export function remove(db: D1Database, id: string): D1PreparedStatement {
   return db.prepare('DELETE FROM mailboxes WHERE id = ?').bind(id)
 }
 
-/** Our mailbox ids for the given Stalwart account ids; accounts that aren't xstate mailboxes are left out. */
-export async function idsByStalwartIds(db: D1Database, stalwartIds: string[]): Promise<string[]> {
-  if (!stalwartIds.length) return []
-  const { results } = await db
-    .prepare('SELECT id FROM mailboxes WHERE stalwart_id IN (SELECT value FROM json_each(?))')
-    .bind(JSON.stringify(stalwartIds))
-    .all<{ id: string }>()
-  return results.map((r) => r.id)
-}
-
-/** Every mailbox id, for the hourly safety check. */
 /** Mailboxes whose mail the store holds (backend = 'store'), for jobs that look after them. */
 export async function heldByStore(db: D1Database): Promise<{ id: string; organization_id: string }[]> {
   const { results } = await db.prepare(`SELECT id, organization_id FROM mailboxes WHERE backend = 'store'`).all<{ id: string; organization_id: string }>()
   return results
-}
-
-export async function allIds(db: D1Database): Promise<string[]> {
-  const { results } = await db.prepare('SELECT id FROM mailboxes ORDER BY created_at').all<{ id: string }>()
-  return results.map((r) => r.id)
 }

@@ -2422,6 +2422,22 @@ Stalwart: `pnpm dev`, then receive with `mail-in-fake.mjs` (including `--virus`,
 with fake SES, upload to Storage, and open a calendar invite. After the push, a production smoke test like 5a's.
 Then the clean-up in Cloudflare (queues, secrets).
 
+**5b built 2026-11-18 (approved; uncommitted until pushed):** as designed, with these details:
+- The calendar types are `StoredEvent`, `StoredParticipant`, `StoredRecurrenceRule` and `StoredCalendar` in
+  `mailserver/calendar-types.ts` (`CalendarEvent` was already the API's flat event).
+- Also deleted, as dead once Stalwart was gone: the store's `calendarCopy`, `sinceFlip`, `ownership`,
+  `knownMessageIds`, `sweptUntil` and `calendarCounts`; `essentialRecords` and the zone-file parser in
+  `mailserver/dns.ts`; `idsByStalwartIds` and `allIds` (db/mailboxes), `storeHeldNames` (db/domains),
+  `withRollback` (mailserver/errors), the sending-block helpers (db/sending), and the `sweptFromStalwart` delivery
+  field. `takeOwnership` stays (private), for a store still holding a copy.
+- The queue handler retries a batch from a queue it doesn't know, with an error log, instead of acknowledging it.
+- README's mail section rewritten; `docs/stalwart-api.md` moved to `docs/archive/`.
+- Checked: API, app and mobile typecheck; 432 API tests pass; the Worker builds (dry run). Locally on a fresh
+  database with no Stalwart: register, add and verify a `.test` domain, a shared mailbox and an alias; mail in to
+  both (an unknown address and `--virus` dropped); an email with an attachment and an invite (both filed, the invite
+  shown as a card); fake-SES send into Sent; a Storage upload; calendars set up; an event with a guest (invitation
+  sent). No errors.
+
 ## What changes for customers
 
 - **Mail apps over IMAP and SMTP stop working** when their domain switches. Warn everyone who has used IMAP well

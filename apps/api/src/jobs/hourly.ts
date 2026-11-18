@@ -1,6 +1,4 @@
-// The hourly mail and storage clean-up. Mail arrives through SES into each mailbox's store (mailbox/receive.ts), so
-// nothing is synced from a mail server any more; the MAIL_SYNC queue only drains what is left on it until it is
-// removed (docs/mailbox-store-plan.md, phase 5b).
+// The hourly mail and storage clean-up.
 
 import { emptyExpiredTrash } from '../storage/drive'
 import { purgeDeletedFiles } from '../storage/purge'
@@ -8,13 +6,6 @@ import { purgeHeldTrash } from '../mailbox/trash'
 import { DELIVERY_LOG_DAYS } from '../mailbox/delivery-log'
 import * as dropsDb from '../db/mail-drops'
 import { catchUpHeld } from '../mailbox/events'
-
-export type MailSyncJob = { mailboxId: string; reason: 'webhook' | 'hourly' | 'import' }
-
-/** Queue consumer: acknowledges what is left on the old mail sync queue. */
-export async function consume(batch: MessageBatch<MailSyncJob>): Promise<void> {
-  for (const message of batch.messages) message.ack()
-}
 
 /**
  * Cron, hourly: empty Storage items that have been in the trash for 30 days, permanently remove files deleted more

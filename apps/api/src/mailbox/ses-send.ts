@@ -1,5 +1,4 @@
-// Sending a store-held mailbox's mail through Amazon SES directly (docs/mailbox-store-plan.md, phase 2 step 3),
-// instead of through Stalwart's relay. Uses the IAM user xstate-mail-send (MAIL_SEND_ACCESS_KEY_ID), allowed only to
+// Sending a mailbox's mail through Amazon SES (docs/mailbox-store-plan.md, phase 2 step 3). Uses the IAM user xstate-mail-send (MAIL_SEND_ACCESS_KEY_ID), allowed only to
 // send; the identity-managing user (mailserver/ses.ts) can't. SES_MODE "fake" or "off" sends nothing and logs it.
 
 import { AwsClient } from 'aws4fetch'

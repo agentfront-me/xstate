@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { zonedToUtc } from '../mailserver/calendar-events.ts'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import { decide, timeMoved, type IncomingContext } from './calendar-in.ts'
 import { buildIcs } from './ical-out.ts'
 import { parseIcs } from './ical-in.ts'
@@ -107,7 +107,7 @@ describe('parseIcs', () => {
       recurrenceRule: { frequency: 'weekly', until: '2026-04-30T23:59:59' },
       recurrenceOverrides: { '2026-03-16T09:00:00': { start: '2026-03-17T11:00:00', title: 'Moved' }, '2026-03-23T09:00:00': { excluded: true } },
       participants: { o: { calendarAddress: 'mailto:hello@99events.com', roles: { owner: true, attendee: true }, participationStatus: 'accepted' }, g: { calendarAddress: 'mailto:a@gmail.com', roles: { attendee: true }, participationStatus: 'needs-action' } },
-    } as unknown as JmapEvent
+    } as unknown as StoredEvent
     const back = parseIcs(buildIcs({ method: 'REQUEST', event: ours }))!.event!
     for (const field of ['uid', 'sequence', 'title', 'description', 'start', 'duration', 'timeZone'] as const) assert.deepEqual(back[field], ours[field], field)
     assert.equal((back.recurrenceRule as Record<string, unknown>).until, '2026-04-30T23:59:59')
@@ -116,7 +116,7 @@ describe('parseIcs', () => {
 
   it('reads a cancellation of one occurrence as that occurrence only', () => {
     const series = parseIcs(OUTLOOK_REQUEST)!.event!
-    const f = parseIcs(buildIcs({ method: 'CANCEL', event: { ...series, id: 'x' } as JmapEvent, occurrence: '2026-11-24T15:00:00' }))!
+    const f = parseIcs(buildIcs({ method: 'CANCEL', event: { ...series, id: 'x' } as StoredEvent, occurrence: '2026-11-24T15:00:00' }))!
     assert.equal(f.method, 'cancel')
     assert.equal(f.event, null)
     assert.deepEqual(Object.keys(f.occurrences), ['2026-11-24T15:00:00'])
@@ -154,12 +154,12 @@ describe('proveSender', () => {
 describe('decide', () => {
   const HELLO = 'hello@99events.com'
   const ctx = (over: Partial<IncomingContext> = {}): IncomingContext => ({ from: 'sam.lee@gmail.com', proven: true, known: true, junk: false, own: [HELLO], ...over })
-  const ours = (over: Partial<JmapEvent> = {}): JmapEvent =>
+  const ours = (over: Partial<StoredEvent> = {}): StoredEvent =>
     ({
       id: 'E1', uid: '79091693-d294-4e61-9ba0-606a2e77b1ab', sequence: 0, calendarIds: { c: true }, title: 'xstate answer test', start: '2026-11-24T15:00:00', duration: 'PT30M', timeZone: 'Asia/Karachi',
       participants: { o: { calendarAddress: `mailto:${HELLO}`, roles: { owner: true, attendee: true } }, g: { calendarAddress: 'mailto:sam.lee@gmail.com', roles: { attendee: true }, participationStatus: 'needs-action' } },
       ...over,
-    }) as JmapEvent
+    }) as StoredEvent
   const reply = parseIcs(GOOGLE_REPLY)!
 
   it("records a guest's answer to our event", () => {
@@ -183,7 +183,7 @@ describe('decide', () => {
 
   it("applies the organizer's update unless it is older, and refuses one from anyone else", () => {
     const invite = parseIcs(OUTLOOK_REQUEST)!
-    const copy = { ...invite.event!, id: 'E2' } as JmapEvent
+    const copy = { ...invite.event!, id: 'E2' } as StoredEvent
     assert.deepEqual(decide(invite, copy, ctx({ from: 'kim@contoso.com' })), { action: 'update', whole: true, occurrences: ['2026-12-01T15:00:00'] })
     assert.deepEqual(decide(invite, { ...copy, sequence: 4 }, ctx({ from: 'kim@contoso.com' })), { action: 'skip', reason: 'older_sequence' })
     assert.deepEqual(decide(invite, copy, ctx({ from: 'mallory@contoso.com' })), { action: 'skip', reason: 'not_organizer' })
@@ -191,8 +191,8 @@ describe('decide', () => {
 
   it("cancels on the organizer's word, and ignores invitations to our own events", () => {
     const series = parseIcs(OUTLOOK_REQUEST)!.event!
-    const cancel = parseIcs(buildIcs({ method: 'CANCEL', event: { ...series, id: 'x' } as JmapEvent }))!
-    assert.deepEqual(decide(cancel, { ...series, id: 'E2' } as JmapEvent, ctx({ from: 'kim@contoso.com' })), { action: 'cancel', occurrences: [] })
+    const cancel = parseIcs(buildIcs({ method: 'CANCEL', event: { ...series, id: 'x' } as StoredEvent }))!
+    assert.deepEqual(decide(cancel, { ...series, id: 'E2' } as StoredEvent, ctx({ from: 'kim@contoso.com' })), { action: 'cancel', occurrences: [] })
     const ownInvite = parseIcs(buildIcs({ method: 'REQUEST', event: ours() }))!
     assert.deepEqual(decide(ownInvite, ours(), ctx({ from: HELLO })), { action: 'skip', reason: 'own_event' })
   })

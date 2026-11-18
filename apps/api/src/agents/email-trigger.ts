@@ -8,7 +8,7 @@
 import * as db from '../db/agents'
 import type { TriggerRow } from '../db/agents'
 import type { MailboxRow } from '../db/mailboxes'
-import type { TriggerEmail } from '../mailserver/stalwart/mail'
+import type { TriggerEmail } from '../mailbox/trigger-email'
 import { parseRaw } from '../mailbox/parse'
 import { store as mailboxStore } from '../mailbox/stub'
 import { triggerEmailOf } from '../mailbox/trigger-email'

@@ -8,8 +8,6 @@
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply xstate --local",
     "db:migrate:remote": "wrangler d1 migrations apply xstate --remote",
-    "mail:dev": "scripts/mail-dev.sh start",
-    "mail:reset": "scripts/mail-dev.sh reset",
     "typecheck": "tsc",
     "test": "node --experimental-strip-types --no-warnings --test 'src/**/*.test.ts' && node scripts/mcp-tools-doc.mjs --check",
     "docs:mcp": "node scripts/mcp-tools-doc.mjs"

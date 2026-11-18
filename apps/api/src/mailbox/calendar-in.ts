@@ -4,7 +4,7 @@
 // Pure: no runtime imports, so `pnpm test` runs it under Node.
 
 import { mailto } from '../mailserver/calendar-events.ts'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import type { ParsedCalendar } from './ical-in.ts'
 
 export type IncomingContext = {
@@ -43,7 +43,7 @@ export type SkipReason =
   | 'no_answer'
 
 /** What to do with this file, given our copy of the event (matched by UID; null when we have none). */
-export function decide(file: ParsedCalendar, existing: JmapEvent | null, ctx: IncomingContext): Decision {
+export function decide(file: ParsedCalendar, existing: StoredEvent | null, ctx: IncomingContext): Decision {
   if (ctx.junk) return skip('junk')
   if (file.method === 'other') return skip('not_an_itip_method')
   const occurrences = Object.keys(file.occurrences)
@@ -88,8 +88,8 @@ export function decide(file: ParsedCalendar, existing: JmapEvent | null, ctx: In
 }
 
 /** Whether the times of an event changed (then a guest's earlier answer no longer stands). */
-export function timeMoved(before: JmapEvent, after: JmapEvent): boolean {
-  const pick = (e: JmapEvent) => JSON.stringify([e.start, e.duration, e.timeZone ?? null, !!e.showWithoutTime, e.recurrenceRule ?? null])
+export function timeMoved(before: StoredEvent, after: StoredEvent): boolean {
+  const pick = (e: StoredEvent) => JSON.stringify([e.start, e.duration, e.timeZone ?? null, !!e.showWithoutTime, e.recurrenceRule ?? null])
   return pick(before) !== pick(after)
 }
 
@@ -97,11 +97,11 @@ function skip(reason: SkipReason): Decision {
   return { action: 'skip', reason }
 }
 
-function organizerOf(e: JmapEvent): string | null {
+function organizerOf(e: StoredEvent): string | null {
   return mailto(e.organizerCalendarAddress) ?? mailto(Object.values(e.participants ?? {}).find((p) => p.roles?.owner)?.calendarAddress)
 }
 
-function guestsOf(e: JmapEvent): string[] {
+function guestsOf(e: StoredEvent): string[] {
   return Object.values(e.participants ?? {})
     .filter((p) => !p.roles?.owner)
     .map((p) => mailto(p.calendarAddress))

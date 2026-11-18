@@ -1,7 +1,7 @@
 // MailboxStore: one Durable Object per mailbox holding its message index (docs/mailbox-store-plan.md, phase 1).
-// For now it is a shadow copy fed from Stalwart by ./shadow.ts: headers, folders, flags and the body text of every
-// message, so lists, filters and search can be answered without the mail server. Message contents stay where they
-// are. It does small, fast work only: fetching and parsing happen in the Workers and queues that call it.
+// It holds the mailbox's mail: headers, folders, flags and the body text of every message (the raw copies are in the
+// organization's R2 bucket), its calendars and its delivery log. It does small, fast work only: fetching and parsing
+// happen in the Workers and queues that call it.
 
 import { Agent } from 'agents'
 import {
@@ -100,7 +100,7 @@ export type StoreDelivery = {
   verdicts: Record<string, string>
   /**
    * Mail copied in from another provider (the Google Workspace import, phase 4f): its folders as given (several, custom
-   * ones included), starred or not, and attachments not held back for scanning, as for mail copied from Stalwart.
+   * ones included), and starred or not.
    */
   placement?: { folderIds: string[]; role: StoreFolderRole | null; pinned: boolean }
 }
@@ -170,9 +170,6 @@ export type RawStats = {
   /** A few message ids that differ, to look at. */
   diffSample: string[]
 }
-
-/** A received attachment still `scanning` this long after delivery is scanned again by the hourly catch-up. */
-const STUCK_SCAN_SECONDS = 3600
 
 /** How far back a message with the same subject and people joins its conversation, without a reply header. */
 const THREAD_BY_SUBJECT_SECONDS = 30 * 24 * 3600
@@ -635,7 +632,7 @@ export class MailboxStore extends Agent<Env> {
   private ensureOwned(): Map<string, string> {
     if (this.meta('owner') !== 'store') {
       const copied = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages`)][0]!.c as number
-      if (copied || this.meta('state')) this.takeOwnership(new Date().toISOString())
+      if (copied || this.meta('state')) this.takeOwnership()
     }
     if (this.meta('owner') !== 'store') {
       this.db.exec(`DELETE FROM folders`)
@@ -705,8 +702,8 @@ export class MailboxStore extends Agent<Env> {
       if (role === 'sent') this.wroteTo([...d.to, ...d.cc, ...(d.bcc ?? [])].map((a) => a.email), Math.floor(Date.parse(d.receivedAt) / 1000))
       d.attachments.forEach((a, seq) => {
         this.db.exec(
-          `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified, scan) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding, d.folder || d.placement ? null : 'scanning',
+          `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified, scan) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding,
         )
       })
       return { id: d.id, threadId, folder: role, duplicate: false }
@@ -897,29 +894,6 @@ export class MailboxStore extends Agent<Env> {
     return this.meta('owner') !== 'store' || this.meta('events_caught_up') === '1'
   }
 
-  /** Records virus-scan results for a message's attachments, by their start in the raw copy; the apps reload. */
-  setScan(emailId: string, results: { start: number; state: ScanState; virus: string | null }[]) {
-    const n = [...this.db.exec(`SELECT n FROM messages WHERE id = ?`, emailId)][0]?.n as number | undefined
-    if (n === undefined || !results.length) return
-    this.ctx.storage.transactionSync(() => {
-      for (const r of results) this.db.exec(`UPDATE attachments SET scan = ?, virus = ? WHERE n = ? AND start = ?`, r.state, r.virus, n, r.start)
-      this.db.exec(`UPDATE messages SET modseq = ? WHERE n = ?`, this.nextModseq(), n)
-    })
-  }
-
-  /**
-   * Received messages whose attachments need a scan: never scanned (from before scanning existed), or still
-   * `scanning` after `stuckSeconds` (an event that never ran would otherwise leave them blocked for good).
-   */
-  unscanned(stuckSeconds = STUCK_SCAN_SECONDS, limit = 500): string[] {
-    const before = Math.floor(Date.now() / 1000) - stuckSeconds
-    return [...this.db.exec(
-      `SELECT DISTINCT m.id FROM messages m JOIN attachments a ON a.n = m.n
-        WHERE (a.scan IS NULL OR (a.scan = 'scanning' AND m.received_s < ?)) AND m.folder IS NOT 'sent' AND m.is_draft IS NOT 1 LIMIT ?`,
-      before, limit,
-    )].map((r) => r.id as string)
-  }
-
   /** Adds lines to the delivery log. */
   logDelivery(lines: DeliveryLine[]) {
     const now = Math.floor(Date.now() / 1000)
@@ -1028,34 +1002,12 @@ export class MailboxStore extends Agent<Env> {
   }
 
   /**
-   * The one-time copy of a mailbox's calendars from Stalwart. 'claim' starts it (emptying any half-done copy) unless
-   * it is done or another copy started in the last five minutes; 'done' finishes it.
+   * Turns a store that holds a copy of a mailbox's old mail (made from Stalwart before it was retired) into one that
+   * holds the mail itself. The copied folders keep their ids; any role folder missing is added; every folder gets
+   * the IMAP counters delivery uses; the people the mailbox has written to are recorded from Sent (spam layer 3).
+   * Marked caught up, so the hourly catch-up doesn't offer every old message to agents again. Safe to repeat.
    */
-  calendarCopy(step: 'claim' | 'done'): 'claimed' | 'busy' | 'done' {
-    const state = this.meta('calendar_copy')
-    if (state === 'done') return 'done'
-    const now = Math.floor(Date.now() / 1000)
-    if (step === 'done') {
-      this.setMeta('calendar_copy', 'done')
-      return 'done'
-    }
-    if (state?.startsWith('running:') && now - Number(state.slice(8)) < 300) return 'busy'
-    this.ctx.storage.transactionSync(() => {
-      this.db.exec(`DELETE FROM events`)
-      this.db.exec(`DELETE FROM calendars`)
-      this.setMeta('calendar_copy', `running:${now}`)
-    })
-    return 'claimed'
-  }
-
-  /**
-   * Turns a store that holds a copy of Stalwart mail into one that holds the mail itself (the flip of a domain
-   * switch, docs/mailbox-store-plan.md phase 4d). The copied folders keep their ids; any role folder missing is
-   * added; every folder gets the IMAP counters delivery uses; the people the mailbox has written to are recorded
-   * from Sent (spam layer 3). Marked caught up, so the hourly catch-up doesn't offer every old message again (they
-   * were filed and indexed when Stalwart had them), and the sweep from Stalwart starts at `sweptFrom`. Safe to repeat.
-   */
-  takeOwnership(sweptFrom: string): { already: boolean; added: string[]; folders: number; messages: number } {
+  private takeOwnership(): { already: boolean; added: string[]; folders: number; messages: number } {
     const messages = [...this.db.exec(`SELECT count(*) AS c FROM messages`)][0]!.c as number
     if (this.meta('owner') === 'store') return { already: true, added: [], folders: 0, messages }
     const added: string[] = []
@@ -1078,31 +1030,10 @@ export class MailboxStore extends Agent<Env> {
       }
       this.setMeta('correspondents_filled', '1')
       this.setMeta('events_caught_up', '1')
-      this.setMeta('stalwart_swept_until', sweptFrom)
       if (this.meta('modseq') === null) this.setMeta('modseq', '0')
       this.setMeta('owner', 'store')
     })
     return { already: false, added, folders, messages }
-  }
-
-  /**
-   * Messages the store received or sent itself since `sinceS` (unix seconds), for copying back into Stalwart when a
-   * switch is rolled back. Mail swept in from Stalwart is left out: Stalwart has it.
-   */
-  sinceFlip(sinceS: number): { id: string; folder: string | null; rawKey: string | null; messageId: string | null; receivedAt: string }[] {
-    return [
-      ...this.db.exec(
-        `SELECT id, folder, raw_key, message_id, received_s FROM messages
-          WHERE received_s >= ? AND ses_id IS NOT NULL AND ses_id NOT LIKE 'stalwart.%' ORDER BY received_s`,
-        sinceS,
-      ),
-    ].map((r) => ({
-      id: r.id as string,
-      folder: (r.folder as string | null) ?? null,
-      rawKey: (r.raw_key as string | null) ?? null,
-      messageId: (r.message_id as string | null) ?? null,
-      receivedAt: new Date((r.received_s as number) * 1000).toISOString(),
-    }))
   }
 
   /**
@@ -1126,30 +1057,6 @@ export class MailboxStore extends Agent<Env> {
       }
       return { roles, named }
     })
-  }
-
-  /** Who holds the mail: the store itself, or Stalwart (a copy). */
-  ownership(): 'store' | 'copy' {
-    return this.meta('owner') === 'store' ? 'store' : 'copy'
-  }
-
-  /** Which of these Message-IDs the store already has (for the sweep from Stalwart: never twice). */
-  knownMessageIds(ids: string[]): string[] {
-    if (!ids.length) return []
-    return [...this.db.exec(`SELECT DISTINCT message_id FROM messages WHERE message_id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids))].map(
-      (r) => r.message_id as string,
-    )
-  }
-
-  /** How far the sweep from Stalwart has got (ISO), or null; with `set`, moves it on. */
-  sweptUntil(set?: string): string | null {
-    if (set) this.setMeta('stalwart_swept_until', set)
-    return this.meta('stalwart_swept_until')
-  }
-
-  calendarCounts(): { calendars: number; events: number } {
-    const row = [...this.db.exec(`SELECT (SELECT count(*) FROM calendars) AS calendars, (SELECT count(*) FROM events) AS events`)][0]!
-    return { calendars: row.calendars as number, events: row.events as number }
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

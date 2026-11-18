@@ -12,11 +12,11 @@ import { indexEmails, indexFile, removeDocument, type EmailIndexEnv } from './in
 export type SearchJob =
   | { kind: 'index'; fileId: string }
   | { kind: 'index-emails'; mailboxId: string; emailIds: string[] }
-  // Old copy jobs from Stalwart into the stores; acknowledged without running.
+  // Old copy jobs from the move off Stalwart; acknowledged without running.
   | { kind: 'store-emails'; mailboxId: string; emailIds: string[] }
   | { kind: 'store-raw'; mailboxId: string; emailIds: string[] }
 
-/** Files per hourly run, so a backfill of a big organization spreads over a few hours without starving mail sync. */
+/** Files per hourly run, so a backfill of a big organization spreads over a few hours without starving other work. */
 const BACKFILL_PER_HOUR = 500
 const RETRY_PER_HOUR = 100
 const SWEEP_PER_HOUR = 200

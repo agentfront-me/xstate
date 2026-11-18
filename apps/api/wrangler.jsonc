@@ -27,7 +27,6 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "STALWART_URL": "https://mx.xstate.io",
     // Browser origins allowed to call the API (comma-separated): the dashboard and sign-up pages (go.xstate.com),
     // and the desktop app, which serves the dashboard from app://xstate. xstate.com stays listed because Domain
     // Connect returns there (a redirect_uri is only signed when it's on one of these origins).
@@ -68,16 +67,6 @@
     // Where the MCP server and its OAuth sign-in are published (mcp/oauth.ts): the OAuth issuer, and <MCP_URL>/mcp
     // is what people paste into their AI app. Local dev sets it to the API's own address in .dev.vars.
     "MCP_URL": "https://mcp.xstate.com",
-    // Virus scanning of composer and Storage uploads (security/scan.ts), by the scan service next to Stalwart
-    // (apps/scanner): "live" refuses infected files, and every file while the scanner is unreachable; "log" scans
-    // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
-    // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
-    // "off" since 2026-11-18: Stalwart and the ClamAV scanner on deepo were shut down (Stalwart retired). SES still
-    // scans received mail for viruses; the file-type rules (security/attachments.ts) stay on.
-    "SCAN_MODE": "off",
-    // "on": domains added from now on start on the mailbox store (docs/mailbox-store-plan.md, phase 4g). On since 2026-11-18: Stalwart is being retired.
-    "NEW_DOMAINS_ON_STORE": "on",
-    "SCAN_URL": "https://mx.xstate.io/_scan",
     // Receiving through SES (mailbox/receive.ts, docs/mailbox-store-plan.md phase 2): the SNS topic whose notifications
     // /webhooks/ses-inbound accepts. Empty: receiving is off and the endpoint answers 404. Needs the
     // MAIL_INBOUND_ACCESS_KEY_ID and MAIL_INBOUND_SECRET_ACCESS_KEY secrets. Setup: docs/mailbox-store-plan.md,
@@ -105,38 +94,29 @@
       "migrations_dir": "migrations"
     }
   ],
-  // Mail sync jobs: Stalwart's webhook (POST /webhooks/stalwart) and the hourly check queue one job per mailbox;
-  // the consumer copies new attachments to the organization's R2 bucket. Create once: wrangler queues create xstate-mail-sync
   // Storage search (search/): every new file version and attachment is queued for indexing; the consumer extracts
   // its text, embeds it with Workers AI and writes the vectors to Vectorize. Create once: wrangler queues create xstate-search-index
   // Push notifications to the mobile app (push/send.ts): anything that notifies queues a job here, and the consumer
   // sends through Expo. Create once: wrangler queues create xstate-push
   "queues": {
     "producers": [
-      { "binding": "MAIL_SYNC", "queue": "xstate-mail-sync" },
       { "binding": "SEARCH_INDEX", "queue": "xstate-search-index" },
       { "binding": "MIGRATION", "queue": "xstate-migration" },
       { "binding": "PUSH", "queue": "xstate-push" },
-      { "binding": "STORE_COPY", "queue": "xstate-mailbox-store" },
       { "binding": "MAIL_IN", "queue": "xstate-mail-in" },
       { "binding": "MAIL_EVENTS", "queue": "xstate-mail-events" }
     ],
     "consumers": [
-      { "queue": "xstate-mail-sync", "max_batch_size": 10, "max_batch_timeout": 2, "max_retries": 10 },
       { "queue": "xstate-push", "max_batch_size": 10, "max_batch_timeout": 1, "max_retries": 5 },
       // At most 3 at once: a migration queues thousands of emails, and Vectorize refuses writes that arrive too fast.
       { "queue": "xstate-search-index", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 10, "max_concurrency": 3 },
-      // Imports from Google Workspace (migration/jobs.ts). Few at a time, so a big import can't crowd out mail
-      // sync or swamp Stalwart. Create once: wrangler queues create xstate-migration
+      // Imports from Google Workspace (migration/jobs.ts). Few at a time, so a big import can't crowd out the other
+      // queues. Create once: wrangler queues create xstate-migration
       { "queue": "xstate-migration", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 5, "max_concurrency": 5, "dead_letter_queue": "xstate-migration-dlq" },
       // Migration jobs that ran out of retries without our code seeing an error (the Worker was killed for memory or
       // CPU): marked as needing attention so the copy can't stall silently (migration/jobs.ts consumeMigrationDead).
       // Create once: wrangler queues create xstate-migration-dlq
       { "queue": "xstate-migration-dlq", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3 },
-      // Copying mail into mailbox stores (mailbox/jobs.ts), apart from search so a big copy can't hold it up. Every
-      // raw copy is a download from Stalwart, so concurrency here (times RAW_PARALLEL in mailbox/shadow.ts) is the
-      // load on the mail server. Create once: wrangler queues create xstate-mailbox-store
-      { "queue": "xstate-mailbox-store", "max_batch_size": 4, "max_batch_timeout": 2, "max_retries": 10, "max_concurrency": 4 },
       // Mail received through SES for mailboxes whose mail the store holds (mailbox/receive.ts). 4 a batch, handled
       // one at a time, since a message can be 40 MB. After 5 tries a job waits in the dead-letter queue, and the
       // message in S3 for 7 days. Create once: wrangler queues create xstate-mail-in, and xstate-mail-in-dlq
@@ -204,17 +184,14 @@
   ],
   // One agent run = one AgentRun instance (agents/run.ts): every model and tool call is a durable step.
   "workflows": [{ "name": "xstate-agent-run", "binding": "AGENT_RUN", "class_name": "AgentRun" }],
-  // Hourly: safety-net mail sync (in case webhooks were lost) and purge of files deleted over 30 days ago.
+  // Hourly: clean-ups (jobs/hourly.ts), such as the purge of files and mail deleted over 30 days ago.
   "triggers": { "crons": ["0 * * * *"] },
   // Set with `wrangler secret put <NAME>`; locally in .dev.vars.
-  // STALWART_WEBHOOK_SECRET: HMAC key shared with the WebHook object on Stalwart (signatureKey).
   // AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY: IAM user that manages SES identities (not sending).
   // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY: an R2 API token's S3 keys, Object Read & Write on all buckets.
   // CLOUDFLARE_API_TOKEN: an API token with "Workers R2 Storage Write", to create and delete buckets.
   // API_KEYS_ENCRYPTION_KEY: encrypts organizations' secret API keys at rest (audience/keys.ts). Any long random
   // string (openssl rand -base64 48). Changing it makes every stored secret key unreadable, so set it once.
-  // SCAN_SECRET (optional while SCAN_MODE is "off"): shared with the scan service on the mail server
-  // (apps/scanner/deploy/README.md). Not in "required" so deploys work before the scanner exists.
   // MAIL_INBOUND_ACCESS_KEY_ID / MAIL_INBOUND_SECRET_ACCESS_KEY (optional until receiving is on): IAM user
   // xstate-mail-inbound, allowed only to read, write (the quarantine copy) and delete in the S3 bucket SES saves
   // received mail to.
@@ -227,12 +204,10 @@
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   "secrets": {
     "required": [
-      "STALWART_API_KEY",
       "JWT_SECRET",
       "R2_ACCESS_KEY_ID",
       "R2_SECRET_ACCESS_KEY",
       "CLOUDFLARE_API_TOKEN",
-      "STALWART_WEBHOOK_SECRET",
       "AWS_SES_ACCESS_KEY_ID",
       "AWS_SES_SECRET_ACCESS_KEY",
       "API_KEYS_ENCRYPTION_KEY",

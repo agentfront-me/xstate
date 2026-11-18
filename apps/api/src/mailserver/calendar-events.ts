@@ -1,7 +1,7 @@
-// Turning Stalwart's JSCalendar events into the flat events the API returns, and the API's input back into
+// Turning stored JSCalendar events into the flat events the API returns, and the API's input back into
 // JSCalendar. No runtime imports, so `pnpm test` runs this file directly under Node.
 
-import type { JmapEvent, JmapParticipant, JmapRecurrenceRule } from './stalwart/calendar'
+import type { StoredEvent, StoredParticipant, StoredRecurrenceRule } from './calendar-types'
 
 export type GuestStatus = 'needs-action' | 'accepted' | 'declined' | 'tentative'
 export type Guest = { email: string; name: string | null; organizer: boolean; optional: boolean; status: GuestStatus }
@@ -79,10 +79,10 @@ export type EventInput = {
 const STATUSES: GuestStatus[] = ['needs-action', 'accepted', 'declined', 'tentative']
 
 // ---------------------------------------------------------------------------------------------------------------
-// Stalwart → API
+// Stored → API
 
 /** `addresses`: the mailbox's own addresses (lowercase), to tell its own participant entry apart. */
-export function toEvent(e: JmapEvent, addresses: string[]): CalendarEvent {
+export function toEvent(e: StoredEvent, addresses: string[]): CalendarEvent {
   const allDay = !!e.showWithoutTime
   const localStart = trimSeconds(e.start)
   const minutes = durationMinutes(e.duration ?? (allDay ? 'P1D' : 'PT0S'))
@@ -97,7 +97,7 @@ export function toEvent(e: JmapEvent, addresses: string[]): CalendarEvent {
     start = e.start.slice(0, 10)
     end = localEndFull.slice(0, 10)
   } else {
-    // Stalwart gives UTC times for stored events; a parsed invite has only the local time and its zone.
+    // Stored events come with UTC times; a parsed invite has only the local time and its zone.
     start = e.utcStart ?? (e.timeZone ? zonedToUtc(e.start, e.timeZone) : `${withSeconds(e.start)}Z`)
     end = e.utcEnd ?? `${addMinutes(start.replace(/Z$/, ''), minutes)}Z`
   }
@@ -127,8 +127,8 @@ export function toEvent(e: JmapEvent, addresses: string[]): CalendarEvent {
   }
 }
 
-/** Everyone on the event, organizer first. Empty when nobody but the organizer is left (Stalwart keeps them). */
-function toGuests(participants: JmapEvent['participants']): Guest[] {
+/** Everyone on the event, organizer first. Empty when nobody but the organizer is left (the store keeps them). */
+function toGuests(participants: StoredEvent['participants']): Guest[] {
   const guests = Object.values(participants ?? {})
     .map((p): Guest | null => {
       const email = mailto(p.calendarAddress)
@@ -147,7 +147,7 @@ function toGuests(participants: JmapEvent['participants']): Guest[] {
   return guests.some((g) => !g.organizer) ? guests : []
 }
 
-function toRepeat(rule: JmapRecurrenceRule | null | undefined): Repeat | null {
+function toRepeat(rule: StoredRecurrenceRule | null | undefined): Repeat | null {
   if (!rule) return null
   const frequency = (['daily', 'weekly', 'monthly', 'yearly'] as const).find((f) => f === rule.frequency)
   if (!frequency) return null
@@ -161,7 +161,7 @@ function toRepeat(rule: JmapRecurrenceRule | null | undefined): Repeat | null {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// API → Stalwart
+// API → stored
 
 /**
  * The JSCalendar fields for an event's time, text and repeat rule (not calendar or guests). description, location
@@ -206,15 +206,14 @@ function fromRepeat(repeat: NonNullable<EventInput['repeat']>): Record<string, u
 }
 
 /**
- * The participants map for an event this mailbox organizes. Setting the organizer explicitly matters: under the
- * admin key Stalwart's own scheduling identity is the admin's address, but it takes the organizer from here.
+ * The participants map for an event this mailbox organizes, with the organizer set explicitly.
  * Guests already on the event keep their entry, and so their answer.
  */
 export function participants(
   organizer: { email: string; name: string | null },
   guests: NonNullable<EventInput['guests']>,
-  existing: JmapEvent['participants'],
-): Record<string, JmapParticipant> | null {
+  existing: StoredEvent['participants'],
+): Record<string, StoredParticipant> | null {
   const unique = new Map<string, (typeof guests)[number]>()
   for (const g of guests) {
     const email = g.email.trim().toLowerCase()
@@ -223,7 +222,7 @@ export function participants(
   if (!unique.size) return null
 
   const byEmail = new Map(Object.entries(existing ?? {}).map(([key, p]) => [mailto(p.calendarAddress), { key, p }]))
-  const out: Record<string, JmapParticipant> = {}
+  const out: Record<string, StoredParticipant> = {}
   const own = byEmail.get(organizer.email.toLowerCase())
   out[own?.key ?? 'organizer'] = {
     '@type': 'Participant',
@@ -267,7 +266,7 @@ export function rekeyOverrides(
 }
 
 /** The key of this mailbox's own entry in an event's participants, for RSVP. */
-export function ownParticipantKey(participantsMap: JmapEvent['participants'], addresses: string[]): string | null {
+export function ownParticipantKey(participantsMap: StoredEvent['participants'], addresses: string[]): string | null {
   for (const [key, p] of Object.entries(participantsMap ?? {})) {
     const email = mailto(p.calendarAddress)
     if (email && addresses.includes(email)) return key

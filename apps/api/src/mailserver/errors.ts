@@ -15,16 +15,3 @@ export function notFound(what: string): EmailError {
 export function forbidden(message: string): EmailError {
   return new EmailError('forbidden', message, 403)
 }
-
-/**
- * Runs a D1 write after a mail server change; if it fails, runs `undo` to reverse the mail server change and
- * rethrows, so Stalwart and D1 don't drift apart.
- */
-export async function withRollback<T>(write: () => Promise<T>, undo: () => Promise<unknown>): Promise<T> {
-  try {
-    return await write()
-  } catch (err) {
-    await undo().catch((undoErr) => console.error('mailserver: undoing mail server change failed', undoErr))
-    throw err
-  }
-}

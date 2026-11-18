@@ -1,6 +1,6 @@
 // Where a copied Gmail message goes, and the date-range search. Pure functions (tested in mail-rules.test.ts).
 
-import type { FolderRole } from '../mailserver/stalwart/mail'
+import type { StoreFolderRole as FolderRole } from '../mailbox/query'
 
 const SYSTEM_FOLDERS: Record<string, FolderRole> = { INBOX: 'inbox', SENT: 'sent', DRAFT: 'drafts', SPAM: 'junk', TRASH: 'trash' }
 

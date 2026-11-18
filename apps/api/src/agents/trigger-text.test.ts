@@ -1,7 +1,7 @@
 // pnpm --filter @xstate/api test
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import type { TriggerEmail } from '../mailserver/stalwart/mail.ts'
+import type { TriggerEmail } from '../mailbox/trigger-email.ts'
 import { automated, emailTask, matchesRules, webhookTask } from './trigger-text.ts'
 
 const email = (over: Partial<TriggerEmail> = {}): TriggerEmail => ({

@@ -1,6 +1,6 @@
 // Calendar: follows the Calendar screen of the "xstate App" design. Upcoming events grouped Today / Tomorrow / date
 // on the left (clicking one moves the grid there and opens it), a Day / Week / Month grid, and the event panel over
-// the right. It shows your own personal mailbox's calendar (Stalwart, via the calendar_* API).
+// the right. It shows your own personal mailbox's calendar (via the calendar_* API).
 
 import '../styles/storage.css'
 import '../styles/users.css'

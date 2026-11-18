@@ -5,7 +5,7 @@ import { describe, it } from 'node:test'
 import ICAL from 'ical.js'
 import PostalMime from 'postal-mime'
 import { zonedToUtc } from '../mailserver/calendar-events.ts'
-import type { JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredEvent } from '../mailserver/calendar-types'
 import { buildMessage } from './compose.ts'
 import { buildIcs } from './ical-out.ts'
 import { inviteText, whenText } from './invite-mail.ts'
@@ -18,7 +18,7 @@ const people = (statuses: Record<string, string> = {}) => ({
   g1: { name: 'Sam', calendarAddress: 'mailto:sam@gmail.com', roles: { attendee: true }, participationStatus: statuses.sam ?? 'needs-action' },
   g2: { calendarAddress: 'mailto:kim@outlook.com', roles: { attendee: true, optional: true }, participationStatus: statuses.kim ?? 'needs-action' },
 })
-const event = (over: Partial<JmapEvent> = {}): JmapEvent => ({
+const event = (over: Partial<StoredEvent> = {}): StoredEvent => ({
   id: 'E1',
   uid: 'uid-1',
   sequence: 1,

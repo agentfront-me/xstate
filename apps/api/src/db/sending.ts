@@ -1,4 +1,4 @@
-// send_log, delivery_counts, sending_suspensions and sending_blocks. See migrations/0011_sending_limits.sql.
+// send_log, delivery_counts and sending_suspensions (sending_blocks is left from Stalwart, dropped in phase 5c). See migrations/0011_sending_limits.sql.
 
 export type Usage = { mailboxHour: number; mailboxDay: number; orgHour: number; orgDay: number }
 
@@ -103,34 +103,6 @@ export async function reputation(db: D1Database, organizationId: string, mailbox
     .bind(organizationId, mailboxId, since)
     .first<Reputation>()
   return row ?? { delivered: 0, bounces: 0, complaints: 0 }
-}
-
-/** Stalwart accounts that should have sending turned off: user mailboxes under an active suspension. */
-export async function accountsToBlock(db: D1Database): Promise<{ stalwart_id: string; organization_id: string }[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT m.stalwart_id, m.organization_id FROM mailboxes m
-       WHERE m.kind != 'shared' AND EXISTS (
-         SELECT 1 FROM sending_suspensions s
-         WHERE s.organization_id = m.organization_id AND s.lifted_at IS NULL AND (s.mailbox_id IS NULL OR s.mailbox_id = m.id))`,
-    )
-    .all<{ stalwart_id: string; organization_id: string }>()
-  return results
-}
-
-export async function blockedAccounts(db: D1Database): Promise<string[]> {
-  const { results } = await db.prepare('SELECT stalwart_id FROM sending_blocks').all<{ stalwart_id: string }>()
-  return results.map((r) => r.stalwart_id)
-}
-
-export function addBlock(db: D1Database, stalwartId: string, organizationId: string, createdAt: string): D1PreparedStatement {
-  return db
-    .prepare('INSERT OR IGNORE INTO sending_blocks (stalwart_id, organization_id, created_at) VALUES (?, ?, ?)')
-    .bind(stalwartId, organizationId, createdAt)
-}
-
-export function removeBlock(db: D1Database, stalwartId: string): D1PreparedStatement {
-  return db.prepare('DELETE FROM sending_blocks WHERE stalwart_id = ?').bind(stalwartId)
 }
 
 /** Drops send_log and calendar_sends rows older than `before` and delivery counts older than `beforeDay`. */

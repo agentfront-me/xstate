@@ -1,8 +1,7 @@
-// POST /v1/email/mailboxes/:mailboxId/uploads?name=<file name>: the request body is the file. Streams it to the
-// mailbox's Stalwart account and returns the blob id to list in email_send's attachments. Unused uploads expire on
-// Stalwart. For a mailbox whose mail the store holds, the file is kept in the organization's bucket instead
-// (mailbox/outbound.ts), and deleted after a day if it isn't sent. Going through the API (not straight to R2) also works for the desktop app, whose app:// origin R2's
-// CORS rules can't allow. The sent message's attachments are copied to R2 by the mail sync like any other.
+// POST /v1/email/mailboxes/:mailboxId/uploads?name=<file name>: the request body is the file. It is kept in the
+// organization's bucket (mailbox/outbound.ts) and deleted after a day if it isn't sent; the returned blob id goes in
+// email_send's attachments. Going through the API (not straight to R2) also works for the desktop app, whose app://
+// origin R2's CORS rules can't allow.
 
 import type { Context } from 'hono'
 import { uploadAttachment } from '../mailserver'

@@ -1,8 +1,7 @@
 // Sending invitations, updates, cancellations and answers from a store-held mailbox (docs/mailbox-store-plan.md,
-// phase 3b). ./scheduling.ts decides what a change means for whom, the same way Stalwart does for its own
-// mailboxes; this builds each email (./ical-out.ts, ./invite-mail.ts, ./compose.ts) and sends it through
+// phase 3b). ./scheduling.ts decides what a change means for whom; this builds each email (./ical-out.ts, ./invite-mail.ts, ./compose.ts) and sends it through
 // SES. The caps and suppressed addresses were already checked by mailserver/calendar.ts (withSendingCaps). There is
-// no Sent copy, as with Stalwart's invitations; each recipient gets a `sent` line in the delivery log.
+// no Sent copy; each recipient gets a `sent` line in the delivery log.
 
 import type { MailboxRow } from '../db/mailboxes'
 import { mailto } from '../mailserver/calendar-events'

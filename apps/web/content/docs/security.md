@@ -62,10 +62,10 @@ change how something works. Recent changes are listed [at the end](#changes).
   next messages.
   xstate publishes an MTA-STS policy for these domains (in enforce mode, starting with xstate.com), so senders that
   support it deliver only over encrypted connections to Amazon SES, with a verified certificate.
-- **Delivery log.** For every mailbox, xstate keeps a record of where each message went: delivered
-  and to which folder (with the reasons it went to Junk), attachments scanned, sent, accepted or bounced by the
-  receiving server, refused, or dropped for an address that doesn't exist. It holds ids, addresses and outcomes,
-  never what a message says, is kept 30 days, and only owners and admins can read it.
+- **Delivery log.** For every mailbox, xstate keeps a record of where each message went: delivered and to which
+  folder (with the reasons it went to Junk), sent, accepted or bounced by the receiving server, refused, or dropped
+  for an address that doesn't exist. It holds ids, addresses and outcomes, never what a message says, is kept 30
+  days, and only owners and admins can read it.
 - **A mailbox's own store.** Each mailbox keeps its own index of its messages (senders, recipients, subjects,
   folders, flags and body text), with each whole message (attachments included) in your organization's own storage
   bucket, from which the message and its attachments are opened. Its calendars are kept the same way. It is kept

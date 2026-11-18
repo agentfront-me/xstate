@@ -12,7 +12,7 @@ import {
   toEvent,
   zonedToUtc,
 } from './calendar-events.ts'
-import type { JmapEvent } from './stalwart/calendar.ts'
+import type { StoredEvent } from './calendar-types.ts'
 
 const me = ['priya@acme.test']
 
@@ -117,7 +117,7 @@ describe('participants', () => {
   })
 
   it('names the organizer explicitly and keeps existing answers', () => {
-    const existing: JmapEvent['participants'] = {
+    const existing: StoredEvent['participants'] = {
       o: { calendarAddress: 'mailto:priya@acme.test', roles: { owner: true, attendee: true } },
       m: { calendarAddress: 'mailto:marcus@acme.test', participationStatus: 'accepted', roles: { attendee: true } },
     }
@@ -132,7 +132,7 @@ describe('participants', () => {
 })
 
 describe('toEvent', () => {
-  const base: JmapEvent = {
+  const base: StoredEvent = {
     id: 'd',
     calendarIds: { b: true },
     title: 'Pricing review',

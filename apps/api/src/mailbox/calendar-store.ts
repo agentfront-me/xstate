@@ -1,17 +1,14 @@
-// Calendars kept in a mailbox's store (docs/mailbox-store-plan.md, phase 3a), behind the same calls as Stalwart's
-// (../mailserver/calendar-backend.ts). Events are JSCalendar JSON in the store; series are expanded here
-// (./calendar-expand.ts). The first time a store-held mailbox's calendar is used, what Stalwart holds for it is
-// copied over once, ids and all, so links keep working.
+// Calendars kept in a mailbox's store (docs/mailbox-store-plan.md, phase 3a), behind ../mailserver/calendar-backend.ts.
+// Events are JSCalendar JSON in the store; series are expanded here (./calendar-expand.ts).
 //
-// With `notify`, a change emails the guests (or, for a guest's own answer, the organizer) the way Stalwart does for its
-// mailboxes (phase 3b: ./scheduling.ts decides, ./invite-send.ts sends). The change is saved first; if the email then
+// With `notify`, a change emails the guests (or, for a guest's own answer, the organizer) (phase 3b: ./scheduling.ts decides, ./invite-send.ts sends). The change is saved first; if the email then
 // fails, the caller hears so (invite_send_failed) and the event stays as saved.
 
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
 import type { CalendarBackend } from '../mailserver/calendar-backend'
 import { EmailError } from '../mailserver/errors'
-import type { JmapCalendar, JmapEvent } from '../mailserver/stalwart/calendar'
+import type { StoredCalendar, StoredEvent } from '../mailserver/calendar-types'
 import type { EmailEnv } from '../mailserver/types'
 import { applyPatch, changesSchedule, expand, occurrenceOf, parseOccurrenceId, timeColumns, withTimes } from './calendar-expand'
 import { ulid } from './inbound'
@@ -23,13 +20,13 @@ import { store } from './stub'
 export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promise<CalendarBackend> {
   const stub = await store(env, mailbox.id)
 
-  const rows = async (ids: string[]): Promise<JmapEvent[]> =>
-    (await stub.eventRows(ids)).map((r) => ({ ...(JSON.parse(r.json) as JmapEvent), id: r.id }))
-  const series = async (id: string): Promise<JmapEvent | null> => (await rows([id]))[0] ?? null
-  const put = async (e: JmapEvent) => stub.putEvents([toRow(e)])
-  const calendars = async (): Promise<JmapCalendar[]> => (await stub.calendarRows()).map(toCalendar)
+  const rows = async (ids: string[]): Promise<StoredEvent[]> =>
+    (await stub.eventRows(ids)).map((r) => ({ ...(JSON.parse(r.json) as StoredEvent), id: r.id }))
+  const series = async (id: string): Promise<StoredEvent | null> => (await rows([id]))[0] ?? null
+  const put = async (e: StoredEvent) => stub.putEvents([toRow(e)])
+  const calendars = async (): Promise<StoredCalendar[]> => (await stub.calendarRows()).map(toCalendar)
   const own = ownAddresses(mailbox)
-  const notifyGuests = async (before: JmapEvent | null, after: JmapEvent | null) => {
+  const notifyGuests = async (before: StoredEvent | null, after: StoredEvent | null) => {
     const emails = scheduling(before, after, own)
     if (!emails.length) return
     try {
@@ -56,7 +53,7 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       const after = Date.parse(range.after)
       const before = Date.parse(range.before)
       const found = (await stub.eventsInRange(range.after, range.before, range.calendarId ?? null)).map((r) => ({
-        ...(JSON.parse(r.json) as JmapEvent),
+        ...(JSON.parse(r.json) as StoredEvent),
         id: r.id,
       }))
       return found.flatMap((e) => expand(e, after, before)).sort((a, b) => a.utcStart!.localeCompare(b.utcStart!))
@@ -81,7 +78,7 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       }
       const id = ulid()
       const now = new Date().toISOString()
-      const created = { uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as JmapEvent
+      const created = { uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as StoredEvent
       await put(created)
       if (notify) await notifyGuests(null, created)
       return id
@@ -90,7 +87,7 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       // A change addressed to one occurrence applies to its series, as the calls in ../mailserver/calendar.ts expect.
       const current = await series(parseOccurrenceId(id)?.seriesId ?? id)
       if (!current) throw new EmailError('event_not_found', 'That event no longer exists', 404)
-      const next = applyPatch(current as unknown as Record<string, unknown>, patch) as unknown as JmapEvent
+      const next = applyPatch(current as unknown as Record<string, unknown>, patch) as unknown as StoredEvent
       // An organizer's own sequence (an update received by email) is kept as it is; our own changes raise it.
       if (changesSchedule(patch) && !('sequence' in patch)) next.sequence = (current.sequence ?? 0) + 1
       next.updated = new Date().toISOString()
@@ -133,7 +130,7 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
         }
         const id = ulid()
         try {
-          rows.push(toRow({ uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as JmapEvent))
+          rows.push(toRow({ uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as StoredEvent))
           created[key] = id
         } catch (err) {
           // A date or repeat rule we can't place in time: this event only.
@@ -148,9 +145,9 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
 }
 
 /** The store row for an event: its JSON without the fields only an expanded entry has, plus where it sits in time. */
-function toRow(e: JmapEvent): StoreEventPut {
+function toRow(e: StoredEvent): StoreEventPut {
   const { utcStart: _s, utcEnd: _e, baseEventId: _b, recurrenceId: _r, ...event } = e
-  const time = timeColumns(event as JmapEvent)
+  const time = timeColumns(event as StoredEvent)
   return {
     id: e.id,
     calendarId: Object.keys(e.calendarIds ?? {})[0] ?? '',
@@ -173,6 +170,6 @@ export function ownAddresses(mailbox: MailboxRow): string[] {
   return [mailbox.address, ...aliases].map((a) => a.toLowerCase())
 }
 
-function toCalendar(c: StoreCalendar): JmapCalendar {
+function toCalendar(c: StoreCalendar): StoredCalendar {
   return { id: c.id, name: c.name, isDefault: c.isDefault, color: c.color, sortOrder: c.sortOrder }
 }

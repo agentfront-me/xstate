@@ -3,7 +3,7 @@ import { handleOAuthCallback } from './agents/connectors'
 import { handleWebhook } from './agents/triggers'
 import { handleCollect } from './audience/collect'
 import { snippet } from './audience/snippet'
-import { consume, hourly, type MailSyncJob } from './jobs/mail-sync'
+import { hourly } from './jobs/hourly'
 import { consume as consumeSearch, hourly as searchHourly, type SearchJob } from './search/jobs'
 import { finalHourly } from './migration/final'
 import { migrationHourly } from './migration/watchdog'
@@ -13,7 +13,6 @@ import { handleSesInbound } from './jobs/ses-inbound'
 import { handlePaddleWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
 import { consumePush, type PushJob } from './push/send'
-import { consumeStore, type MailboxStoreJob } from './mailbox/jobs'
 import type { InboundJob } from './mailbox/inbound'
 import { consumeInbound } from './mailbox/receive'
 import { consumeMailEvents, type MailEvent } from './mailbox/events'
@@ -108,7 +107,6 @@ export default {
   // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) and the mta-sts.<domain> policy hosts
   // (mailbox/mta-sts.ts) are this same Worker; everything else is the API.
   fetch: (request, env, ctx) => handleMtaStsHost(request, env) ?? handleMcpHost(request, env, ctx) ?? app.fetch(request, env, ctx),
-  // MAIL_SYNC and STORE_COPY: old queues from the Stalwart days, only drained until they are removed (phase 5b).
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
   // PUSH jobs: notifications to the mobile app (push/send.ts).
@@ -123,13 +121,11 @@ export default {
           ? consumeMigrationDead(batch as MessageBatch<MigrationJob>, env)
           : batch.queue === 'xstate-push'
             ? consumePush(batch as MessageBatch<PushJob>, env)
-            : batch.queue === 'xstate-mailbox-store'
-              ? consumeStore(batch as MessageBatch<MailboxStoreJob>)
-              : batch.queue === 'xstate-mail-in'
-                ? consumeInbound(batch as MessageBatch<InboundJob>, env)
-                : batch.queue === 'xstate-mail-events'
-                  ? consumeMailEvents(batch as MessageBatch<MailEvent>, env)
-                  : consume(batch as MessageBatch<MailSyncJob>),
+            : batch.queue === 'xstate-mail-in'
+              ? consumeInbound(batch as MessageBatch<InboundJob>, env)
+              : batch.queue === 'xstate-mail-events'
+                ? consumeMailEvents(batch as MessageBatch<MailEvent>, env)
+                : Promise.resolve(console.error(`queue: no consumer for ${batch.queue}`)).then(() => batch.retryAll()),
   // Hourly: purge of files and mail deleted over 30 days ago, the search backfill and sweep, and the other clean-ups.
   scheduled: (_controller, env, ctx) =>
     ctx.waitUntil(
@@ -160,4 +156,4 @@ export default {
         }),
       ]),
     ),
-} satisfies ExportedHandler<Env, MailSyncJob | SearchJob | MigrationJob | PushJob | InboundJob | MailEvent>
+} satisfies ExportedHandler<Env, SearchJob | MigrationJob | PushJob | InboundJob | MailEvent>
