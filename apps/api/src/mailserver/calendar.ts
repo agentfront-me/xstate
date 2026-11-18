@@ -1,8 +1,7 @@
 // Calendars and events. A mailbox's calendar is read and changed by the same people as its mail (mailContext in
-// ./access): a personal mailbox's calendar only by its owner. Events live in Stalwart (JMAP Calendars, see
-// ./stalwart/calendar), or in the mailbox's store once its mail is there (./calendar-backend, phase 3 of
-// docs/mailbox-store-plan.md). Invitations to guests go out by email (from Stalwart, or through SES for store-held
-// mailboxes), so outside guests count against the same sending caps and suppression list as email_send (./sending).
+// ./access): a personal mailbox's calendar only by its owner. Events live in the mailbox's store (./calendar-backend,
+// phase 3 of docs/mailbox-store-plan.md). Invitations to guests go out by email through SES, so outside guests count
+// against the same sending caps and suppression list as email_send (./sending).
 
 import * as eventsDb from '../db/email-events'
 import * as mailboxAccessDb from '../db/mailbox-access'
@@ -24,16 +23,15 @@ import {
   type GuestStatus,
 } from './calendar-events'
 import { parseIcs } from '../mailbox/ical-in'
-import { serverBlobId, storeBlob } from '../mailbox/read'
+import { storeBlob } from '../mailbox/read'
 import { EmailError, forbidden, notFound as missing } from './errors'
 import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
 import { calendarsOf, type CalendarBackend } from './calendar-backend'
-import * as jmap from './stalwart/calendar'
+import type { JmapEvent, ParsedInvite } from './stalwart/calendar'
 import type { Actor, EmailEnv } from './types'
 
 export type Calendar = { id: string; name: string; isDefault: boolean; color: string | null }
 export type { CalendarEvent, EventInput, Guest, GuestStatus, Repeat } from './calendar-events'
-export { setUpCalendars } from './calendar-backend'
 
 /** Most guests one event can have: Stalwart stores at most 20 participants per event, the organizer included. */
 export const MAX_GUESTS = 19
@@ -221,28 +219,10 @@ export async function respondToEvent(
   const key = ownParticipantKey(current.participants, ownAddresses(mailbox))
   if (!key || event.isOrganizer) throw new EmailError('not_invited', "You're not a guest of this event", 409)
 
-  // Invites from other xstate mailboxes were filed by Stalwart, and changing the answer sends the reply. For one
-  // from outside, added from its email, Stalwart sends nothing on a change (tested on 1.0.2), but it does send the
-  // reply when the event is created with the answer, so that copy is quietly replaced. Its id changes.
-  const outside = !!event.organizer && (await outsideAddresses(env.DB, [event.organizer])).length > 0
+  // Changing the answer emails it to the organizer (mailbox/scheduling.ts).
   const id = await withSendingCaps(env, mailbox, event.organizer ? [event.organizer] : [], async () => {
-    // A store-held mailbox sends the answer itself (mailbox/scheduling.ts), whoever organizes the event.
-    if (!outside || cal.kind === 'store') {
-      await cal.updateEvent(eventId, { [`participants/${key}/participationStatus`]: status }, true)
-      return eventId
-    }
-    const base = current.baseEventId ? await cal.getEvent(current.baseEventId) : current
-    if (!base) throw notFound()
-    const people = { ...(base.participants ?? {}) }
-    const baseKey = ownParticipantKey(people, ownAddresses(mailbox)) ?? key
-    people[baseKey] = { ...people[baseKey], participationStatus: status }
-    const copy = { ...inviteFields(base, event.organizer!), participants: people, calendarIds: base.calendarIds }
-    await cal.destroyEvent(base.id, false)
-    return cal.createEvent(copy, true).catch(async (err) => {
-      // Put the copy back as it was rather than lose it.
-      await cal.createEvent({ ...inviteFields(base, event.organizer!), participants: base.participants, calendarIds: base.calendarIds }, false)
-      throw err
-    })
+    await cal.updateEvent(eventId, { [`participants/${key}/participationStatus`]: status }, true)
+    return eventId
   })
   return getEvent(env, actor, mailboxId, id)
 }
@@ -341,8 +321,7 @@ export async function applyInvite(
 }
 
 async function loadInvite(env: EmailEnv, mailbox: MailboxRow, cal: CalendarBackend, blobId: string) {
-  // A store-held mailbox reads the file itself (mailbox/ical-in.ts); a Stalwart one has Stalwart parse it.
-  const all = cal.kind === 'store' ? await readInvite(env, mailbox, blobId) : await jmap.parseInvite(env, mailbox.stalwart_id, await serverBlobId(env, mailbox, blobId, 'text/calendar'))
+  const all = await readInvite(env, mailbox, blobId)
   // A repeating event's changed occurrences can come as extra entries; the first is the event itself.
   const parsed = all.find((e) => !e.recurrenceId) ?? all[0]
   if (!parsed) throw new EmailError('not_an_invite', "This attachment isn't a calendar invitation", 400)
@@ -351,8 +330,8 @@ async function loadInvite(env: EmailEnv, mailbox: MailboxRow, cal: CalendarBacke
   return { parsed, existing }
 }
 
-/** An invitation file from the store, in the shape Stalwart's parse gives: the event (with its overrides), or its occurrences. */
-async function readInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string): Promise<jmap.ParsedInvite[]> {
+/** An invitation file from the store (mailbox/ical-in.ts): the event (with its overrides), or its occurrences. */
+async function readInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string): Promise<ParsedInvite[]> {
   const blob = await storeBlob(env, mailbox, blobId)
   if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
   const file = parseIcs(new TextDecoder().decode(blob.bytes))
@@ -369,7 +348,7 @@ function inviteMethod(method: string | null | undefined): InviteMethod {
  * The event fields to store from a parsed invite. organizerCalendarAddress must be set: without it Stalwart takes
  * the mailbox for the organizer and would email the real organizer a new invitation instead of an answer.
  */
-function inviteFields(parsed: jmap.JmapEvent, organizer: string): Record<string, unknown> {
+function inviteFields(parsed: JmapEvent, organizer: string): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     '@type': 'Event',
     uid: parsed.uid,

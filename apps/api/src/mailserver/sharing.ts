@@ -1,9 +1,8 @@
-// Shared mailbox access. A shared mailbox is a Stalwart group; members open it through their personal mailbox.
+// Shared mailbox access, in D1: who can open a shared mailbox, and whether they can only read it.
 
 import * as mailboxAccessDb from '../db/mailbox-access'
 import { mailboxContext, requireMemberInOrg } from './access'
-import { EmailError, withRollback } from './errors'
-import * as stalwart from './stalwart/accounts'
+import { EmailError } from './errors'
 import type { Actor, EmailEnv, MailboxAccessEntry } from './types'
 
 export async function listMailboxAccess(env: EmailEnv, actor: Actor, mailboxId: string): Promise<MailboxAccessEntry[]> {
@@ -13,12 +12,8 @@ export async function listMailboxAccess(env: EmailEnv, actor: Actor, mailboxId: 
 }
 
 /**
- * Lets a member open a shared mailbox. In Stalwart this makes each of the member's personal mailboxes a member
- * of the shared mailbox's group, so it shows up in their mail client (as shared folders in IMAP, a separate
- * account in JMAP). A member with no personal mailbox yet gets it when one is created.
- *
- * `read` lets them read but not send, move or change anything. Only on xstate's new mail system: on the current mail
- * server group membership can't be made read-only. Granting again with another level changes it.
+ * Lets a member open a shared mailbox. `read` lets them read but not send, move or change anything. Granting again
+ * with another level changes it.
  */
 export async function grantMailboxAccess(
   env: EmailEnv,
@@ -29,9 +24,6 @@ export async function grantMailboxAccess(
 ): Promise<void> {
   const { mailbox } = await mailboxContext(env, actor, mailboxId, 'manage')
   if (mailbox.kind !== 'shared') throw new EmailError('not_shared', 'Access can only be granted to shared mailboxes')
-  if (access === 'read' && mailbox.backend !== 'store') {
-    throw new EmailError('read_needs_new_mail_system', "Read-only access works once this mailbox's domain has moved to xstate's new mail system", 409)
-  }
   await requireMemberInOrg(env, memberId, mailbox.organization_id)
 
   const existing = await mailboxAccessDb.find(env.DB, mailbox.id, memberId)
@@ -42,15 +34,7 @@ export async function grantMailboxAccess(
     }
     return
   }
-  const { meta } = await mailboxAccessDb
-    .insert(env.DB, { mailboxId: mailbox.id, memberId, access, createdAt: new Date().toISOString() })
-    .run()
-  if (!meta.changes) return
-
-  await withRollback(
-    () => syncMemberGroups(env, memberId),
-    () => mailboxAccessDb.remove(env.DB, mailbox.id, memberId).run(),
-  )
+  await mailboxAccessDb.insert(env.DB, { mailboxId: mailbox.id, memberId, access, createdAt: new Date().toISOString() }).run()
 }
 
 export async function revokeMailboxAccess(env: EmailEnv, actor: Actor, mailboxId: string, memberId: string): Promise<void> {
@@ -60,16 +44,6 @@ export async function revokeMailboxAccess(env: EmailEnv, actor: Actor, mailboxId
   if (row.access === 'owner') throw new EmailError('owner_access', "A mailbox owner's access cannot be revoked")
 
   await mailboxAccessDb.remove(env.DB, mailbox.id, memberId).run()
-  await withRollback(
-    () => syncMemberGroups(env, memberId),
-    () => mailboxAccessDb.insert(env.DB, { mailboxId: mailbox.id, memberId, access: row.access, createdAt: row.created_at }).run(),
-  )
-}
-
-/** Sets each of the member's personal mailboxes in Stalwart to belong to exactly the shared mailboxes they can open. */
-export async function syncMemberGroups(env: EmailEnv, memberId: string): Promise<void> {
-  const { sharedGroups, personalMailboxes } = await mailboxAccessDb.stalwartIdsForMember(env.DB, memberId)
-  for (const id of personalMailboxes) await stalwart.setMemberGroups(env, id, sharedGroups)
 }
 
 /**
@@ -96,7 +70,4 @@ export async function giveMailbox(env: EmailEnv, actor: Actor, mailboxId: string
       : mailboxAccessDb.insert(env.DB, { mailboxId: mailbox.id, memberId, access: 'owner', createdAt: new Date().toISOString() }),
   ])
   console.log('mailbox given', JSON.stringify({ by: actor.userId, mailboxId: mailbox.id, from: owner?.member_id ?? null, to: memberId }))
-  // Their shared mailboxes follow them into Stalwart, for mailboxes still there (no-op on the new mail system).
-  await syncMemberGroups(env, memberId).catch((err) => console.error('give mailbox: group sync failed', err))
-  if (owner) await syncMemberGroups(env, owner.member_id).catch((err) => console.error('give mailbox: group sync failed', err))
 }

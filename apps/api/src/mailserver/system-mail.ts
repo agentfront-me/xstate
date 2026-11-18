@@ -1,8 +1,6 @@
 // Email from xstate itself (invites), not from a customer's mailbox. It's sent like any other message, from the
 // xstate mailbox whose address is SYSTEM_MAIL_FROM (for example no-reply@xstate.com, a mailbox in xstate's own
-// organization), so it goes out through SES with that domain's DKIM and lands in its Sent folder: through Stalwart
-// while that mailbox is on Stalwart, through the mailbox store (mailbox/outbound.ts) once its domain has moved
-// (docs/mailbox-store-plan.md, phase 4e).
+// organization), so it goes out through SES with that domain's DKIM and lands in its Sent folder (mailbox/outbound.ts).
 //
 // When SYSTEM_MAIL_FROM is empty or isn't an xstate mailbox, nothing is sent and callers are told so: local dev
 // and new environments keep working, and the caller decides what to show instead.
@@ -11,7 +9,6 @@ import * as addressesDb from '../db/addresses'
 import * as mailboxesDb from '../db/mailboxes'
 import { ulid } from '../mailbox/inbound'
 import { sendFromStore, type OutboundEnv } from '../mailbox/outbound'
-import * as jmap from './stalwart/mail'
 import type { EmailEnv } from './types'
 
 export type SystemMailEnv = EmailEnv & Pick<Env, 'SYSTEM_MAIL_FROM'>
@@ -35,57 +32,23 @@ export async function sendSystemEmail(env: SystemMailEnv, message: SystemMessage
   const address = await addressesDb.findByAddress(env.DB, from)
   const mailbox = address && (await mailboxesDb.find(env.DB, address.mailbox_id))
   if (!mailbox) return { sent: false, reason: `${from} is not an xstate mailbox` }
-  if (mailbox.backend === 'store') {
-    // Sent as the API sends (it already allows a Reply-To and a chosen name); the Sent copy is kept.
-    await sendFromStore(
-      env as OutboundEnv,
-      mailbox,
-      {
-        to: [message.to],
-        subject: message.subject,
-        text: message.text,
-        html: message.html,
-        api: {
-          from: { email: from, name: FROM_NAME },
-          ...(message.replyTo && { replyTo: [message.replyTo] }),
-          messageId: `${ulid()}@${from.split('@')[1]}`,
-          keepCopy: true,
-        },
-      },
-      { recipients: [message.to], fromEmail: from, fromName: FROM_NAME },
-    )
-    return { sent: true }
-  }
-  const accountId = mailbox.stalwart_id
-
-  const [folders, identities] = await Promise.all([
-    jmap.getFolders(env, [accountId]).then((m) => m.get(accountId) ?? []),
-    jmap.getIdentities(env, accountId),
-  ])
-  const draftsId = folders.find((f) => f.role === 'drafts')?.id
-  const sentId = folders.find((f) => f.role === 'sent')?.id
-  if (!draftsId || !sentId) return { sent: false, reason: `${from} has no Drafts or Sent folder` }
-  const identityId =
-    identities.find((i) => i.email.toLowerCase() === from)?.id ?? (await jmap.createIdentity(env, accountId, { name: FROM_NAME, email: from }))
-
-  await jmap.submitEmail(env, accountId, {
-    identityId,
-    draftsId,
-    sentId,
-    email: {
-      from: [{ name: FROM_NAME, email: from }],
+  // Sent as the API sends (it already allows a Reply-To and a chosen name); the Sent copy is kept.
+  await sendFromStore(
+    env as OutboundEnv,
+    mailbox,
+    {
       to: [message.to],
-      ...(message.replyTo && { replyTo: [message.replyTo] }),
       subject: message.subject,
-      bodyStructure: {
-        type: 'multipart/alternative',
-        subParts: [
-          { partId: 'text', type: 'text/plain' },
-          { partId: 'html', type: 'text/html' },
-        ],
+      text: message.text,
+      html: message.html,
+      api: {
+        from: { email: from, name: FROM_NAME },
+        ...(message.replyTo && { replyTo: [message.replyTo] }),
+        messageId: `${ulid()}@${from.split('@')[1]}`,
+        keepCopy: true,
       },
-      bodyValues: { text: { value: message.text }, html: { value: message.html } },
     },
-  })
+    { recipients: [message.to], fromEmail: from, fromName: FROM_NAME },
+  )
   return { sent: true }
 }

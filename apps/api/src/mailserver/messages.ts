@@ -1,6 +1,7 @@
 // Reading mail and acting on messages. Access comes from mailContext / readableMailboxes in ./access: personal mail
-// only for its owner, shared and agent mailboxes for the people allowed in. Everything else is JMAP mail calls in
-// ./stalwart/mail, made with the admin key and the mailbox's Stalwart account id.
+// only for its owner, shared and agent mailboxes for the people allowed in. Every mailbox's mail is in its own store
+// (mailbox/store.ts, docs/mailbox-store-plan.md): lists and changes go there, whole messages are read from the raw
+// copies in the organization's bucket (mailbox/read.ts), and sending goes through Amazon SES (mailbox/outbound.ts).
 
 import * as accessDb from '../db/mailbox-access'
 import * as eventsDb from '../db/email-events'
@@ -8,22 +9,18 @@ import { announce } from '../live/announce'
 import type { MailboxRow } from '../db/mailboxes'
 import * as usersDb from '../db/users'
 import { checkName, inspectStream, type Safety } from '../security/attachments'
-import { refuseVirus } from '../security/refuse'
-import { scanning } from '../security/scan'
 import { mailContext, readableMailboxes } from './access'
 import { previewText } from './footer'
 import { htmlToText } from './html-text'
-import { readableText } from '../mailbox/compare'
 import { queueMailEvent } from '../mailbox/events'
 import { draftInStore, sendFromStore, uploadToStore } from '../mailbox/outbound'
-import { answeredByStore, heldByStore, parseStoreBlobId, readsFromStore, serverBlobId, storeBlob, storeThread } from '../mailbox/read'
+import { parseStoreBlobId, storeBlob, storeThread } from '../mailbox/read'
 import { store } from '../mailbox/stub'
-import type { StoreListRow } from '../mailbox/query'
+import type { StoreFolderRole, StoreListRow } from '../mailbox/query'
 import { EmailError } from './errors'
-import { reserveSend } from './sending'
-import * as jmap from './stalwart/mail'
-import type { FolderRole, JmapAddress, JmapBodyPart, JmapEmail, JmapEmailSummary, JmapFolder } from './stalwart/mail'
 import type { Actor, EmailEnv } from './types'
+
+export type FolderRole = StoreFolderRole
 
 const ROLES: FolderRole[] = ['inbox', 'sent', 'drafts', 'archive', 'junk', 'trash']
 export type FolderView = FolderRole | 'pinned'
@@ -85,31 +82,19 @@ export async function listFolders(
   mailboxId?: string,
 ): Promise<MailboxFolders[]> {
   const mailboxes = await mailboxesFor(env, actor, organizationId, mailboxId)
-  // Mailboxes whose mail the store holds keep their own folders; the rest are on Stalwart.
-  const onServer = mailboxes.filter((m) => !heldByStore(m))
-  const [folders, held] = await Promise.all([
-    jmap.getFolders(env, onServer.map((m) => m.stalwart_id)),
-    Promise.all(mailboxes.filter(heldByStore).map(async (m) => [m.id, await (await store(env, m.id)).folderList()] as const)),
-  ])
-  const heldFolders = new Map(held)
-  return mailboxes.map((m) => ({
+  const lists = await Promise.all(mailboxes.map(async (m) => (await store(env, m.id)).folderList()))
+  return mailboxes.map((m, i) => ({
     mailboxId: m.id,
     address: m.address,
     kind: m.kind,
-    folders: heldByStore(m)
-      ? (heldFolders.get(m.id) ?? []).map((f) => toFolder({ ...f, unreadEmails: f.unread, totalEmails: f.total }))
-      : (folders.get(m.stalwart_id) ?? []).map(toFolder),
+    folders: lists[i]!.map((f) => ({
+      id: f.id,
+      role: ROLES.includes(f.role as FolderRole) ? (f.role as FolderRole) : null,
+      name: f.name,
+      unread: f.unread,
+      total: f.total,
+    })),
   }))
-}
-
-function toFolder(f: JmapFolder): Folder {
-  return {
-    id: f.id,
-    role: ROLES.includes(f.role as FolderRole) ? (f.role as FolderRole) : null,
-    name: f.name,
-    unread: f.unreadEmails,
-    total: f.totalEmails,
-  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -143,7 +128,7 @@ export type CompactSummary = Pick<
   'id' | 'mailboxId' | 'threadId' | 'folder' | 'subject' | 'preview' | 'receivedAt' | 'hasAttachment' | 'threadSize'
 > & { from: string }
 
-/** Preview lengths: Stalwart's own previews are 256 characters. */
+/** Preview lengths. */
 const PREVIEW_MAX = 256
 const COMPACT_PREVIEW_MAX = 140
 
@@ -160,64 +145,29 @@ export async function listMessages(
   organizationId: string,
   input: ListMessagesInput,
 ): Promise<{ messages: (MessageSummary | CompactSummary)[]; nextCursor: string | null }> {
-  const readable = await mailboxesFor(env, actor, organizationId, input.mailboxId)
-  // Mailboxes whose lists are answered by their own store (mailbox/store.ts); the rest ask Stalwart.
-  const stored = readable.filter(answeredByStore)
-  const mailboxes = readable.filter((m) => !answeredByStore(m))
+  const mailboxes = await mailboxesFor(env, actor, organizationId, input.mailboxId)
   const text = (v: string | undefined) => v?.trim() || undefined
-  const [folders, fromStores] = await Promise.all([
-    jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id)),
-    Promise.all(
-      stored.map(async (m) => {
-        const stub = await store(env, m.id)
-        const page = await stub.list({
-          folder: input.folder,
-          unreadOnly: input.unreadOnly,
-          text: text(input.query),
-          from: text(input.from),
-          to: text(input.to),
-          subject: text(input.subject),
-          after: input.after,
-          before: earliest(input.cursor, input.before),
-          hasAttachment: input.hasAttachment,
-          limit: input.limit,
-        })
-        return { more: page.more, messages: page.messages.map((row) => fromStore(row, m.id)) }
-      }),
-    ),
-  ])
-
-  const queries = mailboxes.flatMap((m): { accountId: string; query: jmap.EmailQuery }[] => {
-    const list = folders.get(m.stalwart_id) ?? []
-    const byRole = (role: FolderRole) => list.filter((f) => f.role === role).map((f) => f.id)
-    const base: jmap.EmailQuery = {
-      unreadOnly: input.unreadOnly,
-      text: text(input.query),
-      from: text(input.from),
-      to: text(input.to),
-      subject: text(input.subject),
-      after: input.after,
-      before: earliest(input.cursor, input.before),
-      hasAttachment: input.hasAttachment,
-      limit: input.limit,
-    }
-    if (input.folder === 'pinned' || input.folder === 'all') {
-      const notInFolders = [...byRole('junk'), ...byRole('trash')]
-      return [{ accountId: m.stalwart_id, query: { ...base, pinnedOnly: input.folder === 'pinned', notInFolders } }]
-    }
-    const inFolders = byRole(input.folder)
-    // A mailbox without that folder (a shared mailbox may have no Drafts) has nothing to show.
-    return inFolders.length ? [{ accountId: m.stalwart_id, query: { ...base, inFolders } }] : []
-  })
-
-  const found = await jmap.queryEmails(env, queries)
-  const all = [
-    ...mailboxes.flatMap((m) => (found.get(m.stalwart_id) ?? []).map((e) => toSummary(e, m.id, folders.get(m.stalwart_id) ?? []))),
-    ...fromStores.flatMap((s) => s.messages),
-  ]
+  const pages = await Promise.all(
+    mailboxes.map(async (m) => {
+      const page = await (await store(env, m.id)).list({
+        folder: input.folder,
+        unreadOnly: input.unreadOnly,
+        text: text(input.query),
+        from: text(input.from),
+        to: text(input.to),
+        subject: text(input.subject),
+        after: input.after,
+        before: earliest(input.cursor, input.before),
+        hasAttachment: input.hasAttachment,
+        limit: input.limit,
+      })
+      return { more: page.more, messages: page.messages.map((row) => fromStore(row, m.id)) }
+    }),
+  )
+  const all = pages.flatMap((p) => p.messages)
   all.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
   const page = all.slice(0, input.limit)
-  const more = all.length > input.limit || [...found.values()].some((list) => list.length === input.limit) || fromStores.some((s) => s.more)
+  const more = all.length > input.limit || pages.some((p) => p.more)
   const nextCursor = more && page.length ? page[page.length - 1]!.receivedAt : null
   return { messages: input.compact ? page.map(compactSummary) : page, nextCursor }
 }
@@ -262,31 +212,23 @@ export async function messagesWith(
 ): Promise<MessageSummary[]> {
   const mailboxes = await readableMailboxes(env, actor, organizationId)
   if (!mailboxes.length) return []
-  const folders = await jmap.getFolders(env, mailboxes.map((m) => m.stalwart_id))
-  const queries = mailboxes.map((m) => {
-    const skip = (folders.get(m.stalwart_id) ?? []).filter((f) => f.role === 'junk' || f.role === 'trash').map((f) => f.id)
-    return { accountId: m.stalwart_id, query: { participant: address, notInFolders: skip, collapseThreads: false, limit } }
-  })
-  const found = await jmap.queryEmails(env, queries)
-  const all = mailboxes.flatMap((m) => (found.get(m.stalwart_id) ?? []).map((e) => toSummary(e, m.id, folders.get(m.stalwart_id) ?? [])))
-  all.sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
-  return all.slice(0, limit)
+  // From them or to them: two lists per mailbox, merged. Folder 'all' leaves out junk and trash.
+  const found = await Promise.all(
+    mailboxes.flatMap((m) =>
+      (['from', 'to'] as const).map(async (side) => {
+        const page = await (await store(env, m.id)).list({ folder: 'all', [side]: address, limit })
+        return page.messages.map((row) => fromStore(row, m.id))
+      }),
+    ),
+  )
+  const unique = new Map(found.flat().map((msg) => [`${msg.mailboxId}:${msg.id}`, msg]))
+  return [...unique.values()].sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt)).slice(0, limit)
 }
 
 /** Every message in a conversation, oldest first, with bodies and attachments. Doesn't mark anything read. */
 export async function getThread(env: EmailEnv, actor: Actor, mailboxId: string, threadId: string): Promise<Message[]> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')
-  if (readsFromStore(env, mailbox)) {
-    const fromStoreCopy = await storeThread(env, mailbox, threadId, (row) => fromStore(row, mailbox.id))
-    if (fromStoreCopy) return fromStoreCopy
-  }
-  // The store holds this mailbox's mail: there is no copy on Stalwart to fall back to.
-  if (heldByStore(mailbox)) return []
-  const [emails, folders] = await Promise.all([
-    jmap.getThread(env, mailbox.stalwart_id, threadId),
-    jmap.getFolders(env, [mailbox.stalwart_id]),
-  ])
-  return emails.map((e) => toMessage(e, mailbox.id, folders.get(mailbox.stalwart_id) ?? []))
+  return (await storeThread(env, mailbox, threadId, (row) => fromStore(row, mailbox.id))) ?? []
 }
 
 export type UpdateMessageInput = {
@@ -306,28 +248,11 @@ export async function updateMessage(
   input: UpdateMessageInput,
 ): Promise<void> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
-  if (heldByStore(mailbox)) {
-    // The store holds this mailbox's mail: the change is made there (mailbox/store.ts update), then announced.
-    const result = await (await store(env, mailbox.id)).update({ id: messageId, ...input })
-    if (!result.found) throw new EmailError('message_not_found', 'Message not found', 404)
-    if (result.moved) await queueMailEvent(env, { kind: 'moved', mailboxId: mailbox.id, ids: result.changedIds })
-    if (result.changed) await announceMailChange(env, mailbox)
-    return
-  }
-  let folderId: string | undefined
-  if (input.folder) {
-    const folders = (await jmap.getFolders(env, [mailbox.stalwart_id])).get(mailbox.stalwart_id) ?? []
-    folderId = folders.find((f) => f.role === input.folder)?.id
-    // Stalwart doesn't create an Archive folder for new accounts; make it the first time someone archives.
-    if (!folderId && input.folder === 'archive') folderId = await jmap.createFolder(env, mailbox.stalwart_id, 'Archive', 'archive')
-    if (!folderId) throw new EmailError('folder_not_found', `This mailbox has no ${input.folder} folder`, 404)
-  }
-  if (input.thread && (input.seen !== undefined || folderId)) {
-    await jmap.updateThreadOf(env, mailbox.stalwart_id, messageId, { seen: input.seen, folderId })
-    if (input.pinned === undefined) return
-    return jmap.updateEmail(env, mailbox.stalwart_id, messageId, { pinned: input.pinned })
-  }
-  await jmap.updateEmail(env, mailbox.stalwart_id, messageId, { seen: input.seen, pinned: input.pinned, folderId })
+  // The change is made in the mailbox's store (mailbox/store.ts update), then announced.
+  const result = await (await store(env, mailbox.id)).update({ id: messageId, ...input })
+  if (!result.found) throw new EmailError('message_not_found', 'Message not found', 404)
+  if (result.moved) await queueMailEvent(env, { kind: 'moved', mailboxId: mailbox.id, ids: result.changedIds })
+  if (result.changed) await announceMailChange(env, mailbox)
 }
 
 /** Tells the people who can open the mailbox that its mail changed, so the apps reload it. Never fails the caller. */
@@ -342,12 +267,8 @@ async function announceMailChange(env: EmailEnv, mailbox: MailboxRow): Promise<v
  */
 export async function getMailState(env: EmailEnv, actor: Actor, organizationId: string): Promise<string> {
   const mailboxes = await readableMailboxes(env, actor, organizationId)
-  const [states, held] = await Promise.all([
-    jmap.getEmailStates(env, mailboxes.filter((m) => !heldByStore(m)).map((m) => m.stalwart_id)),
-    Promise.all(mailboxes.filter(heldByStore).map(async (m) => [m.id, await (await store(env, m.id)).changeState()] as const)),
-  ])
-  const heldStates = new Map(held)
-  return mailboxes.map((m) => `${m.id}:${heldByStore(m) ? `s${heldStates.get(m.id) ?? ''}` : (states.get(m.stalwart_id) ?? '')}`).join(',')
+  const states = await Promise.all(mailboxes.map(async (m) => (await store(env, m.id)).changeState()))
+  return mailboxes.map((m, i) => `${m.id}:s${states[i] ?? ''}`).join(',')
 }
 
 /** An attachment's bytes, as a download. */
@@ -360,15 +281,10 @@ export async function getAttachment(
   type: string,
 ): Promise<Response> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'read')
-  let upstream: Response
-  if (parseStoreBlobId(blobId)) {
-    // An attachment of a message read from the mailbox's store: read back from its raw copy.
-    const blob = await storeBlob(env, mailbox, blobId)
-    if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
-    upstream = new Response(blob.bytes, { headers: { 'Content-Type': type || blob.type, 'Content-Length': String(blob.bytes.byteLength) } })
-  } else {
-    upstream = await jmap.downloadBlob(env, mailbox.stalwart_id, blobId, name, type)
-  }
+  // Read back from the message's raw copy in the organization's bucket.
+  const blob = parseStoreBlobId(blobId) ? await storeBlob(env, mailbox, blobId) : null
+  if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
+  const upstream = new Response(blob.bytes, { headers: { 'Content-Type': type || blob.type, 'Content-Length': String(blob.bytes.byteLength) } })
   // File-type rules: blocked files never leave; warnings travel in a header the apps show before saving.
   const { safety, body } = await inspectStream(upstream.body!, name)
   if (safety.level === 'blocked') {
@@ -391,31 +307,6 @@ export async function getAttachment(
 const blockedAttachment = (name: string, safety: Safety) =>
   new EmailError('attachment_blocked', `${name}: ${safety.message}`, 403)
 
-/**
- * Reads an attachment already on the mail server far enough to judge it (security/attachments), and its size from
- * the same response (null when the server doesn't say, or the name alone already blocks it).
- */
-async function blobSafety(
-  env: EmailEnv,
-  accountId: string,
-  a: { blobId: string; name: string; type: string },
-): Promise<{ safety: Safety; size: number | null }> {
-  const byName = checkName(a.name)
-  if (byName.level === 'blocked') return { safety: byName, size: null }
-  const res = await jmap.downloadBlob(env, accountId, a.blobId, a.name, a.type)
-  const length = Number(res.headers.get('Content-Length'))
-  const { safety, body } = await inspectStream(res.body!, a.name)
-  await body.cancel().catch(() => null)
-  return { safety, size: Number.isFinite(length) && length > 0 ? length : null }
-}
-
-const attachmentsTooLarge = (total: number) =>
-  new EmailError(
-    'attachments_too_large',
-    `Attachments add up to ${(total / 1024 / 1024).toFixed(1)} MB; a message can carry at most ${MAX_ATTACHMENTS_BYTES / 1024 / 1024} MB. ` +
-      'Remove some, or share large files from Storage as a link.',
-  )
-
 // ---------------------------------------------------------------------------------------------------------------
 
 async function mailboxesFor(env: EmailEnv, actor: Actor, organizationId: string, mailboxId?: string): Promise<MailboxRow[]> {
@@ -425,79 +316,8 @@ async function mailboxesFor(env: EmailEnv, actor: Actor, organizationId: string,
   return [mailbox]
 }
 
-const addresses = (list: JmapAddress[] | null): Address[] => (list ?? []).map((a) => ({ name: a.name || null, email: a.email }))
-
-/** The folder a message is "in" for people, among the ones it sits in; null for a custom folder only. */
-export function folderRole(mailboxIds: Record<string, true>, folders: JmapFolder[]): FolderRole | null {
-  const roles = folders.filter((f) => mailboxIds[f.id]).map((f) => f.role)
-  // A message can sit in several folders; prefer the one people think of it being "in".
-  return ROLES.find((r) => roles.includes(r)) ?? null
-}
-
-function toSummary(e: JmapEmailSummary, mailboxId: string, folders: JmapFolder[]): MessageSummary {
-  return {
-    id: e.id,
-    mailboxId,
-    threadId: e.threadId,
-    folder: folderRole(e.mailboxIds, folders),
-    from: addresses(e.from),
-    to: addresses(e.to),
-    subject: e.subject ?? '',
-    preview: previewText(e.preview, PREVIEW_MAX),
-    receivedAt: e.receivedAt,
-    seen: !!e.keywords.$seen,
-    pinned: !!e.keywords.$flagged,
-    hasAttachment: e.hasAttachment,
-    size: e.size,
-    threadSize: e.threadSize ?? 1,
-  }
-}
-
-export function bodyText(parts: JmapBodyPart[], values: JmapEmail['bodyValues']): string {
-  return parts.map((p) => (p.partId ? (values[p.partId]?.value ?? '') : '')).join('\n')
-}
-
-/** A message's readable text: its plain-text part, or its HTML part as text. Agents, previews and search read this. */
-export function plainText(e: Pick<JmapEmail, 'textBody' | 'htmlBody' | 'bodyValues'>): string {
-  const textParts = e.textBody.filter((p) => p.type === 'text/plain')
-  const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
-  // Some senders include an empty plain-text part next to the real HTML one: then the HTML is the body.
-  return readableText(
-    textParts.length ? bodyText(textParts, e.bodyValues) : undefined,
-    htmlParts.length ? bodyText(htmlParts, e.bodyValues) : undefined,
-    htmlToText,
-  )
-}
-
 /** Readable plain text from HTML, for messages sent without a text part. Agents, previews and search read this. */
 export { htmlToText }
-
-function toMessage(e: JmapEmail, mailboxId: string, folders: JmapFolder[]): Message {
-  const htmlParts = e.htmlBody.filter((p) => p.type === 'text/html')
-  const html = htmlParts.length ? bodyText(htmlParts, e.bodyValues) : null
-  return {
-    ...toSummary(e, mailboxId, folders),
-    cc: addresses(e.cc),
-    bcc: addresses(e.bcc),
-    replyTo: addresses(e.replyTo),
-    sentAt: e.sentAt,
-    messageId: e.messageId?.[0] ?? null,
-    // JMAP falls back to the HTML part in textBody when there is no plain-text part; keep `text` plain.
-    text: plainText(e),
-    html,
-    attachments: e.attachments
-      .filter((p): p is JmapBodyPart & { blobId: string } => !!p.blobId)
-      .map((p) => ({
-        blobId: p.blobId,
-        name: p.name || 'attachment',
-        type: p.type,
-        size: p.size,
-        inline: p.disposition === 'inline',
-        cid: p.cid?.replace(/^<|>$/g, '') ?? null,
-        safety: checkName(p.name || 'attachment'),
-      })),
-  }
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Sending
@@ -554,34 +374,15 @@ export type ApiSendOptions = {
   inline?: Record<string, string>
 }
 
-/**
- * Sends a message from the mailbox's primary address. The message is created in Drafts and submitted in one
- * step; Stalwart moves it to Sent. Mail to other xstate addresses is delivered at once; outside addresses go
- * through Stalwart's outbound route (Amazon SES).
- */
+/** Sends a message from the mailbox's primary address (or, through the API, one of its aliases), through Amazon SES. */
 export async function sendMessage(
   env: EmailEnv,
   actor: Actor,
   mailboxId: string,
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
-  const held = await heldMailbox(env, actor, mailboxId)
-  if (held) return sendFromStore(env, held, input, await checkOutgoing(env, actor, held, input, true))
-  const { mailbox, accountId, identityId, draftsId, sentId, email, original, recipients } = await compose(env, actor, mailboxId, input, true)
-
-  // Last check before anything leaves: suspension and the hourly and daily caps (./sending).
-  const reservation = await reserveSend(env, mailbox, recipients.map((r) => r.email))
-  const sent = await jmap.submitEmail(env, accountId, { identityId, draftsId, sentId, email, keepCopy: input.api?.keepCopy }).catch(async (err) => {
-    await reservation.release()
-    throw err
-  })
-  if (input.draftId) await dropDraft(env, accountId, input.draftId)
-  if (original) {
-    await jmap
-      .addKeyword(env, accountId, original.id, input.inReplyTo ? '$answered' : '$forwarded')
-      .catch((err) => console.error('send: marking original failed', err))
-  }
-  return sent
+  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
+  return sendFromStore(env, mailbox, input, await checkOutgoing(env, actor, mailbox, input, true))
 }
 
 /**
@@ -594,27 +395,12 @@ export async function saveDraft(
   mailboxId: string,
   input: SendInput,
 ): Promise<{ id: string; threadId: string }> {
-  const held = await heldMailbox(env, actor, mailboxId)
-  if (held) return draftInStore(env, held, input, await checkOutgoing(env, actor, held, input, false))
-  const { accountId, draftsId, email } = await compose(env, actor, mailboxId, input, false)
-  const saved = await jmap.createDraft(env, accountId, draftsId, email)
-  if (input.draftId) await dropDraft(env, accountId, input.draftId)
-  return saved
-}
-
-/** The mailbox, with write access checked, when the store holds its mail (sending and drafts go to mailbox/outbound.ts). */
-async function heldMailbox(env: EmailEnv, actor: Actor, mailboxId: string): Promise<MailboxRow | null> {
   const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
-  return heldByStore(mailbox) ? mailbox : null
-}
-
-/** Deletes the draft a message replaced. The new message already exists, so a failure here only leaves a copy. */
-async function dropDraft(env: EmailEnv, accountId: string, draftId: string) {
-  await jmap.destroyEmail(env, accountId, draftId).catch((err) => console.error('drafts: deleting the old draft failed', err))
+  return draftInStore(env, mailbox, input, await checkOutgoing(env, actor, mailbox, input, false))
 }
 
 /**
- * The checks every outgoing message passes, whichever side holds the mailbox: recipients (count, suppression) and
+ * The checks every outgoing message passes: recipients (count, suppression) and
  * the From address and name. Returns what the message is built with.
  */
 export async function checkOutgoing(env: EmailEnv, actor: Actor, mailbox: MailboxRow, input: SendInput, sending: boolean) {
@@ -643,118 +429,6 @@ export async function checkOutgoing(env: EmailEnv, actor: Actor, mailbox: Mailbo
   return { recipients, fromEmail, fromName, ownName }
 }
 
-/** The JMAP email for sendMessage and saveDraft, after the access, recipient and folder checks. */
-async function compose(env: EmailEnv, actor: Actor, mailboxId: string, input: SendInput, sending: boolean) {
-  const { mailbox } = await mailContext(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-  const { recipients, fromEmail, fromName, ownName } = await checkOutgoing(env, actor, mailbox, input, sending)
-
-  const [folders, identities] = await Promise.all([
-    jmap.getFolders(env, [accountId]).then((m) => m.get(accountId) ?? []),
-    jmap.getIdentities(env, accountId),
-  ])
-  const draftsId = folders.find((f) => f.role === 'drafts')?.id
-  const sentId = folders.find((f) => f.role === 'sent')?.id
-  if (!draftsId || !sentId) throw new EmailError('folder_not_found', 'This mailbox has no Drafts or Sent folder', 409)
-  const identityId =
-    identities.find((i) => i.email.toLowerCase() === fromEmail)?.id ??
-    (await jmap.createIdentity(env, accountId, { name: ownName ?? '', email: fromEmail }))
-
-  const email: Record<string, unknown> = {
-    from: [{ name: fromName, email: fromEmail }],
-    to: input.to,
-    subject: input.subject,
-  }
-  if (input.cc?.length) email.cc = input.cc
-  if (input.bcc?.length) email.bcc = input.bcc
-  if (input.api) {
-    email.messageId = [input.api.messageId]
-    if (input.api.replyTo?.length) email.replyTo = input.api.replyTo
-    // Raw form, so any allowed header can be set the same way (asText isn't allowed for List-Unsubscribe).
-    for (const [name, value] of Object.entries(input.api.headers ?? {})) email[`header:${name}:asRaw`] = value
-  }
-
-  let original: jmap.ReplySource | null = null
-  const sourceId = input.inReplyTo ?? input.forwardOf
-  if (sourceId) {
-    original = await jmap.getReplySource(env, accountId, sourceId)
-    if (!original) throw new EmailError('message_not_found', 'The message you are replying to no longer exists', 404)
-    if (input.inReplyTo && original.messageId?.length) {
-      email.inReplyTo = original.messageId
-      email.references = [...(original.references ?? []), ...original.messageId]
-    }
-  }
-
-  // Finishing a saved draft: it must still be a draft in this mailbox, and a reply keeps its place in the thread.
-  if (input.draftId) {
-    const draft = await jmap.getDraftHeaders(env, accountId, input.draftId)
-    if (!draft || !draft.mailboxIds[draftsId] || !draft.keywords.$draft) {
-      throw new EmailError('draft_not_found', 'That draft no longer exists. It may have been sent or deleted.', 404)
-    }
-    if (!email.inReplyTo && draft.inReplyTo?.length) {
-      email.inReplyTo = draft.inReplyTo
-      email.references = draft.references?.length ? draft.references : draft.inReplyTo
-    }
-  }
-
-  // Attachments may only come from this account: uploads to it, or the forwarded message's own parts. One picked
-  // from a message read from the mailbox's store is handed to the mail server first.
-  const attachments = await Promise.all(
-    (input.attachments ?? []).map(async (a) => ({ ...a, blobId: await serverBlobId(env, mailbox, a.blobId, a.type) })),
-  )
-  const forwarded: (typeof attachments[number] & { size: number })[] = []
-  if (input.forwardOf && original) {
-    for (const part of original.attachments) {
-      if (part.blobId && !attachments.some((a) => a.blobId === part.blobId)) {
-        forwarded.push({ blobId: part.blobId, name: part.name ?? 'attachment', type: part.type, size: part.size })
-      }
-    }
-  }
-  // File-type rules on every file, uploads included: a blob id could also point at a received attachment. A
-  // blocked file someone chose fails the send; a blocked file that only came along with a forward is left out.
-  const [chosen, carried] = await Promise.all([
-    Promise.all(attachments.map((a) => blobSafety(env, accountId, a))),
-    Promise.all(forwarded.map((a) => blobSafety(env, accountId, a))),
-  ])
-  const refused = chosen.findIndex((c) => c.safety.level === 'blocked')
-  if (refused >= 0) throw blockedAttachment(attachments[refused]!.name, chosen[refused]!.safety)
-  const kept = forwarded.filter((_, i) => carried[i]!.safety.level !== 'blocked')
-  attachments.push(...kept)
-
-  // One rule for drafts and sent mail alike: a draft over the limit couldn't be sent anyway.
-  const total = chosen.reduce((sum, c) => sum + (c.size ?? 0), 0) + kept.reduce((sum, a) => sum + a.size, 0)
-  if (total > MAX_ATTACHMENTS_BYTES) throw attachmentsTooLarge(total)
-
-  // Images the HTML shows with cid: travel next to it (multipart/related); every other file is a plain attachment.
-  const cidOf = new Map(Object.entries(input.api?.inline ?? {}).map(([cid, blobId]) => [blobId, cid]))
-  const inline = input.html ? attachments.filter((a) => cidOf.has(a.blobId)) : []
-  const files = attachments.filter((a) => !inline.includes(a))
-  const htmlPart: Record<string, unknown> = inline.length
-    ? {
-        type: 'multipart/related',
-        subParts: [
-          { partId: 'html', type: 'text/html' },
-          ...inline.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'inline', cid: cidOf.get(a.blobId) })),
-        ],
-      }
-    : { partId: 'html', type: 'text/html' }
-  const body: Record<string, unknown> = input.html
-    ? { type: 'multipart/alternative', subParts: [{ partId: 'text', type: 'text/plain' }, htmlPart] }
-    : { partId: 'text', type: 'text/plain' }
-  email.bodyValues = { text: { value: input.text }, ...(input.html && { html: { value: input.html } }) }
-  email.bodyStructure = files.length
-    ? {
-        type: 'multipart/mixed',
-        subParts: [
-          body,
-          ...files.map((a) => ({ blobId: a.blobId, type: a.type, name: a.name, disposition: 'attachment' })),
-        ],
-      }
-    : body
-
-  return { mailbox, accountId, identityId, draftsId, sentId, email, original, recipients }
-}
-
 /** Stores an attachment for a message about to be sent. Returns the blob id to pass to sendMessage. */
 export async function uploadAttachment(
   env: EmailEnv,
@@ -770,7 +444,7 @@ export async function uploadAttachment(
   if (options.size > MAX_UPLOAD_BYTES) {
     throw new EmailError('attachment_too_large', `Attachments can be at most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`)
   }
-  // File-type rules before anything reaches the mail server (sending checks again, see compose).
+  // File-type rules before the file is kept (sending checks again, mailbox/outbound.ts).
   const byName = checkName(options.name)
   if (byName.level === 'blocked') throw blockedAttachment(options.name, byName)
   const { safety, body: checked } = await inspectStream(body, options.name)
@@ -778,19 +452,7 @@ export async function uploadAttachment(
     await checked.cancel().catch(() => null)
     throw blockedAttachment(options.name, safety)
   }
-  if (heldByStore(mailbox)) {
-    // Kept in the organization's bucket until the message is written (mailbox/outbound.ts), scanned first as below.
-    const bytes = new Uint8Array(await new Response(checked).arrayBuffer())
-    if (scanning(env)) await refuseVirus(env, bytes, options.name)
-    return { blobId: await uploadToStore(env, mailbox, bytes, options.contentType), type: options.contentType, size: bytes.byteLength, safety }
-  }
-  if (!scanning(env)) {
-    const blob = await jmap.uploadBlob(env, mailbox.stalwart_id, checked, options.contentType, options.size)
-    return { ...blob, safety }
-  }
-  // Virus scan before the mail server sees it. The file (25 MB at most) is held in memory for the two sends.
+  // Kept in the organization's bucket until the message is written (mailbox/outbound.ts).
   const bytes = new Uint8Array(await new Response(checked).arrayBuffer())
-  await refuseVirus(env, bytes, options.name)
-  const blob = await jmap.uploadBlob(env, mailbox.stalwart_id, bytes, options.contentType, bytes.byteLength)
-  return { ...blob, safety }
+  return { blobId: await uploadToStore(env, mailbox, bytes, options.contentType), type: options.contentType, size: bytes.byteLength, safety }
 }

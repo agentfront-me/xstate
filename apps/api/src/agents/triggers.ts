@@ -13,7 +13,6 @@ import type { TriggerKind, TriggerRow } from '../db/agents'
 import * as mailboxesDb from '../db/mailboxes'
 import { ApiError } from '../errors'
 import { mailboxContext } from '../mailserver/access'
-import * as jmap from '../mailserver/stalwart/mail'
 import { parseConfig } from './config'
 import { emailTask, latestInboxEmail } from './email-trigger'
 import type { RunParams } from './run'
@@ -179,9 +178,8 @@ export async function create(env: Env, actor: Actor, agentId: string, input: { k
   let cursor: string | null = null
   if (input.kind === 'email') {
     const mailbox = await checkMailbox(env, actor, agent.organization_id, (config as EmailConfig).mailboxId)
+    // Only mail delivered from now on is offered to it (mailbox/events.ts), so there is no cursor to keep.
     mailboxId = mailbox.id
-    // Start from now: mail that's already there doesn't fire.
-    cursor = (await jmap.getEmailStates(env, [mailbox.stalwart_id])).get(mailbox.stalwart_id) ?? null
   }
   const id = crypto.randomUUID()
   await db.insertTrigger(env.DB, {
@@ -212,7 +210,6 @@ export async function update(env: Env, actor: Actor, agentId: string, triggerId:
     if (trigger.kind === 'email' && (parsed as EmailConfig).mailboxId !== trigger.mailbox_id) {
       const mailbox = await checkMailbox(env, actor, agent.organization_id, (parsed as EmailConfig).mailboxId)
       mailboxId = mailbox.id
-      cursor = (await jmap.getEmailStates(env, [mailbox.stalwart_id])).get(mailbox.stalwart_id) ?? null
     }
   }
   await db.updateTrigger(env.DB, trigger.id, {

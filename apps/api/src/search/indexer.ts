@@ -13,9 +13,6 @@ import type { DocRow } from '../db/search'
 import * as mailboxesDb from '../db/mailboxes'
 import * as storageDb from '../db/storage'
 import { stripFooter } from '../mailserver/footer'
-import { folderRole, plainText } from '../mailserver/messages'
-import type { StalwartEnv } from '../mailserver/stalwart/client'
-import * as jmap from '../mailserver/stalwart/mail'
 import type { MailboxRow } from '../db/mailboxes'
 import { parseRaw } from '../mailbox/parse'
 import { store } from '../mailbox/stub'
@@ -125,13 +122,13 @@ async function removeOtherVersions(env: IndexEnv, itemId: string, keepDoc: strin
 // ---------------------------------------------------------------------------------------------------------------
 // Emails
 
-export type EmailIndexEnv = IndexEnv & StalwartEnv
+export type EmailIndexEnv = IndexEnv
 
 export type EmailsOutcome = { mailboxId: string; indexed: number; empty: number; missing: number; failed: number }
 
 /**
  * Indexes a batch of messages of one mailbox (one Email/get, one embedding pass) and records a row per message.
- * Messages that no longer exist are left alone: mail sync removes their documents as it sees them destroyed.
+ * Messages that no longer exist are left alone: the mail events queue removes their documents.
  * Throws after writing `failed` rows when the mail server or the model fails, so the job is retried.
  */
 export async function indexEmails(env: EmailIndexEnv, mailboxId: string, emailIds: string[]): Promise<EmailsOutcome> {
@@ -213,7 +210,7 @@ async function embedEach(env: Pick<Env, 'AI'>, texts: string[][]): Promise<({ ve
   return out
 }
 
-/** A message as search indexes it, from Stalwart or from the mailbox's store. */
+/** A message as search indexes it, from the mailbox's store. */
 type IndexedEmail = {
   id: string
   threadId: string
@@ -226,39 +223,20 @@ type IndexedEmail = {
   body: string
 }
 
-/**
- * The messages to index. A mailbox whose mail the store holds (docs/mailbox-store-plan.md, phase 2) is read from its
- * raw copies with our own parser and its folders from the store; the rest from Stalwart.
- */
+/** The messages to index, read from their raw copies with our own parser, their folders from the store. */
 async function loadEmails(env: EmailIndexEnv, mailbox: MailboxRow, emailIds: string[]): Promise<IndexedEmail[]> {
-  if (mailbox.backend === 'store') {
-    const rows = await (await store(env, mailbox.id)).rows(emailIds)
-    const bucket = await organizationBucket(env, mailbox.organization_id)
-    const out: IndexedEmail[] = []
-    // One at a time: a raw copy can be 40 MB.
-    for (const row of rows) {
-      if (!row.rawKey || row.draft) continue
-      const res = await getObject(env, bucket, row.rawKey)
-      if (!res) continue
-      const parsed = await parseRaw(new Uint8Array(await res.arrayBuffer()))
-      out.push({ id: row.id, threadId: row.threadId, subject: row.subject, from: row.from, to: parsed.to, receivedAt: row.receivedAt, folder: row.folder, body: parsed.text })
-    }
-    return out
+  const rows = await (await store(env, mailbox.id)).rows(emailIds)
+  const bucket = await organizationBucket(env, mailbox.organization_id)
+  const out: IndexedEmail[] = []
+  // One at a time: a raw copy can be 40 MB.
+  for (const row of rows) {
+    if (!row.rawKey || row.draft) continue
+    const res = await getObject(env, bucket, row.rawKey)
+    if (!res) continue
+    const parsed = await parseRaw(new Uint8Array(await res.arrayBuffer()))
+    out.push({ id: row.id, threadId: row.threadId, subject: row.subject, from: row.from, to: parsed.to, receivedAt: row.receivedAt, folder: row.folder, body: parsed.text })
   }
-  const [messages, folders] = await Promise.all([
-    jmap.getEmailTexts(env, mailbox.stalwart_id, emailIds),
-    jmap.getFolders(env, [mailbox.stalwart_id]).then((m) => m.get(mailbox.stalwart_id) ?? []),
-  ])
-  return messages.map((m) => ({
-    id: m.id,
-    threadId: m.threadId,
-    subject: m.subject ?? '',
-    from: m.from ?? [],
-    to: m.to ?? [],
-    receivedAt: m.receivedAt,
-    folder: folderRole(m.mailboxIds, folders),
-    body: plainText(m),
-  }))
+  return out
 }
 
 /** What gets embedded for a message: the headline a reader sees, then the body. */
@@ -270,7 +248,7 @@ function emailText(m: IndexedEmail): string {
 }
 
 /**
- * Records where messages are now, after mail sync saw them change (a move, most often a flag). One Email/get for
+ * Records where messages are now, after a move (mail events queue). One store read for
  * the ones that are indexed; nothing is re-embedded.
  */
 export async function refreshEmailFolders(env: EmailIndexEnv, mailboxId: string, emailIds: string[]): Promise<number> {
@@ -279,27 +257,14 @@ export async function refreshEmailFolders(env: EmailIndexEnv, mailboxId: string,
   const mailbox = await mailboxesDb.find(env.DB, mailboxId)
   if (!mailbox) return 0
   const ids = [...rows.values()].map((r) => searchDb.parseDoc(r.doc_id)).flatMap((d) => (d?.kind === 'email' ? [d.emailId] : []))
-  if (mailbox.backend === 'store') {
-    // The store knows each message's folder: no raw copy needed.
-    const now = await (await store(env, mailbox.id)).rows(ids)
-    const changed = now.flatMap((m) => {
-      const row = rows.get(searchDb.emailDoc(mailboxId, m.id))
-      return row && row.folder !== m.folder ? [searchDb.setFolder(env.DB, row.doc_id, m.folder)] : []
-    })
-    if (changed.length) await env.DB.batch(changed)
-    return changed.length
-  }
-  const [messages, folders] = await Promise.all([
-    jmap.getEmailFolders(env, mailbox.stalwart_id, ids),
-    jmap.getFolders(env, [mailbox.stalwart_id]).then((m) => m.get(mailbox.stalwart_id) ?? []),
-  ])
-  const updates = messages.flatMap((m) => {
+  // The store knows each message's folder: no raw copy needed.
+  const now = await (await store(env, mailbox.id)).rows(ids)
+  const changed = now.flatMap((m) => {
     const row = rows.get(searchDb.emailDoc(mailboxId, m.id))
-    const folder = folderRole(m.mailboxIds, folders)
-    return row && row.folder !== folder ? [searchDb.setFolder(env.DB, row.doc_id, folder)] : []
+    return row && row.folder !== m.folder ? [searchDb.setFolder(env.DB, row.doc_id, m.folder)] : []
   })
-  if (updates.length) await env.DB.batch(updates)
-  return updates.length
+  if (changed.length) await env.DB.batch(changed)
+  return changed.length
 }
 
 /** Deletes the documents of messages that are gone from the mailbox. */

@@ -1,11 +1,8 @@
-// Mail served from a mailbox's own store instead of Stalwart (docs/mailbox-store-plan.md, phase 1), for mailboxes
-// whose store_mode is 'read': whole conversations read from the raw copies in the organization's bucket, and
-// attachments read back by their position inside them. Anything the store can't answer yet (a message whose raw
-// copy isn't made, or a copy missing from the bucket) returns null, and the caller asks Stalwart as before.
+// Mail read from a mailbox's own store (docs/mailbox-store-plan.md): whole conversations read from the raw copies in
+// the organization's bucket, and attachments read back by their position inside them.
 
 import type { MailboxRow } from '../db/mailboxes'
 import { EmailError } from '../mailserver/errors'
-import * as jmap from '../mailserver/stalwart/mail'
 import type { EmailEnv } from '../mailserver/types'
 import { SAFE, checkName, worst } from '../security/attachments'
 import { scanAllows, scanSafety } from './scan-state'
@@ -23,18 +20,8 @@ const BIG_BYTES = 5 * 1024 * 1024
 /** Raw copies read at once for one conversation. */
 const PARALLEL = 4
 
-/** Whether the store holds the mailbox's mail itself (phase 2): then there is nothing on Stalwart to fall back to. */
-export const heldByStore = (mailbox: Pick<MailboxRow, 'backend'>) => mailbox.backend === 'store'
-
-/** Whether lists and searches of a mailbox are answered by its store: it holds the mail, or reads its shadow copy. */
-export const answeredByStore = (mailbox: Pick<MailboxRow, 'backend' | 'store_mode'>) => heldByStore(mailbox) || mailbox.store_mode === 'read'
-
-/** Whether a mailbox's mail is read from its store. */
-export const readsFromStore = (env: EmailEnv, mailbox: MailboxRow) => answeredByStore(mailbox) && storageConfigured(env)
-
 /**
- * An attachment's id when its message is read from the store: the message and where the part starts in its raw
- * copy. Stalwart's blob ids are letters and digits only, so the dots tell the two apart.
+ * An attachment's id: the message and where the part starts in its raw copy.
  */
 export const storeBlobId = (emailId: string, start: number) => `store.${emailId}.${start}`
 
@@ -44,8 +31,8 @@ export function parseStoreBlobId(blobId: string): { emailId: string; start: numb
 }
 
 /**
- * Every message in a conversation, oldest first, read from the store and the raw copies. Null when any message
- * can't be read that way yet; `summary` turns a store row into the summary the API returns.
+ * Every message in a conversation, oldest first, read from the store and the raw copies. Null when a message's raw
+ * copy is missing; `summary` turns a store row into the summary the API returns.
  */
 export async function storeThread(
   env: EmailEnv,
@@ -70,7 +57,7 @@ export async function storeThread(
   for (let k = 0; k < small.length; k += PARALLEL) await Promise.all(small.slice(k, k + PARALLEL).map(readOne))
   for (const i of big) await readOne(i)
   if (messages.some((m) => !m)) {
-    console.error(`mailbox-store: raw copy missing in thread ${threadId} of ${mailbox.id}; reading from the mail server`)
+    console.error(`mailbox-store: raw copy missing in thread ${threadId} of ${mailbox.id}`)
     return null
   }
   return messages as Message[]
@@ -128,16 +115,4 @@ export async function storeBlob(env: EmailEnv, mailbox: MailboxRow, blobId: stri
   const raw = new Uint8Array(await res.arrayBuffer())
   const part = locateParts(raw).find((p) => p.start === id.start && !isBodyText(p))
   return part ? { bytes: decodePart(raw.subarray(part.start, part.start + part.length), part.encoding), type: part.type } : null
-}
-
-/**
- * A blob id the mail server knows, for sending an attachment or reading an invitation: a store attachment is
- * uploaded to the mailbox's Stalwart account first. Other ids are returned as they are.
- */
-export async function serverBlobId(env: EmailEnv, mailbox: MailboxRow, blobId: string, type: string): Promise<string> {
-  if (!parseStoreBlobId(blobId)) return blobId
-  const blob = await storeBlob(env, mailbox, blobId)
-  if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
-  const uploaded = await jmap.uploadBlob(env, mailbox.stalwart_id, blob.bytes, type || blob.type || 'application/octet-stream', blob.bytes.byteLength)
-  return uploaded.blobId
 }

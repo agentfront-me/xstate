@@ -628,13 +628,16 @@ export class MailboxStore extends Agent<Env> {
   }
 
   /**
-   * Makes this store the holder of its mailbox's mail, with its own six folders, the first time. Refuses a store that
-   * holds a shadow copy of Stalwart: moving copied mail over is phase 4.
+   * Makes this store the holder of its mailbox's mail, the first time: its own six folders, or, for a store that holds
+   * a copy made from Stalwart (whose mailbox never switched before Stalwart was retired), that copy, as a switch's
+   * flip made it (takeOwnership).
    */
   private ensureOwned(): Map<string, string> {
     if (this.meta('owner') !== 'store') {
       const copied = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages`)][0]!.c as number
-      if (copied || this.meta('state')) throw new Error('This store holds a copy of Stalwart mail; it cannot take delivered mail')
+      if (copied || this.meta('state')) this.takeOwnership(new Date().toISOString())
+    }
+    if (this.meta('owner') !== 'store') {
       this.db.exec(`DELETE FROM folders`)
       const names: [StoreFolderRole, string][] = [['inbox', 'Inbox'], ['sent', 'Sent'], ['drafts', 'Drafts'], ['archive', 'Archive'], ['junk', 'Junk'], ['trash', 'Trash']]
       for (const [role, name] of names) {
@@ -743,7 +746,7 @@ export class MailboxStore extends Agent<Env> {
    * folder and gets a new uid in the target, as an IMAP move. `found` is false when the message isn't here.
    */
   update(u: StoreUpdate): { found: boolean; changed: number; changedIds: string[]; moved: boolean } {
-    if (this.meta('owner') !== 'store') throw new Error('This store does not hold its own mail')
+    this.ensureOwned()
     return this.ctx.storage.transactionSync(() => {
       const chosen = [...this.db.exec(`SELECT thread_id FROM messages WHERE id = ?`, u.id)][0] as { thread_id: string } | undefined
       if (!chosen) return { found: false, changed: 0, changedIds: [], moved: false }

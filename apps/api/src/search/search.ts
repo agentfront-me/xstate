@@ -15,9 +15,7 @@ import { ApiError } from '../errors'
 import type { Actor, EmailEnv } from '../mailserver/types'
 import { isAdmin, readableMailboxes } from '../mailserver/access'
 import { stripFooter } from '../mailserver/footer'
-import * as jmap from '../mailserver/stalwart/mail'
 import { store } from '../mailbox/stub'
-import { answeredByStore } from '../mailbox/read'
 import type { MailboxRow } from '../db/mailboxes'
 import { atLeast, hiddenAbove, inTrash, mailScopes, roleOn, searchScopes, type Reader, type SearchFilter } from '../storage/roles'
 import { hasMailFilter, matchesMail, type MailFilter } from './mail-filter'
@@ -226,7 +224,7 @@ class Checker {
     })
   }
 
-  /** Who sent the message an attachment came with, and when it arrived: one Email/get per mailbox. */
+  /** Who sent the message an attachment came with, and when it arrived: one store read per mailbox. */
   private async addSenders(results: SearchResult[]): Promise<void> {
     const attachments = results.filter((r) => r.where === 'mail' && r.mailbox && r.emailId)
     if (!attachments.length) return
@@ -236,20 +234,11 @@ class Checker {
       ids.add(r.emailId!)
       byMailbox.set(r.mailbox!.id, ids)
     }
-    // Mailboxes read from their own store answer from it; the rest ask Stalwart.
-    const fromStore = [...byMailbox].filter(([mailboxId]) => { const m = this.mailboxes.get(mailboxId); return !!m && answeredByStore(m) })
-    const accounts = [...byMailbox].flatMap(([mailboxId, ids]) => {
-      const mailbox = this.mailboxes.get(mailboxId)
-      return mailbox && !answeredByStore(mailbox) ? [{ mailboxId, accountId: mailbox.stalwart_id, ids: [...ids] }] : []
-    })
-    const [heads, storeHeads] = await Promise.all([
-      jmap.getEmailHeads(this.env, accounts),
-      Promise.all(fromStore.map(async ([mailboxId, ids]) => ({ mailboxId, heads: await (await store(this.env, mailboxId)).heads([...ids]) }))),
-    ])
-    const byEmail = new Map<string, { from: { email: string }[] | null; receivedAt: string }>([
-      ...accounts.flatMap(({ mailboxId, accountId }) => (heads.get(accountId) ?? []).map((h) => [`${mailboxId}:${h.id}`, h] as const)),
-      ...storeHeads.flatMap(({ mailboxId, heads }) => heads.map((h) => [`${mailboxId}:${h.id}`, h] as const)),
-    ])
+    const fromStore = [...byMailbox].filter(([mailboxId]) => this.mailboxes.has(mailboxId))
+    const storeHeads = await Promise.all(fromStore.map(async ([mailboxId, ids]) => ({ mailboxId, heads: await (await store(this.env, mailboxId)).heads([...ids]) })))
+    const byEmail = new Map<string, { from: { email: string }[] | null; receivedAt: string }>(
+      storeHeads.flatMap(({ mailboxId, heads }) => heads.map((h) => [`${mailboxId}:${h.id}`, h] as const)),
+    )
     for (const r of attachments) {
       const head = byEmail.get(`${r.mailbox!.id}:${r.emailId}`)
       if (!head) continue
@@ -262,7 +251,7 @@ class Checker {
     return { id: hit.id, score: hit.score, passage: hit.metadata.text, pos: Number(hit.metadata.pos) || 0 }
   }
 
-  /** A message: its mailbox must be readable, and its row still there (mail sync removes it when the message goes). */
+  /** A message: its mailbox must be readable, and its row still there (removed when the message goes). */
   private emailResult(hit: Hit, doc: { mailboxId: string; emailId: string }, row: DocRow | undefined): SearchResult | null {
     const mailbox = this.mailboxes.get(doc.mailboxId)
     if (!mailbox || row?.status !== 'indexed') return null

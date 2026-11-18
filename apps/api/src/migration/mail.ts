@@ -1,13 +1,12 @@
 // Copying one person's Gmail into their xstate mailbox, a few minutes of pages (500 messages each) per queue job. See
-// the Workspace Migration Plan, "Gmail to Stalwart".
+// the Workspace Migration Plan.
 //
 // Each page: lists the next message ids (spam and trash included), claims the ones not copied yet in the
 // MigrationStore, asks Gmail how big they are, then a pool of workers fetches each raw message (streamed, within a
-// per-isolate byte budget), uploads it to Stalwart, and imports them 25 at a time with their folders, read/starred
-// state and original received time, recording what they became. Progress is saved after every page. When the job's
-// time is up it queues the next one, and once at the end it queues a mail sync (so attachments reach Storage). A
-// user has one chain of jobs at a time (mail_chain); a resume starts a new chain and the old one stops at its next
-// page.
+// per-isolate byte budget) and delivers it into the mailbox's store (mailbox/receive.ts deliverMigrated) with its
+// folders, read/starred state and original received time, recording what they became. Progress is saved after
+// every page. When the job's time is up it queues the next one. A user has one chain of jobs at a time (mail_chain);
+// a resume starts a new chain and the old one stops at its next page.
 //
 // A message that keeps killing the job (the Worker running out of memory or time, which no catch sees) is found by
 // the MigrationStore's attempt counts: messages in flight when a job died are copied one at a time on the next run,
@@ -20,9 +19,7 @@ import type { StoreFolderRole } from '../mailbox/query'
 import { store as mailboxStore } from '../mailbox/stub'
 import * as migrationsDb from '../db/migrations'
 import type { MigrationUserRow } from '../db/migrations'
-import { enqueue as enqueueMailSync } from '../jobs/mail-sync'
-import * as jmap from '../mailserver/stalwart/mail'
-import type { FolderRole, JmapFolder } from '../mailserver/stalwart/mail'
+import type { FolderRole } from '../mailserver/messages'
 import { GoogleError } from './google/auth'
 import { workspace, type GLabel } from './google/workspace'
 import { finishIfDone } from './final'
@@ -37,8 +34,6 @@ export type MailJob = { kind: 'mail'; migrationId: string; googleId: string; cha
 const PAGE_SIZE = 500
 /** How long a job keeps taking pages before it queues the next job. Well inside a queue job's 15 minutes. */
 const JOB_BUDGET_MS = 4 * 60_000
-/** Messages imported per Email/import call. */
-const IMPORT_BATCH = 25
 /** Messages fetched and uploaded at once, at most. Google allows about 50 a second per user. */
 const FETCH_CONCURRENCY = 12
 /** Retries of one message Google rate-limited, after googleGet's own, before the job gives up for now. */
@@ -63,14 +58,11 @@ const SKIP_AT_ATTEMPTS = 2
 
 export type Folders = { roles: Map<FolderRole, string>; labels: Map<string, string> }
 
-/**
- * Where a person's Gmail goes: their Stalwart account, or, for a mailbox whose mail the store holds (a domain on the
- * new mail system, docs/mailbox-store-plan.md phase 4f), the mailbox's own store.
- */
-export type MailTarget = { kind: 'stalwart'; accountId: string } | { kind: 'store'; mailbox: MailboxRow }
+/** Where a person's Gmail goes: their mailbox's own store. */
+export type MailTarget = { kind: 'store'; mailbox: MailboxRow }
 
 export function targetOf(mailbox: MailboxRow): MailTarget {
-  return mailbox.backend === 'store' ? { kind: 'store', mailbox } : { kind: 'stalwart', accountId: mailbox.stalwart_id }
+  return { kind: 'store', mailbox }
 }
 
 /** The role a store message is listed under: the first of its folders that has one, in this order; null for labels only. */
@@ -83,65 +75,23 @@ export function roleOf(place: Folders, folderIds: string[]): StoreFolderRole | n
 }
 
 /**
- * The account's role folders (creating Archive if it has none), and a folder for each Gmail user label: nested
- * labels ("Clients/Acme") become nested folders. Label → folder is remembered in the MigrationStore, so later pages
- * don't look again.
+ * The mailbox's role folders, and a folder for each Gmail user label, named by its whole path ("Clients/Acme"): the
+ * store's folders aren't nested.
  */
-export async function folders(env: Env, organizationId: string, googleId: string, target: MailTarget, labels: GLabel[]): Promise<Folders> {
-  if (target.kind === 'store') {
-    // One folder per label, named by its whole path ("Clients/Acme"): the store's folders aren't nested.
-    const user = labels.filter((l) => l.type === 'user')
-    const made = await (await mailboxStore(env, target.mailbox.id)).importFolders(user.map((l) => l.name))
-    return {
-      roles: new Map(Object.entries(made.roles) as [FolderRole, string][]),
-      labels: new Map(user.flatMap((l) => (made.named[l.name] ? [[l.id, made.named[l.name]!] as [string, string]] : []))),
-    }
+export async function folders(env: Env, _organizationId: string, _googleId: string, target: MailTarget, labels: GLabel[]): Promise<Folders> {
+  const user = labels.filter((l) => l.type === 'user')
+  const made = await (await mailboxStore(env, target.mailbox.id)).importFolders(user.map((l) => l.name))
+  return {
+    roles: new Map(Object.entries(made.roles) as [FolderRole, string][]),
+    labels: new Map(user.flatMap((l) => (made.named[l.name] ? [[l.id, made.named[l.name]!] as [string, string]] : []))),
   }
-  const accountId = target.accountId
-  const store = migrationStore(env, organizationId)
-  let list: JmapFolder[] = (await jmap.getFolders(env, [accountId])).get(accountId) ?? []
-  const roles = new Map<FolderRole, string>()
-  for (const f of list) if (f.role) roles.set(f.role as FolderRole, f.id)
-  if (!roles.has('archive')) roles.set('archive', await jmap.createFolder(env, accountId, 'Archive', 'archive'))
-
-  const known = new Map(Object.entries(await store.map('label', googleId)))
-  const user = labels.filter((l) => l.type === 'user').sort((a, b) => a.name.localeCompare(b.name))
-  const created: { sourceId: string; targetId: string }[] = []
-  for (const label of user) {
-    if (known.has(label.id)) continue
-    let parentId: string | null = null
-    for (const part of label.name.split('/').filter(Boolean)) {
-      const existing: JmapFolder | undefined = list.find((f) => f.name === part && (f.parentId ?? null) === parentId)
-      if (existing) {
-        parentId = existing.id
-        continue
-      }
-      const id = await jmap.createChildFolder(env, accountId, part, parentId)
-      list = [...list, { id, name: part, role: null, parentId, unreadEmails: 0, totalEmails: 0 }]
-      parentId = id
-    }
-    if (parentId) {
-      known.set(label.id, parentId)
-      created.push({ sourceId: label.id, targetId: parentId })
-    }
-  }
-  if (created.length) await store.record('label', googleId, created)
-  return { roles, labels: known }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // The job
 
-let limits: jmap.MailLimits | null = null
-
-/**
- * The mail server's size limits, asked once per isolate. Only the answer is kept, never the request in flight, so
- * one stalled or failed lookup can't leave later jobs waiting on it (see maxCalls in mailserver/stalwart/mail.ts).
- */
-export async function mailLimits(env: Env): Promise<jmap.MailLimits> {
-  limits ??= await jmap.getLimits(env)
-  return limits
-}
+/** The largest message copied, as for mail received through SES (it takes up to 40 MB). */
+export const MAX_IMPORT_BYTES = 40 * 1024 * 1024
 
 /** Thrown to stop a user's chain with something an admin has to look at. */
 class UserIssue extends Error {
@@ -161,10 +111,7 @@ export async function copyMailPage(env: Env, job: MailJob): Promise<void> {
   if (!mailbox) return setIssue(env, u, 'error', 'The xstate mailbox for this person was deleted')
 
   try {
-    const target = targetOf(mailbox)
-    await copyPage(env, job, m.organization_id, m.mail_range, u, target)
-    // Attachments of what was just imported go to Storage, like any new mail (the store's own events do that for it).
-    if (target.kind === 'stalwart') await enqueueMailSync(env, [{ mailboxId: mailbox.id, reason: 'import' }])
+    await copyPage(env, job, m.organization_id, m.mail_range, u, targetOf(mailbox))
   } catch (err) {
     if (err instanceof UserIssue) return setIssue(env, u, err.issue, err.message)
     if (err instanceof GoogleError && err.code === 'not_authorized') {
@@ -206,9 +153,9 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
       .run()
   }
 
-  // Folders and limits once per job, not per page.
+  // Folders once per job, not per page.
   const place = await folders(env, organizationId, u.google_id, target, await ws.gmailLabels(u.email))
-  const max = (await mailLimits(env)).maxSizeUpload
+  const max = MAX_IMPORT_BYTES
   const next = () => enqueueMigrationJobs(env, [{ kind: 'mail', migrationId: job.migrationId, googleId: u.google_id, chain: job.chain }])
 
   let cursor = u.mail_cursor
@@ -222,7 +169,7 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
     const { mine: ids, held } = await store.claim('message', u.google_id, page.ids, claim)
     const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, target, place, max }, ids, claim)
     const ms = Date.now() - began
-    // Messages and bytes a second for one mailbox: Gmail's per-user limit or Stalwart's import speed, whichever binds.
+    // Messages and bytes a second for one mailbox: Gmail's per-user limit, mostly.
     console.log(JSON.stringify({ event: 'migration_mail_page', migrationId: job.migrationId, messages: imported.copied, skipped: imported.skipped, bytes: imported.bytes, ms }))
     const rate = ids.length ? (imported.copied + imported.skipped) / Math.max(ms / 1000, 1) : null
     if (imported.full) {
@@ -279,8 +226,8 @@ export type ImportContext = {
 }
 
 /**
- * Fetches claimed Gmail messages, uploads and imports them, and records what they became (or why not). Stops at a
- * full mailbox (`full`), letting go of what it hadn't copied. Used by the copy and the final pass.
+ * Fetches claimed Gmail messages, delivers them into the store, and records what they became (or why not). Used by
+ * the copy and the final pass.
  */
 export async function importIds(
   env: Env,
@@ -292,7 +239,7 @@ export async function importIds(
   const ws = workspace(env)
   const userLabels = new Set(c.place.labels.keys())
   const mb = (n: number) => Math.round(n / 1e6)
-  const tooLarge = (bytes: number): Problem['detail'] => `${mb(bytes)} MB; the mail server takes up to ${mb(c.max)} MB`
+  const tooLarge = (bytes: number): Problem['detail'] => `${mb(bytes)} MB; xstate takes messages up to ${mb(c.max)} MB`
 
   // Messages in flight when an earlier job died: one that was alone then is skipped, the others go one at a time.
   const deaths = await c.store.attempts('message', c.googleId, ids)
@@ -321,8 +268,7 @@ export async function importIds(
   let broken = false
   const finished = new Set<string>()
   const attempted = new Set<string>()
-  let ready: { sourceId: string; item: jmap.ImportEmail }[] = []
-  // Imports and records run one after another, alongside the downloads.
+  // Records run one after another, alongside the downloads.
   let writes: Promise<void> = Promise.resolve()
 
   const flushSkipped = async () => {
@@ -332,32 +278,8 @@ export async function importIds(
     for (const r of rows) finished.add(r.sourceId)
     skippedCount += rows.length
   }
-  const flush = (all: boolean) => {
-    while (ready.length >= IMPORT_BATCH || (all && ready.length)) {
-      const batch = ready.slice(0, IMPORT_BATCH)
-      ready = ready.slice(IMPORT_BATCH)
-      writes = writes.then(async () => {
-        if (full) return
-        if (c.target.kind !== 'stalwart') return
-        const results = await jmap.importEmails(env, c.target.accountId, batch.map((r) => r.item)).catch((err) => {
-          broken = true
-          throw err
-        })
-        const done: { sourceId: string; targetId: string }[] = []
-        results.forEach((r, k) => {
-          const sourceId = batch[k]!.sourceId
-          if (r.ok) done.push({ sourceId, targetId: r.id })
-          else if (r.type === 'overQuota') full = true
-          else skipped.push({ sourceId, reason: 'import_failed', detail: r.description })
-        })
-        if (done.length) await c.store.record('message', c.googleId, done)
-        for (const d of done) finished.add(d.sourceId)
-        copied += done.length
-        await flushSkipped()
-      })
-    }
-    return writes
-  }
+  /** Waits for the records written so far. */
+  const flush = (_all: boolean) => writes
 
   // Attempts are counted a window ahead of the workers (one call per window), so a job that dies leaves at most a
   // window of suspects. Suspects themselves are counted one by one.
@@ -386,7 +308,7 @@ export async function importIds(
           msg = await ws.gmailRaw(c.email, id, { maxBytes: c.max, sizeHint: size })
           break
         } catch (err) {
-          if (err instanceof GoogleError && err.code === 'too_large') return void skipped.push({ sourceId: id, reason: 'too_large', detail: `over ${mb(c.max)} MB, the most the mail server takes` })
+          if (err instanceof GoogleError && err.code === 'too_large') return void skipped.push({ sourceId: id, reason: 'too_large', detail: `over ${mb(c.max)} MB, the most xstate takes` })
           if (err instanceof GoogleError && err.code === 'not_found') return void skipped.push({ sourceId: id, reason: 'deleted', detail: 'Deleted in Gmail while it was being copied' })
           if (err instanceof GoogleError && err.code === 'rate_limited' && tries < THROTTLE_RETRIES && !ctl.stopping) {
             ctl.slowDown()
@@ -399,28 +321,22 @@ export async function importIds(
       const where = placement(msg.labelIds, userLabels)
       if ('skip' in where) return void skipped.push({ sourceId: id, reason: where.skip })
       if (msg.raw.byteLength > c.max) return void skipped.push({ sourceId: id, reason: 'too_large', detail: tooLarge(msg.raw.byteLength) })
-      if (c.target.kind === 'store') {
-        // Straight into the store, inside this message's byte budget; recorded with the rest.
-        const folderIds = folderIdsFor(c.place, where.folders)
-        const stored = await deliverMigrated(env as ReceiveEnv, c.target.mailbox, msg.raw, {
-          sourceKey: `${c.googleId}.${id}`,
-          receivedAt: new Date(msg.internalDate).toISOString(),
-          folderIds,
-          role: roleOf(c.place, folderIds),
-          seen: where.keywords.includes('$seen'),
-          pinned: where.keywords.includes('$flagged'),
-        })
-        bytes += msg.raw.byteLength
-        writes = writes.then(async () => {
-          await c.store.record('message', c.googleId, [{ sourceId: id, targetId: stored.id }])
-          finished.add(id)
-          copied++
-        })
-        return
-      }
-      const blob = await jmap.uploadBlob(env, c.target.accountId, msg.raw, 'message/rfc822', msg.raw.byteLength)
+      // Straight into the store, inside this message's byte budget; recorded with the rest.
+      const folderIds = folderIdsFor(c.place, where.folders)
+      const stored = await deliverMigrated(env as ReceiveEnv, c.target.mailbox, msg.raw, {
+        sourceKey: `${c.googleId}.${id}`,
+        receivedAt: new Date(msg.internalDate).toISOString(),
+        folderIds,
+        role: roleOf(c.place, folderIds),
+        seen: where.keywords.includes('$seen'),
+        pinned: where.keywords.includes('$flagged'),
+      })
       bytes += msg.raw.byteLength
-      ready.push({ sourceId: id, item: { blobId: blob.blobId, folderIds: folderIdsFor(c.place, where.folders), keywords: where.keywords, receivedAt: new Date(msg.internalDate).toISOString() } })
+      writes = writes.then(async () => {
+        await c.store.record('message', c.googleId, [{ sourceId: id, targetId: stored.id }])
+        finished.add(id)
+        copied++
+      })
     } finally {
       release()
     }

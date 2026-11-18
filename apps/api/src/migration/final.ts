@@ -12,12 +12,10 @@
 import * as mailboxesDb from '../db/mailboxes'
 import * as migrationsDb from '../db/migrations'
 import type { MigrationRow } from '../db/migrations'
-import { enqueue as enqueueMailSync } from '../jobs/mail-sync'
-import * as jmap from '../mailserver/stalwart/mail'
 import { GoogleError } from './google/auth'
 import { workspace } from './google/workspace'
 import { enqueueMigrationJobs } from './jobs'
-import { folderIdsFor, folders, importIds, mailLimits, roleOf, setIssue, targetOf } from './mail'
+import { folderIdsFor, folders, importIds, MAX_IMPORT_BYTES, roleOf, setIssue, targetOf } from './mail'
 import { store as mailboxStore } from '../mailbox/stub'
 import { placement } from './mail-rules'
 import { migrationStore } from './store'
@@ -153,7 +151,7 @@ export async function mailFinalPage(env: Env, job: MailFinalJob): Promise<void> 
   // New messages.
   const claim = `final:${job.run}:${u.google_id}:${u.final_mail_cursor ?? 'first'}`
   const { mine } = await store.claim('message', u.google_id, history.added, claim)
-  const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, target, place, max: (await mailLimits(env)).maxSizeUpload }, mine, claim)
+  const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, target, place, max: MAX_IMPORT_BYTES }, mine, claim)
   changes += imported.copied
   if (imported.full) {
     // The pass gives up on this mailbox and says why; Resume after "Raise quota" copies the rest.
@@ -175,22 +173,17 @@ export async function mailFinalPage(env: Env, job: MailFinalJob): Promise<void> 
   const deleted = await store.targets('message', u.google_id, history.deleted)
   const trash = place.roles.get('trash')
   if (trash) for (const target of Object.values(deleted)) placements[target] = { folderIds: [trash], keywords: [] }
-  if (target.kind === 'store') {
-    // The store keeps a message's folders, read and starred state together; it hears of new mail by its own events.
-    const rows = Object.entries(placements).map(([id, p]) => ({
-      id,
-      folderIds: p.folderIds,
-      folder: roleOf(place, p.folderIds),
-      seen: p.keywords.includes('$seen'),
-      pinned: p.keywords.includes('$flagged'),
-    }))
-    if (rows.length) changes += (await (await mailboxStore(env, mailbox.id)).setPlacements(rows)).changed
-  } else {
-    changes += await jmap.setEmailPlacements(env, target.accountId, placements)
-  }
+  // The store keeps a message's folders, read and starred state together; it hears of new mail by its own events.
+  const rows = Object.entries(placements).map(([id, p]) => ({
+    id,
+    folderIds: p.folderIds,
+    folder: roleOf(place, p.folderIds),
+    seen: p.keywords.includes('$seen'),
+    pinned: p.keywords.includes('$flagged'),
+  }))
+  if (rows.length) changes += (await (await mailboxStore(env, mailbox.id)).setPlacements(rows)).changed
 
   if (history.added.length) {
-    if (target.kind === 'stalwart') await enqueueMailSync(env, [{ mailboxId: mailbox.id, reason: 'import' }])
     // Keep the per-person counts (and so the report) in step with what the pass added.
     const counts = await store.counts('message', u.google_id)
     await env.DB.prepare('UPDATE migration_users SET mail_done = ?, mail_skipped = ? WHERE migration_id = ? AND google_id = ?')

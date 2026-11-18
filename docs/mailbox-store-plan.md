@@ -2281,10 +2281,100 @@ check moves to 4d's tests, after that.
 
 ### 5. Retire Stalwart
 
-Once every mailbox runs on the store: remove `mailserver/stalwart/`, mail sync's Stalwart path, the Stalwart
-webhook, the SMTP sending caps (`scripts/stalwart-limits`) and the local `pnpm mail:dev` stack; shut down deepo's
-Stalwart and Postgres. The scanner stays. Local development gets simpler: no local mail server, only a fake SES
-endpoint that posts test messages to the receiving Worker.
+**Started 2026-11-18 (ops side):** Stalwart stopped and disabled on deepo about 12:45 UTC, after xstate.com,
+upfold.me, hireninja.com and asif.pk moved; xstate.io (a dummy domain) was not moved. Its data stays in Postgres
+until the 30-day rollback window ends (about 2026-12-18). The ClamAV scanner was removed too (the user's choice,
+reversing "the scanner stays"): `SCAN_MODE` "off" (c6df6df), received mail is still virus-checked by SES, uploads
+are not. Stalwart's nginx sites, the `mx.*` certificates and the certbot hook were removed (copies in
+`/root/retired-2026-11-18`). deepo went from t3.medium to t3.micro; it now runs only the HireNinja API stack (nginx,
+php-fpm, Horizon, Redis, Postgres). **Still to do:** the code removal below; until then the Worker paths that call
+Stalwart (hourly sync, routing-rule sync, sweep, creating mailboxes, aliases or domains) fail.
+
+#### Phase 5 design: removing Stalwart from the code (written 2026-11-18, for review)
+
+**Why now:** Stalwart is stopped, so every code path that still calls it fails: creating a mailbox, adding an
+alias, adding or removing a domain, sharing a mailbox, sending blocks, and the hourly jobs (shadow sync, routing
+rule, sweep). Mail on the store is unaffected. The goal is one mail backend, the store, and no code that knows
+Stalwart existed.
+
+**What exists today, by area** (from the imports of `mailserver/stalwart/`):
+
+| Area | Files | Store path today | Phase 5 change |
+|---|---|---|---|
+| Mailboxes | `mailserver/mailboxes.ts` | D1 row, but always creates a Stalwart account or group too | D1 only. New rows get a synthetic `stalwart_id` (`none:<uuid>`) until the column is dropped (see Data) |
+| Aliases | `mailserver/aliases.ts` | D1, skips Stalwart for store mailboxes | D1 only; drop `requireSamePath` |
+| Shared access | `mailserver/sharing.ts` | D1 grants; group sync to Stalwart | D1 only |
+| Domains | `mailserver/domains.ts`, `db/domains.ts` | Creates a Stalwart domain; Stalwart zone for DKIM/records on Stalwart domains | No Stalwart domain; records are always `storeRecords` (SES DKIM, MX, SPF, DMARC); enable/disable/remove in D1 and SES only |
+| Sending blocks | `mailserver/sending.ts` | D1 is the source of truth, synced to Stalwart | D1 only (the store send path already checks it) |
+| Reading, moving, sending, drafts, uploads, attachments, mail state | `mailserver/messages.ts` | Store branches exist for each (`heldByStore`, `readsFromStore`) | Keep the store branches, delete the JMAP ones |
+| Calendars | `calendar-backend.ts`, `calendar.ts`, `calendar-events.ts` | `storeCalendars` | Store only. `JmapEvent` and friends move out of `stalwart/calendar.ts` into `mailbox/calendar-types.ts` (the store keeps JSCalendar, only the file moves) |
+| Search, new-mail push, agent email triggers | `search/indexer.ts`, `search/search.ts`, `push/new-mail.ts`, `agents/*` | Fed by the `MAIL_EVENTS` queue for the store | Remove the JMAP paths. `TriggerEmail` type moves to `mailbox/trigger-email.ts` |
+| Google Workspace import | `migration/mail.ts`, `final.ts`, `calendar.ts` | Store branches built in 4f | Store only |
+| System mail | `mailserver/system-mail.ts` | `sendFromStore` | Store only |
+| Hourly cron and webhooks | `jobs/mail-sync.ts`, `jobs/stalwart-webhook.ts`, `storage/mail-sync.ts` | Shadow sync, raw copy, threading backfill, routing rule, sweep, attachment copy | Delete all of it. The hourly cron keeps the store's own work: Trash purge, delivery-log purge, SES checks |
+| Copying and switching | `mailbox/shadow.ts` (copy parts), `stalwart-sweep.ts`, `receive.ts` (`handToStalwart`, `deliverSwept`), `domain-switch.ts`, `switch-rules.ts`, switch operations and MCP tools | Done its job | Delete. Rollback needs a running Stalwart, so it is no longer possible anyway |
+| Stalwart client | `mailserver/stalwart/*` (client, accounts, domains, mail, calendar, routing, ids, batch, timeout) | | Delete the folder |
+| Virus scanning | `security/scan.ts`, `mailbox/scan-state.ts` scanning part, `apps/scanner`, `scripts/stalwart-scan-hook.mjs` | `SCAN_MODE` off | Delete the scanner app and hook script; received mail relies on SES's verdict. `scan-state` keeps only what reads past results |
+| Config and local dev | `wrangler.jsonc` (`STALWART_URL`, secrets `STALWART_API_KEY`, `STALWART_WEBHOOK_SECRET`, `SCAN_*`), `pnpm mail:dev`, `scripts/stalwart-limits.mjs`, `.dev.vars.example` | | Remove; delete the secrets with `wrangler secret delete` (a manual step for you, like adding them was). Local dev uses the fake SES poster (`scripts/mail-in-fake.mjs`) |
+
+**Data (D1).** `mailboxes.stalwart_id` and `domains.stalwart_id` are `NOT NULL UNIQUE`, so SQLite can't drop them
+with `ALTER TABLE`. Step 1 writes a synthetic `none:<uuid>` for new rows and stops reading the column; a later
+migration rebuilds both tables without `stalwart_id`, `store_mode`, `store_raw`, `backend` and `mail_path` once the
+code no longer mentions them. `sending_blocks` is keyed by `stalwart_id`; it moves to `mailbox_id` in the same
+rebuild. `files.stalwart_blob_id` stays for old rows (download of old Stalwart attachments already goes through the
+store's raw copies).
+
+**xstate.io.** Its 4 mailboxes are still `backend = 'stalwart'` with nothing behind them. Proposed: switch them to
+empty store mailboxes (no copy; their old mail stays in Stalwart's database until the clean-up) and point
+xstate.io's MX at SES, so the asif@xstate.io login keeps a working mailbox. The alternative is removing the domain
+and its mailboxes.
+
+**Order:**
+1. **5a, store only (one change):** every area above stops calling Stalwart; the JMAP branches go; xstate.io
+   moves; the switch tooling is deleted. After this the app is fully working again.
+2. **5b, delete the leftovers (second change):** `mailserver/stalwart/`, the scanner app and scripts, config,
+   `mail:dev`, the Stalwart docs (`docs/stalwart-api.md` archived).
+3. **5c, after the rollback window (about 2026-12-18):** drop Stalwart's Postgres database on deepo, delete the
+   `mx1/` prefix in the R2 bucket `xstate-mail-blobs` and then the bucket, delete the `mx.xstate.io` DNS record, and
+   run the D1 table rebuild.
+
+**Docs:** `security.md` (the mailbox-index paragraph still says "turning this on mailbox by mailbox", IMAP mentions),
+`privacy.md` (IMAP, the mail server), the domain setup docs (records), `mcp.md` (regenerated without the switch
+tools).
+
+**Tests:** the existing pure tests minus the deleted modules; locally, with no Stalwart running: add a domain
+(records are SES only), create a personal and a shared mailbox, add an alias, share a mailbox, send and receive
+(fake SES), move, junk, trash, a calendar invite out and in, a Workspace import into a new mailbox, a sending block.
+Then the same smoke test in production.
+
+**Decided (2026-11-18):** approved as proposed: xstate.io becomes empty store mailboxes, the scanner code is deleted
+(in 5b).
+
+**5a built 2026-11-18 (uncommitted until pushed):**
+- Mailboxes, aliases, sharing, sending blocks and domains are D1 only; new rows get `none:<id>` for `stalwart_id`
+  and `backend`/`mail_path` `store`. Mailbox passwords are gone (the `email_set_mailbox_password` operation, the
+  `password` input of `email_create_mailbox`, and the app's one-time password panel). Domains always get SES's
+  records; Domain Connect stays off until its template carries SES's records (`TEMPLATE_HAS_SES_RECORDS`).
+- Reading, moving, sending, drafts, uploads, attachments and mail state are store only (`mailserver/messages.ts`);
+  `messagesWith` reads the store (from + to). Calendars are store only; the one-time copy from Stalwart is gone.
+- Receiving drops mail for a disabled domain (`domain_disabled`); the hand-over to Stalwart for switching domains
+  is gone.
+- Search indexing and results, push (`notifyNewMail` removed; `notifyDelivered` stays), agent triggers (the test
+  event reads the newest inbox message from the store; email triggers keep no cursor) and the Workspace import
+  (mail, final pass, calendars) are store only. The import's size limit is now 40 MB (`MAX_IMPORT_BYTES`).
+- Deleted: `mailbox/shadow.ts`, `stalwart-sweep.ts`, `mailserver/domain-switch.ts`, `switch-rules.ts` (+test),
+  `db/domain-switches.ts`, `storage/mail-sync.ts`, `jobs/stalwart-webhook.ts` (and its route),
+  `stalwart/routing.ts`, `routing-rule.ts` (+test), the five switch operations. `rawKey` moved to
+  `mailbox/raw-key.ts`. The MAIL_SYNC and STORE_COPY consumers only acknowledge what is left on them; the hourly cron
+  keeps the clean-ups only.
+- A store that still holds a copy made from Stalwart takes ownership of it on its first delivery or change
+  (`ensureOwned` calls `takeOwnership`), instead of refusing.
+- xstate.io: its 4 mailboxes set to `backend = 'store'`, the domain to `mail_path = 'store'`, MX to SES and SPF to
+  `include:amazonses.com` in Cloudflare.
+- Left for 5b: the `mailserver/stalwart/` folder (its types are still imported), config and secrets, `mail:dev`, the
+  scanner app and scripts, unused D1 helpers (`accountsToBlock`, `stalwartIdsForMember`, `listAliases`).
+- Checked: API and app typecheck, 438 API tests pass. Not run locally against a stack without Stalwart; the
+  production smoke test (Gmail to and from asif@hireninja.com, asif@xstate.com, mohammad@asif.pk) follows the deploy.
 
 ## What changes for customers
 

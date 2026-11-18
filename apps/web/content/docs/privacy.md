@@ -127,7 +127,7 @@ We share personal data only as described here:
   | Provider | Purpose |
   | --- | --- |
   | Cloudflare, Inc. | Hosting, databases, file storage, queues, search indexing, AI embeddings, DNS and network security |
-  | Amazon Web Services, Inc. | Hosting the mail servers that store and deliver mailboxes; delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email for domains on the new mail path (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days) |
+  | Amazon Web Services, Inc. | Delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days) |
   | Expo (650 Industries, Inc.), Apple, Google | Delivering push notifications to the mobile apps |
   | Paddle.com Market Ltd | Reseller and merchant of record for paid plans: checkout, payments, invoices and sales tax |
 
@@ -158,8 +158,8 @@ personal data from the EU, UK or Switzerland, we rely on the European Commission
   is deleted, except what we must keep for legal, tax or security reasons.
 - **Your Content:** until you or your organization delete it, or until the organization is deleted (then within
   30 days, after any export period described in the Terms). Deleted files sit in trash until emptied. Up to 5
-  previous versions of a file are kept, each for 30 days after it was replaced. On domains that use xstate's new
-  mail system, email in Trash is deleted for good 30 days after it was moved there, together with its stored copy.
+  previous versions of a file are kept, each for 30 days after it was replaced. Email in Trash is deleted for good 30
+  days after it was moved there, together with its stored copy.
 - **Search indexes:** removed after the source item is deleted, usually within an hour.
 - **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events
   after about 90 days; other audience records until the organization deletes them.

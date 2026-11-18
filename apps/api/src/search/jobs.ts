@@ -1,21 +1,18 @@
 // Background indexing for Storage search: the SEARCH_INDEX queue and the hourly cron.
 //
 // Every new file version and attachment puts an `index` job on the queue (enqueueIndex, called from storage/ and
-// mail-sync), and mail sync puts the messages it sees arrive on it in batches (enqueueEmails); the consumer runs
+// the mail events queue), and new mail is put on it in batches (enqueueEmails); the consumer runs
 // search/indexer for each. The hourly run is the safety net and the backfill: it queues searchable files that have
 // no search_docs row (lost jobs, and everything from before search existed), retries failures once a day, and
 // deletes the vectors of documents whose file or mailbox is gone.
 
 import * as searchDb from '../db/search'
 import { indexEmails, indexFile, removeDocument, type EmailIndexEnv } from './indexer'
-import { runStoreJob } from '../mailbox/jobs'
-import type { ShadowEnv } from '../mailbox/shadow'
 
 export type SearchJob =
   | { kind: 'index'; fileId: string }
   | { kind: 'index-emails'; mailboxId: string; emailIds: string[] }
-  // Copy jobs for a mailbox's store. They have their own queue now (mailbox/jobs.ts); these kinds stay so jobs
-  // queued here before that change still run.
+  // Old copy jobs from Stalwart into the stores; acknowledged without running.
   | { kind: 'store-emails'; mailboxId: string; emailIds: string[] }
   | { kind: 'store-raw'; mailboxId: string; emailIds: string[] }
 
@@ -61,7 +58,7 @@ export function enqueueEmails(env: Pick<Env, 'SEARCH_INDEX'>, mailboxId: string,
 const retryDelay = (attempts: number) => Math.min(60 * attempts, 600) + Math.floor(Math.random() * 60)
 
 /** Queue consumer. The same file queued twice in one batch is indexed once. */
-export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv & ShadowEnv): Promise<void> {
+export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv): Promise<void> {
   const byFile = new Map<string, Message<SearchJob>[]>()
   for (const message of batch.messages) {
     if (message.body.kind !== 'index') continue
@@ -91,15 +88,7 @@ export async function consume(batch: MessageBatch<SearchJob>, env: EmailIndexEnv
     }
   }
   for (const message of batch.messages) {
-    const body = message.body
-    if (body.kind !== 'store-emails' && body.kind !== 'store-raw') continue
-    try {
-      await runStoreJob(env, body)
-      message.ack()
-    } catch (err) {
-      console.error(`mailbox-store: mailbox ${body.mailboxId} failed`, err)
-      message.retry({ delaySeconds: retryDelay(message.attempts) })
-    }
+    if (message.body.kind === 'store-emails' || message.body.kind === 'store-raw') message.ack()
   }
 }
 

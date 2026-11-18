@@ -9,9 +9,8 @@
 
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
-import { STALWART_DEFAULT, type CalendarBackend } from '../mailserver/calendar-backend'
+import type { CalendarBackend } from '../mailserver/calendar-backend'
 import { EmailError } from '../mailserver/errors'
-import * as jmap from '../mailserver/stalwart/calendar'
 import type { JmapCalendar, JmapEvent } from '../mailserver/stalwart/calendar'
 import type { EmailEnv } from '../mailserver/types'
 import { applyPatch, changesSchedule, expand, occurrenceOf, parseOccurrenceId, timeColumns, withTimes } from './calendar-expand'
@@ -21,11 +20,7 @@ import { scheduling } from './scheduling'
 import type { StoreCalendar, StoreEventPut } from './store'
 import { store } from './stub'
 
-/** Mailboxes whose copy from Stalwart is known to be done, so most calls skip asking. */
-const copied = new Set<string>()
-
 export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promise<CalendarBackend> {
-  await ensureCopied(env, mailbox)
   const stub = await store(env, mailbox.id)
 
   const rows = async (ids: string[]): Promise<JmapEvent[]> =>
@@ -180,83 +175,4 @@ export function ownAddresses(mailbox: MailboxRow): string[] {
 
 function toCalendar(c: StoreCalendar): JmapCalendar {
   return { id: c.id, name: c.name, isDefault: c.isDefault, color: c.color, sortOrder: c.sortOrder }
-}
-
-/**
- * Copies the mailbox's calendars from Stalwart into its store, once. Stalwart's untouched default calendar becomes
- * "Work", with a "Personal" one added, as the first look at a Stalwart calendar does. Throws calendar_busy while
- * another request is copying.
- */
-export async function ensureCopied(env: EmailEnv, mailbox: MailboxRow): Promise<{ calendars: number; events: number } | null> {
-  if (copied.has(mailbox.id)) return null
-  const stub = await store(env, mailbox.id)
-  const claim = await stub.calendarCopy('claim')
-  if (claim === 'done') {
-    copied.add(mailbox.id)
-    return null
-  }
-  if (claim === 'busy') throw new EmailError('calendar_busy', 'This calendar is being set up. Try again in a moment.', 503)
-
-  const accountId = mailbox.stalwart_id
-  const calendars = accountId ? await jmap.getCalendars(env, accountId) : []
-  const events = accountId ? await jmap.allEvents(env, accountId) : []
-  const untouched = calendars.length === 1 && STALWART_DEFAULT.test(calendars[0]!.name)
-  const rows: StoreCalendar[] = calendars.map((c, i) => ({
-    id: c.id,
-    name: untouched ? 'Work' : c.name,
-    color: c.color ?? null,
-    isDefault: c.isDefault || (!calendars.some((x) => x.isDefault) && i === 0),
-    sortOrder: c.sortOrder ?? i,
-  }))
-  if (untouched) rows.push({ id: ulid(), name: 'Personal', color: null, isDefault: false, sortOrder: 1 })
-  if (rows.length) await stub.setCalendarRows(rows)
-  for (let i = 0; i < events.length; i += 200) await stub.putEvents(events.slice(i, i + 200).map(toRow))
-  const counts = await stub.calendarCounts()
-  if (counts.events !== events.length) {
-    throw new Error(`calendar copy for ${mailbox.id}: Stalwart has ${events.length} events, the store ${counts.events}`)
-  }
-  await stub.calendarCopy('done')
-  copied.add(mailbox.id)
-  const result = { calendars: counts.calendars, events: counts.events }
-  console.log('calendar-copy', JSON.stringify({ mailboxId: mailbox.id, ...result }))
-  return result
-}
-
-/** Hourly: copies the calendars of store-held mailboxes nobody has opened yet. Returns how many were copied. */
-export async function copyHeldCalendars(env: EmailEnv): Promise<number> {
-  let done = 0
-  for (const { id } of await mailboxesDb.heldByStore(env.DB)) {
-    const mailbox = await mailboxesDb.find(env.DB, id)
-    if (!mailbox) continue
-    try {
-      if (await ensureCopied(env, mailbox)) done++
-    } catch (err) {
-      // Busy (someone is opening it right now) or Stalwart unreachable: the next hour tries again.
-      console.error(`calendar-copy for ${id} failed`, err)
-    }
-  }
-  return done
-}
-
-/**
- * Copies events Stalwart filed into the mailbox's old account after the one-time copy (an invitation from a Stalwart
- * mailbox, delivered inside Stalwart): any whose UID the store doesn't have. Returns how many were copied.
- */
-export async function sweepStalwartCalendar(env: EmailEnv, mailbox: MailboxRow): Promise<number> {
-  if (!mailbox.stalwart_id) return 0
-  await ensureCopied(env, mailbox)
-  const stub = await store(env, mailbox.id)
-  const events = await jmap.allEvents(env, mailbox.stalwart_id)
-  const calendars = await stub.calendarRows()
-  const fallback = (calendars.find((c) => c.isDefault) ?? calendars[0])?.id
-  const missing: StoreEventPut[] = []
-  for (const e of events) {
-    if (!e.uid || (await stub.eventByUid(e.uid))) continue
-    // Into the same calendar when the store has it (copied ids), else the default one.
-    const calendarId = Object.keys(e.calendarIds ?? {}).find((id) => calendars.some((c) => c.id === id)) ?? fallback
-    if (!calendarId) continue
-    missing.push(toRow({ ...e, calendarIds: { [calendarId]: true } }))
-  }
-  if (missing.length) await stub.putEvents(missing)
-  return missing.length
 }

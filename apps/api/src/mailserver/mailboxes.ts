@@ -2,97 +2,63 @@ import * as addressesDb from '../db/addresses'
 import * as mailboxAccessDb from '../db/mailbox-access'
 import * as mailboxesDb from '../db/mailboxes'
 import { domainContext, isAdmin, loadMember, mailboxContext, requireAddressFree, requireMemberInOrg } from './access'
-import { EmailError, withRollback } from './errors'
-import { syncMemberGroups } from './sharing'
+import { EmailError } from './errors'
 import type { BucketEnv } from '../storage/buckets'
 import { deleteMailboxFolder } from '../storage/files'
 import { store } from '../mailbox/stub'
-import * as stalwart from './stalwart/accounts'
 import { toMailbox, type Actor, type EmailEnv, type Mailbox, type MailboxKind } from './types'
-import { generatePassword, normalizeLocalPart, validatePassword, validateQuota } from './validation'
+import { normalizeLocalPart, validateQuota } from './validation'
 
 export type CreateMailboxInput = {
   kind: MailboxKind
   domainId: string
   localPart: string
   displayName?: string
-  /** Generated for personal and agent mailboxes if omitted (returned once), not allowed for shared ones. */
-  password?: string
   quotaBytes?: number | null
   /** The member a personal mailbox belongs to. */
   ownerMemberId?: string
 }
 
 /**
- * Creates a mailbox and its primary address. personal and agent mailboxes become Stalwart users that sign in
- * with a password; shared mailboxes become Stalwart groups that members open through their personal mailbox.
- * `password` in the result is set only when one was generated, and is not stored anywhere.
+ * Creates a mailbox and its primary address, in D1 only: its mail lives in the mailbox's own store
+ * (docs/mailbox-store-plan.md). There is no password: mailboxes are read and sent from in xstate's apps and API.
  */
-export async function createMailbox(
-  env: EmailEnv,
-  actor: Actor,
-  input: CreateMailboxInput,
-): Promise<{ mailbox: Mailbox; password?: string }> {
+export async function createMailbox(env: EmailEnv, actor: Actor, input: CreateMailboxInput): Promise<{ mailbox: Mailbox }> {
   const { domain } = await domainContext(env, actor, input.domainId, 'manage')
   const localPart = normalizeLocalPart(input.localPart)
   const address = `${localPart}@${domain.name}`
   await requireAddressFree(env, address)
 
-  let password = input.password
-  let generated: string | undefined
-  if (input.kind === 'shared') {
-    if (password !== undefined) throw new EmailError('invalid_password', 'Shared mailboxes have no password')
-    if (input.ownerMemberId) throw new EmailError('invalid_owner', 'Shared mailboxes have no owner; grant access instead')
-  } else {
-    // Onboarding creates the first personal mailbox without one: the owner reads mail in xstate and can set a
-    // password later for other mail apps.
-    if (password === undefined) password = generated = generatePassword()
-    validatePassword(password)
-  }
+  if (input.kind === 'shared' && input.ownerMemberId) throw new EmailError('invalid_owner', 'Shared mailboxes have no owner; grant access instead')
   if (input.ownerMemberId) {
     if (input.kind !== 'personal') throw new EmailError('invalid_owner', 'Only personal mailboxes have an owner')
     await requireMemberInOrg(env, input.ownerMemberId, domain.organization_id)
   }
   validateQuota(input.quotaBytes)
 
-  const displayName = input.displayName ?? null
-  const quotaBytes = input.quotaBytes ?? null
-  const fields = { name: localPart, domainId: domain.stalwart_id, description: displayName, quotaBytes }
-  const stalwartId =
-    input.kind === 'shared' ? await stalwart.createGroup(env, fields) : await stalwart.createUser(env, { ...fields, password: password! })
-
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
   const organizationId = domain.organization_id
   const writes = [
-    // On a domain whose mail the store holds, the mailbox starts there too (phase 4b). It still gets a Stalwart
-    // account above, because stalwart_id is required until phase 5; Stalwart's routing rule sends the domain's mail
-    // out to SES, so nothing reaches that account.
     mailboxesDb.insert(env.DB, {
       id,
       organizationId,
       kind: input.kind,
-      displayName,
-      quotaBytes,
-      stalwartId,
+      displayName: input.displayName ?? null,
+      quotaBytes: input.quotaBytes ?? null,
+      // The column is NOT NULL UNIQUE until the table rebuild in phase 5c; nothing reads it any more.
+      stalwartId: `none:${id}`,
       createdBy: actor.userId,
       now,
-      backend: domain.mail_path === 'store' ? 'store' : 'stalwart',
+      backend: 'store',
     }),
     addressesDb.insert(env.DB, { organizationId, mailboxId: id, domainId: domain.id, localPart, address, isPrimary: true, now }),
   ]
   if (input.ownerMemberId) {
     writes.push(mailboxAccessDb.insert(env.DB, { mailboxId: id, memberId: input.ownerMemberId, access: 'owner', createdAt: now }))
   }
-  await withRollback(
-    () => env.DB.batch(writes),
-    () => stalwart.destroyAccount(env, stalwartId),
-  )
-
-  // Give the new personal mailbox the shared mailboxes its owner already has access to.
-  if (input.ownerMemberId) await syncMemberGroups(env, input.ownerMemberId)
-
-  return { mailbox: toMailbox((await mailboxesDb.find(env.DB, id))!), ...(generated && { password: generated }) }
+  await env.DB.batch(writes)
+  return { mailbox: toMailbox((await mailboxesDb.find(env.DB, id))!) }
 }
 
 export async function getMailbox(env: EmailEnv, actor: Actor, mailboxId: string): Promise<Mailbox> {
@@ -127,25 +93,8 @@ export async function updateMailbox(
   validateQuota(changes.quotaBytes)
   if (changes.displayName === undefined && changes.quotaBytes === undefined) return toMailbox(mailbox)
 
-  const stalwartChanges = { description: changes.displayName, quotaBytes: changes.quotaBytes }
-  const undo = {
-    description: changes.displayName === undefined ? undefined : mailbox.display_name,
-    quotaBytes: changes.quotaBytes === undefined ? undefined : mailbox.quota_bytes,
-  }
-  await stalwart.updateAccount(env, mailbox.stalwart_id, stalwartChanges)
-  await withRollback(
-    () => mailboxesDb.update(env.DB, mailbox.id, changes, new Date().toISOString()).run(),
-    () => stalwart.updateAccount(env, mailbox.stalwart_id, undo),
-  )
+  await mailboxesDb.update(env.DB, mailbox.id, changes, new Date().toISOString()).run()
   return toMailbox((await mailboxesDb.find(env.DB, mailbox.id))!)
-}
-
-/** Resets the password of a personal or agent mailbox. Also signs it out of its OAuth apps. */
-export async function setMailboxPassword(env: EmailEnv, actor: Actor, mailboxId: string, password: string): Promise<void> {
-  const { mailbox } = await mailboxContext(env, actor, mailboxId, 'owner')
-  if (mailbox.kind === 'shared') throw new EmailError('invalid_password', 'Shared mailboxes have no password')
-  validatePassword(password)
-  await stalwart.setPassword(env, mailbox.stalwart_id, password)
 }
 
 /**
@@ -154,22 +103,14 @@ export async function setMailboxPassword(env: EmailEnv, actor: Actor, mailboxId:
  */
 export async function deleteMailbox(env: EmailEnv & BucketEnv, actor: Actor, mailboxId: string): Promise<void> {
   const { mailbox } = await mailboxContext(env, actor, mailboxId, 'manage')
-  const memberIds = await mailboxAccessDb.memberIds(env.DB, mailbox.id)
-
-  await stalwart.destroyAccount(env, mailbox.stalwart_id)
   // Before the row goes, since its files rows cascade with it. A failure here leaves files under the mailbox's
   // id in R2 rather than blocking the delete; nothing points at them any more.
   await deleteMailboxFolder(env, mailbox.organization_id, mailbox.id).catch((err) =>
     console.error(`storage: deleting R2 folder of mailbox ${mailbox.id} failed`, err),
   )
-  // The mailbox's own store (mailbox/store.ts), if it has one: its index of the messages goes with it. Its raw
-  // copies are inside the R2 folder deleted above.
-  if (mailbox.store_mode !== 'off' || mailbox.backend === 'store') {
-    await store(env, mailbox.id)
-      .then((stub) => stub.destroy())
-      .catch((err) => console.error(`mailbox-store: deleting the store of mailbox ${mailbox.id} failed`, err))
-  }
+  // The mailbox's own store (mailbox/store.ts) goes with it. Its raw copies are inside the R2 folder deleted above.
+  await store(env, mailbox.id)
+    .then((stub) => stub.destroy())
+    .catch((err) => console.error(`mailbox-store: deleting the store of mailbox ${mailbox.id} failed`, err))
   await mailboxesDb.remove(env.DB, mailbox.id).run()
-
-  if (mailbox.kind === 'shared') await Promise.all(memberIds.map((memberId) => syncMemberGroups(env, memberId)))
 }

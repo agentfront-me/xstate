@@ -860,8 +860,8 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
 const KIND_LABEL: Record<MailboxKind, string> ={ personal: 'Personal', shared: 'Shared', agent: 'Agent' }
 const KIND_HINT: Record<MailboxKind, string> = {
   personal: "An inbox for someone already in the organization. To add a new person with their own mailbox, use Members.",
-  shared: 'For addresses like hello@ or support@. No password: you get access now, and can give it to others later.',
-  agent: 'For an AI agent. It signs in with the password shown after you create it.',
+  shared: 'For addresses like hello@ or support@. You get access now, and can give it to others later.',
+  agent: 'For an AI agent, which reads and sends from it in xstate.',
 }
 const LOCAL_PART_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 
@@ -870,7 +870,6 @@ function DomainMailboxes({ account, domain: d }: { account: Account; domain: Dom
   const mailboxes = mailboxesOf(account, d.id).sort((a, b) => a.address.localeCompare(b.address))
   const admin = isOrgAdmin(account.org)
   const [open, setOpen] = useState(false)
-  const [created, setCreated] = useState<{ address: string; password: string } | null>(null)
   if (!mailboxes.length && !admin) return null
 
   return (
@@ -883,30 +882,13 @@ function DomainMailboxes({ account, domain: d }: { account: Account; domain: Dom
           <span className="mbx-kind">{KIND_LABEL[m.kind]}</span>
         </div>
       ))}
-      {created && (
-        <div className="mbx-password" role="status">
-          <span>
-            Password for <b>{created.address}</b>, shown only once. Use it to sign in from other mail apps.
-          </span>
-          <code>{created.password}</code>
-          <button className="btn" onClick={() => void copyText(created.password).then((ok) => toast(ok ? 'Copied' : "Couldn't copy"))}>
-            Copy
-          </button>
-          <button className="btn" onClick={() => setCreated(null)}>
-            Done
-          </button>
-        </div>
-      )}
       {admin &&
         (open ? (
           <AddMailboxForm
             account={account}
             domain={d}
             onClose={() => setOpen(false)}
-            onCreated={(address, password) => {
-              setOpen(false)
-              if (password) setCreated({ address, password })
-            }}
+            onCreated={() => setOpen(false)}
           />
         ) : (
           <button className="text-btn mbx-add" onClick={() => setOpen(true)}>
@@ -927,7 +909,7 @@ function AddMailboxForm({
   account: Account
   domain: Domain
   onClose: () => void
-  onCreated: (address: string, password?: string) => void
+  onCreated: () => void
 }) {
   const client = useQueryClient()
   const live = account.mode === 'live'
@@ -955,14 +937,14 @@ function AddMailboxForm({
     setSaving(true)
     setError('')
     try {
-      const { password } = await createMailbox(client, d.id, {
+      await createMailbox(client, d.id, {
         kind,
         localPart,
         ...(name.trim() && { displayName: name.trim() }),
         ...(kind === 'personal' && { ownerMemberId: owner }),
       })
       toast(`${address} created`)
-      onCreated(address, password)
+      onCreated()
     } catch (e) {
       setError(errorMessage(e))
       setSaving(false)

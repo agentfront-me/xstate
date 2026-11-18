@@ -62,18 +62,16 @@ change how something works. Recent changes are listed [at the end](#changes).
   next messages.
   xstate publishes an MTA-STS policy for these domains (in enforce mode, starting with xstate.com), so senders that
   support it deliver only over encrypted connections to Amazon SES, with a verified certificate.
-- **Delivery log.** For mailboxes on the new mail path, xstate keeps a record of where each message went: delivered
+- **Delivery log.** For every mailbox, xstate keeps a record of where each message went: delivered
   and to which folder (with the reasons it went to Junk), attachments scanned, sent, accepted or bounced by the
   receiving server, refused, or dropped for an address that doesn't exist. It holds ids, addresses and outcomes,
   never what a message says, is kept 30 days, and only owners and admins can read it.
-- **A mailbox's own index.** To make lists and search fast, a mailbox can have its own index of its messages:
-  senders, recipients, subjects, folders, flags and body text, with a copy of each whole message (attachments
-  included) in your organization's own storage bucket, from which the message and its attachments can be opened.
-  It is kept separately for each mailbox, reached only through the same access checks as the mail itself, and
-  deleted when the message or the mailbox is deleted. We are turning this on mailbox by mailbox.
-  For mailboxes on the new mail path, the calendars are kept the same way, in that mailbox's own store, with the
-  same access as the mailbox.
-- **Calendar emails.** On the new mail path, an invitation, update, cancellation or answer that arrives by email
+- **A mailbox's own store.** Each mailbox keeps its own index of its messages (senders, recipients, subjects,
+  folders, flags and body text), with each whole message (attachments included) in your organization's own storage
+  bucket, from which the message and its attachments are opened. Its calendars are kept the same way. It is kept
+  separately for each mailbox, reached only through the same access checks as the mail itself, and deleted when the
+  message or the mailbox is deleted.
+- **Calendar emails.** An invitation, update, cancellation or answer that arrives by email
   changes the calendar only when its sender is proven: the message must come from the organizer (or, for an answer,
   from that guest), and Amazon SES must have confirmed the sender's domain with DMARC or a matching DKIM signature.
   New invitations are added on their own only from people in your organization, people you've written to, or your
@@ -210,6 +208,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Every mailbox's mail and calendars are kept in its own store; mailboxes no longer have
+  a password of their own (mail apps over IMAP or SMTP aren't supported). Mail for a domain that's turned off is
+  dropped.
 - **November 18, 2026:** Deleting a member blocks their access at once and finishes after 30 days, so it can be
   undone until then. An admin chooses whether their mailbox becomes a shared mailbox (and who can open it) or is
   deleted with its mail.

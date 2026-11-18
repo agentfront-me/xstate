@@ -1,5 +1,5 @@
-// Copying one person's Google calendars into their xstate mailbox's calendars (Stalwart, or the mailbox's store once
-// its mail is there: mailserver/calendar-backend.ts picks, as for the API). Only the
+// Copying one person's Google calendars into their xstate mailbox's calendars (the mailbox's store,
+// mailserver/calendar-backend.ts, as for the API). Only the
 // calendars they own: the primary one goes into their default calendar ("Work"), each other one into a calendar of
 // the same name. Per calendar, two listings, one page per queue job:
 //   events       single events and repeating series, imported as they are (claimed first in the MigrationStore,
@@ -128,8 +128,7 @@ function contextFor(u: MigrationUserRow, mailbox: MailboxRow, cal: CalendarEntry
     timeZone: cal.timeZone ?? 'Etc/UTC',
     googleAddresses: [u.email, ...aliases],
     address: mailbox.address,
-    // Stalwart holds at most 20 people per event; the store has no limit of its own.
-    maxParticipants: mailbox.backend === 'store' ? MAX_PARTICIPANTS_STORE : MAX_PARTICIPANTS,
+    maxParticipants: MAX_PARTICIPANTS_STORE,
   }
 }
 
@@ -190,9 +189,9 @@ async function applyOccurrences(backend: CalendarBackend, store: ReturnType<type
       const o = occurrenceOverride(e, current.showWithoutTime ? null : (current.timeZone ?? null), current.duration ?? null)
       if (o) overrides[o.key] = { ...(overrides[o.key] as object | undefined), ...o.value }
     }
-    // The whole map: a patch path into a map that doesn't exist yet fails on Stalwart.
+    // The whole map, set at once.
     // The store raises the sequence on a change unless given one; the final pass compares sequences, so keep Google's.
-    await backend.updateEvent(target, { recurrenceOverrides: overrides, ...(backend.kind === 'store' && { sequence: current.sequence ?? 0 }) }, false)
+    await backend.updateEvent(target, { recurrenceOverrides: overrides, sequence: current.sequence ?? 0 }, false)
     await store.record('event', owner, mine.map((e) => ({ sourceId: keyOf(cal, e.id), targetId: target })))
   }
 }
@@ -294,7 +293,7 @@ async function applyChanges(
     // Our copy is gone (deleted in xstate since): leave it gone rather than bring it back.
     if (!current) continue
     // A full listing (after an expired token) goes through every event: never apply an older version than ours,
-    // and skip ones that look unchanged. (Stalwart may bump sequence on its own, so a tie compares the title.)
+    // and skip ones that look unchanged. (A tie compares the title.)
     if (full && ((current.sequence ?? 0) > (e.sequence ?? 0) || ((current.sequence ?? 0) === (e.sequence ?? 0) && current.title === (e.summary ?? '')))) continue
     const { fields } = convertEvent(e, ctx)
     // Keep occurrences changed earlier; add the series' own excluded dates.

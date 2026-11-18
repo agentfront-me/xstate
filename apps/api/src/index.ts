@@ -12,7 +12,6 @@ import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleSesInbound } from './jobs/ses-inbound'
 import { handlePaddleWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
-import { handleStalwartWebhook } from './jobs/stalwart-webhook'
 import { consumePush, type PushJob } from './push/send'
 import { consumeStore, type MailboxStoreJob } from './mailbox/jobs'
 import type { InboundJob } from './mailbox/inbound'
@@ -78,11 +77,9 @@ v1.get('/live/orgs/:organizationId', handleLive)
 mountOperations(v1, operations)
 app.route('/v1', v1)
 
-// Stalwart calls this when mail arrives in any account (signed; not part of the public /v1 API).
-app.post('/webhooks/stalwart', handleStalwartWebhook)
 // Amazon SES bounces and complaints, delivered by SNS (signed by SNS; not part of the public /v1 API).
 app.post('/webhooks/ses', handleSesWebhook)
-// Mail received through SES for store-held mailboxes, delivered by SNS (signed; mailbox/receive.ts).
+// Mail received through SES, delivered by SNS (signed; mailbox/receive.ts).
 app.post('/webhooks/ses-inbound', handleSesInbound)
 // Paddle subscription events (signed with PADDLE_WEBHOOK_SECRET; billing/webhook.ts).
 app.post('/webhooks/paddle', handlePaddleWebhook)
@@ -104,20 +101,19 @@ export { AgentStore } from './agents/store'
 export { AgentRun } from './agents/run'
 // One per organization: live-updates sockets for the apps. See live/hub.ts.
 export { LiveHub } from './live/hub'
-// One per mailbox: its message index, a shadow copy of Stalwart for now (mailbox/store.ts).
+// One per mailbox: its mail index, folders, calendars and delivery log (mailbox/store.ts).
 export { MailboxStore } from './mailbox/store'
 
 export default {
   // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) and the mta-sts.<domain> policy hosts
   // (mailbox/mta-sts.ts) are this same Worker; everything else is the API.
   fetch: (request, env, ctx) => handleMtaStsHost(request, env) ?? handleMcpHost(request, env, ctx) ?? app.fetch(request, env, ctx),
-  // MAIL_SYNC jobs: copy a mailbox's new attachments to R2 (from the webhook or the hourly check).
+  // MAIL_SYNC and STORE_COPY: old queues from the Stalwart days, only drained until they are removed (phase 5b).
   // SEARCH_INDEX jobs: index a file for Storage search.
   // MIGRATION jobs: Google Workspace imports (migration/jobs.ts).
   // PUSH jobs: notifications to the mobile app (push/send.ts).
-  // STORE_COPY jobs: copying mail into mailbox stores (mailbox/jobs.ts).
   // MAIL_IN jobs: mail received through SES, delivered into mailbox stores (mailbox/receive.ts).
-  // MAIL_EVENTS jobs: new, moved and removed mail in store-held mailboxes, for filing, search and agents.
+  // MAIL_EVENTS jobs: new, moved and removed mail, for filing, search and agents.
   queue: (batch, env) =>
     batch.queue === 'xstate-search-index'
       ? consumeSearch(batch as MessageBatch<SearchJob>, env)
@@ -128,14 +124,13 @@ export default {
           : batch.queue === 'xstate-push'
             ? consumePush(batch as MessageBatch<PushJob>, env)
             : batch.queue === 'xstate-mailbox-store'
-              ? consumeStore(batch as MessageBatch<MailboxStoreJob>, env)
+              ? consumeStore(batch as MessageBatch<MailboxStoreJob>)
               : batch.queue === 'xstate-mail-in'
                 ? consumeInbound(batch as MessageBatch<InboundJob>, env)
                 : batch.queue === 'xstate-mail-events'
                   ? consumeMailEvents(batch as MessageBatch<MailEvent>, env)
-                  : consume(batch as MessageBatch<MailSyncJob>, env),
-  // Hourly: safety-net mail sync in case webhooks were lost, purge of files deleted over 30 days ago, and the
-  // search backfill and sweep, and syncing sending suspensions to Stalwart.
+                  : consume(batch as MessageBatch<MailSyncJob>),
+  // Hourly: purge of files and mail deleted over 30 days ago, the search backfill and sweep, and the other clean-ups.
   scheduled: (_controller, env, ctx) =>
     ctx.waitUntil(
       Promise.all([

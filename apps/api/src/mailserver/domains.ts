@@ -2,15 +2,14 @@ import * as addressesDb from '../db/addresses'
 import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
-import { EmailError, withRollback } from './errors'
-import { checkRecords, essentialRecords, isTestDomain, lookupDomain, otherMxHosts, resolveTxt, storeRecords, zoneFile, type DnsProvider, type DnsRecord } from './dns'
+import { EmailError } from './errors'
+import { checkRecords, isTestDomain, lookupDomain, otherMxHosts, resolveTxt, storeRecords, zoneFile, type DnsProvider, type DnsRecord } from './dns'
 import * as domainConnect from './domain-connect'
 import * as ses from './ses'
-import * as stalwart from './stalwart/domains'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
 import { normalizeDomain } from './validation'
 
-/** Adds a domain to Stalwart and to the organization. A plain member who adds it gets manage access to it. */
+/** Adds a domain to the organization. A plain member who adds it gets manage access to it. */
 export async function addDomain(env: EmailEnv, actor: Actor, organizationId: string, name: string): Promise<Domain> {
   const member = await loadMember(env, organizationId, actor.userId)
   requireOrgPermission(member, 'domains.create')
@@ -18,22 +17,15 @@ export async function addDomain(env: EmailEnv, actor: Actor, organizationId: str
   name = normalizeDomain(name)
   if (await domainsDb.nameTaken(env.DB, name)) throw new EmailError('domain_taken', `${name} is already added to xstate`, 409)
 
-  const stalwartId = await stalwart.createDomain(env, name)
-
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  // New domains start on the new mail system once NEW_DOMAINS_ON_STORE is "on" (phase 4g): SES records only, and
-  // every mailbox made on it is held by the store (4b). Stalwart still gets the domain, for stalwart_id (phase 5).
-  const mailPath = (env as { NEW_DOMAINS_ON_STORE?: string }).NEW_DOMAINS_ON_STORE === 'on' ? 'store' : 'stalwart'
-  const writes = [domainsDb.insert(env.DB, { id, organizationId, name, stalwartId, createdBy: actor.userId, now, mailPath })]
+  // stalwart_id is NOT NULL UNIQUE until the table rebuild in phase 5c; nothing reads it any more.
+  const writes = [domainsDb.insert(env.DB, { id, organizationId, name, stalwartId: `none:${id}`, createdBy: actor.userId, now, mailPath: 'store' })]
   if (!isAdmin(member) && domainAccess(member, id) !== 'manage') {
     const permissions = { ...member.permissions, domains: { ...member.permissions.domains, [id]: 'manage' as const } }
     writes.push(membersDb.setPermissions(env.DB, member.id, permissions, now))
   }
-  await withRollback(
-    () => env.DB.batch(writes),
-    () => stalwart.destroyDomain(env, stalwartId),
-  )
+  await env.DB.batch(writes)
 
   // Register for sending through SES now, so its DKIM records are part of the DNS step. If SES is down, the next
   // "Check DNS" (verifyDomain) tries again.
@@ -102,24 +94,10 @@ export async function listDomains(env: EmailEnv, actor: Actor, organizationId: s
   return rows.filter((d) => domainAccess(member, d.id) || mine.has(d.id)).map(toDomain)
 }
 
-/**
- * The DNS records the customer must add (MX, SPF, DKIM, DMARC, SRV, MTA-STS, autoconfig), as a zone file.
- * TLSA records are removed: they pin our certificate key, need DNSSEC, and break when certbot renews.
- */
+/** The DNS records the customer must add (Amazon SES receiving and sending: MX, SPF, DKIM, DMARC), as a zone file. */
 export async function getDomainDnsRecords(env: EmailEnv, actor: Actor, domainId: string): Promise<string> {
   const { domain } = await domainContext(env, actor, domainId, 'read')
-  // On the mailbox store (or moving to it): SES's records, nothing from Stalwart (phase 4a).
-  if (domain.mail_path !== 'stalwart') return zoneFile(domain.name, storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain)))
-  const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
-  if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
-  const sesDkim = sesDkimRecords(domain)
-  const lines = zone
-    .split('\n')
-    .filter((line) => !/\sTLSA\s/i.test(line))
-    // With SES signing, Stalwart's own DKIM keys aren't used; SES's CNAMEs replace them.
-    .filter((line) => !(sesDkim.length && /_domainkey\S*\s+IN\s+TXT/i.test(line)))
-  for (const r of sesDkim) lines.push(`${r.name}.${domain.name}. IN CNAME ${r.value}.`)
-  return lines.join('\n')
+  return zoneFile(domain.name, storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain)))
 }
 
 /**
@@ -156,14 +134,7 @@ export async function verifyDomain(
   })
   // Until mail moves, the ownership TXT record comes first: it's all a Google Workspace import needs to start.
   const owner = domain.status === 'verified' ? [] : [ownershipRecord(domain)]
-  let mail: Omit<DnsRecord, 'found'>[]
-  if (domain.mail_path !== 'stalwart') {
-    mail = storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain))
-  } else {
-    const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
-    if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
-    mail = essentialRecords(zone, domain.name, sesDkimRecords(domain))
-  }
+  const mail = storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain))
   const expected = [...owner, ...mail]
   const records = isTestDomain(env, domain.name)
     ? expected.map((r) => ({ ...r, found: true }))
@@ -224,8 +195,9 @@ export async function domainConnectUrl(
   const { domain } = await domainContext(env, actor, domainId, 'read')
   const none = { applyUrl: null, provider: null, replacesMx: [] }
   if (!domainConnect.domainConnectEnabled(env, domain.name) || isTestDomain(env, domain.name)) return none
-  // The published template sets Stalwart's records; a domain on the mailbox store adds SES's records by hand (phase 4a).
-  if (domain.mail_path !== 'stalwart') return none
+  // The published Domain Connect template still sets the old mail server's records, so until a template with SES's
+  // records is published and onboarded by providers, every domain adds its records by hand.
+  if (TEMPLATE_HAS_SES_RECORDS !== true) return none
   const tokens = domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : []
   if (tokens.length !== 3) return none
 
@@ -254,6 +226,9 @@ export async function domainConnectUrl(
   }
 }
 
+/** Flip once the Domain Connect template (domain-connect.ts) carries SES's MX and SPF instead of the old server's. */
+const TEMPLATE_HAS_SES_RECORDS: boolean = false
+
 /** An http(s) URL whose origin is one of APP_ORIGINS. */
 function allowedRedirect(env: Pick<Env, 'APP_ORIGINS'>, uri: string): boolean {
   try {
@@ -267,11 +242,7 @@ function allowedRedirect(env: Pick<Env, 'APP_ORIGINS'>, uri: string): boolean {
 /** Turns mail for a domain on or off without deleting anything. */
 export async function setDomainEnabled(env: EmailEnv, actor: Actor, domainId: string, enabled: boolean): Promise<Domain> {
   const { domain } = await domainContext(env, actor, domainId, 'manage')
-  await stalwart.setDomainEnabled(env, domain.stalwart_id, enabled)
-  await withRollback(
-    () => domainsDb.setEnabled(env.DB, domain.id, enabled, new Date().toISOString()).run(),
-    () => stalwart.setDomainEnabled(env, domain.stalwart_id, domain.enabled === 1),
-  )
+  await domainsDb.setEnabled(env.DB, domain.id, enabled, new Date().toISOString()).run()
   return toDomain((await domainsDb.find(env.DB, domain.id))!)
 }
 
@@ -283,7 +254,6 @@ export async function removeDomain(env: EmailEnv, actor: Actor, domainId: string
   const inUse = await addressesDb.countOnDomain(env.DB, domain.id)
   if (inUse) throw new EmailError('domain_not_empty', `Delete the ${inUse} address(es) on ${domain.name} first`, 409)
 
-  await stalwart.destroyDomain(env, domain.stalwart_id)
   if (ses.sesConfigured(env) && domain.ses_status) {
     await ses.deleteDomainIdentity(env, domain.name).catch((err) => console.error(`ses: removing ${domain.name} failed`, err))
   }

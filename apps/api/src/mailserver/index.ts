@@ -28,7 +28,6 @@ export {
   deleteMailbox,
   getMailbox,
   listMailboxes,
-  setMailboxPassword,
   updateMailbox,
   type CreateMailboxInput,
 } from './mailboxes'
@@ -61,7 +60,6 @@ export {
   listCalendars,
   listEvents,
   respondToEvent,
-  setUpCalendars,
   updateEvent,
   MAX_GUESTS,
   type Calendar,
