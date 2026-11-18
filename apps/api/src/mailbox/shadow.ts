@@ -113,6 +113,17 @@ export async function syncStore(env: ShadowEnv, mailboxId: string): Promise<Stor
   return result
 }
 
+/**
+ * Queues raw copies right after a copy job stores messages. A mailbox's first sync only queues the copy jobs, and its
+ * own raw pass runs before those messages are in the store, so without this their raw copies waited for the next
+ * sync (an hour away). The in-flight cap in missingRaw keeps many copy jobs from piling up raw batches.
+ */
+export async function queueRawAfterCopy(env: ShadowEnv, mailboxId: string): Promise<number> {
+  const mailbox = await mailboxesDb.find(env.DB, mailboxId)
+  if (!mailbox || mailbox.store_mode === 'off' || mailbox.backend === 'store') return 0
+  return queueRaw(env, mailbox)
+}
+
 /** Queues raw copies for messages that don't have one yet, a bounded number per run. */
 async function queueRaw(env: ShadowEnv, mailbox: MailboxRow): Promise<number> {
   if (!mailbox.store_raw || !storageConfigured(env)) return 0

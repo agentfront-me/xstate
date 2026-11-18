@@ -158,7 +158,8 @@ personal data from the EU, UK or Switzerland, we rely on the European Commission
   is deleted, except what we must keep for legal, tax or security reasons.
 - **Your Content:** until you or your organization delete it, or until the organization is deleted (then within
   30 days, after any export period described in the Terms). Deleted files sit in trash until emptied. Up to 5
-  previous versions of a file are kept, each for 30 days after it was replaced.
+  previous versions of a file are kept, each for 30 days after it was replaced. On domains that use xstate's new
+  mail system, email in Trash is deleted for good 30 days after it was moved there, together with its stored copy.
 - **Search indexes:** removed after the source item is deleted, usually within an hour.
 - **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events
   after about 90 days; other audience records until the organization deletes them.

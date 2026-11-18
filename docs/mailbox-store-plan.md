@@ -2131,7 +2131,30 @@ that is only you; for customers it is announced, and `security.md` and the domai
 
 #### Order for our own domains
 
-1. **xstate.com** (after 4a, 4b, 4c, 4d, 4e): copy hello@ and no-reply@ first; asif@ is ready.
+1. **xstate.com: switched 2026-11-18.** Timeline (UTC):
+   - 09:36: hello@ and no-reply@ set to shadow with raw copies.
+   - 10:00: the hourly run copied them. Raw copies didn't follow until a second sync, because the first sync's raw
+     pass runs before the queued copies land (`rawQueued: 0`). A sync job sent to `xstate-mail-sync` by hand filled
+     them. Fixed afterwards (uncommitted): each `store-emails` job that stores messages queues raw copies itself
+     (`queueRawAfterCopy`, same in-flight cap), and its `mailbox-store-copy` log line shows `rawQueued`.
+   - 10:12: both set to read mode.
+   - 10:13: start.
+   - 10:14: MX changed in Cloudflare to `10 inbound-smtp.us-east-2.amazonaws.com`. 1.1.1.1, 8.8.8.8 and 9.9.9.9
+     showed it at once.
+   - 10:19: flip, after waiting out the 300 s TTL. Every step was ok: own (572, 2 and 4 messages); move; calendars
+     (2 events); routing now covers 99events.com and xstate.com; the sweep found nothing stray; accounts done; notice
+     sent.
+
+   Tests after the flip, all passed:
+   - The switch notice from no-reply@ (system mail through the store) arrived.
+   - Gmail to asif@ arrived in the store.
+   - asif@upfold.me (Stalwart) to hello@ was relayed through SES into the store.
+   - A reply from asif@ in a thread from 2026-11-06 kept thread `c` in Sent. The reply back from asif@hireninja.com
+     landed in that same old thread.
+
+   SPF changed from `v=spf1 mx -all` to `v=spf1 include:amazonses.com -all`. The DMARC record's
+   `rua=mailto:postmaster@xstate.com` has no address on the domain, and none is wanted (decided 2026-11-18), so DMARC
+   reports aren't received.
 2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
    xstate.com has had a quiet week.
 3. **asif.pk and upfold.me:** copy, then move.

@@ -3,7 +3,7 @@
 // to the organization's bucket and records where their attachments sit; `store-threading` fills in the threading
 // headers of copies made before they were kept (phase 4c), a batch per job, queueing the next itself.
 
-import { copyRaw, fillThreading, storeEmails, type ShadowEnv } from './shadow'
+import { copyRaw, fillThreading, queueRawAfterCopy, storeEmails, type ShadowEnv } from './shadow'
 
 export type MailboxStoreJob =
   | { kind: 'store-emails' | 'store-raw'; mailboxId: string; emailIds: string[] }
@@ -25,7 +25,8 @@ export async function runStoreJob(env: ShadowEnv, job: MailboxStoreJob): Promise
     if (filled.more) await enqueueStoreJobs(env, [{ kind: 'store-threading', mailboxId: job.mailboxId }])
   } else if (job.kind === 'store-emails') {
     const stored = await storeEmails(env, job.mailboxId, job.emailIds)
-    if (stored) console.log('mailbox-store-copy', JSON.stringify({ mailboxId: job.mailboxId, stored }))
+    const rawQueued = stored ? await queueRawAfterCopy(env, job.mailboxId) : 0
+    if (stored) console.log('mailbox-store-copy', JSON.stringify({ mailboxId: job.mailboxId, stored, rawQueued }))
   } else {
     const copied = await copyRaw(env, job.mailboxId, job.emailIds)
     if (copied.stored || copied.skipped) console.log('mailbox-store-raw', JSON.stringify(copied))

@@ -145,7 +145,7 @@ function frameDocument(html: string, plain: boolean, showImages: boolean): strin
   return `<!doctype html><html><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; font-src data:">
     <base target="_blank">
-    <style>html,body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
+    <style>html{overflow-y:hidden}html,body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
     ${base}img{max-width:100%;height:auto}table{max-width:100%}
     body.xq-hide [data-xq]{display:none!important}
     ${showImages ? '' : 'img[src^="http:"],img[src^="https:"]{display:none}'}</style></head>
@@ -195,13 +195,21 @@ function HtmlBody({ message, source, showImages }: { message: Message; source: M
   // Simple mail is drawn in the theme's colours, so the document is rebuilt when the theme changes.
   const srcDoc = useMemo(() => (html === null ? undefined : frameDocument(html, plain, showImages)), [html, plain, showImages, dark])
 
+  // The frame's height is its content's plus its own border (it is border-box, and a bordered frame sized to the
+  // content alone came out 2px short, which brought up a scrollbar over the last line). The whole document is
+  // measured, rounded up, so a last line's collapsed margin and fractional line heights fit too.
   const resize = () => {
     const el = frame.current
     const doc = el?.contentDocument
     if (!el || !doc?.body) return
     el.style.height = '0px'
-    el.style.height = `${doc.body.scrollHeight}px`
+    const content = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.documentElement.getBoundingClientRect().height))
+    el.style.height = `${content + (el.offsetHeight - el.clientHeight)}px`
   }
+
+  // Late fonts and images change the height after load.
+  const observer = useRef<ResizeObserver | null>(null)
+  useEffect(() => () => observer.current?.disconnect(), [])
 
   const onLoad = () => {
     const doc = frame.current?.contentDocument
@@ -210,6 +218,9 @@ function HtmlBody({ message, source, showImages }: { message: Message; source: M
     setHasQuote(found)
     if (found) doc.body.classList.toggle('xq-hide', !quoteOpenRef.current)
     resize()
+    observer.current?.disconnect()
+    observer.current = new ResizeObserver(() => resize())
+    observer.current.observe(doc.body)
   }
 
   useEffect(() => {

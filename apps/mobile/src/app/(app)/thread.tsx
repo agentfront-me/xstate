@@ -1,9 +1,9 @@
 // One conversation: every message in it, oldest first (HTML mail drawn as designed, ui/MessageBody.tsx), with pin,
-// archive and reply.
+// junk / not junk, archive and reply.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
-import { Archive, Paperclip, Pin, PinOff } from 'lucide-react-native'
+import { Archive, Inbox, Paperclip, Pin, PinOff, ShieldAlert } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useAccount } from '@/lib/account'
@@ -36,6 +36,10 @@ export default function Thread() {
   const last = messages[messages.length - 1]
   const pinned = messages.some((m) => m.pinned)
   const archived = messages.length > 0 && messages.every((m) => m.folder === 'archive')
+  // The folder the conversation was opened from decides Junk or Not junk, as in the web reader.
+  const openedFolder = (messages.find((m) => m.id === params.id) ?? last)?.folder
+  const junk = openedFolder === 'junk'
+  const canJunk = openedFolder === 'inbox' || openedFolder === 'archive' || junk
 
   /** Read state and folder moves apply to the whole conversation; pinning to the one message. */
   const update = useMutation({
@@ -71,6 +75,16 @@ export default function Thread() {
     )
   }
 
+  /** Junk and Not junk move the whole conversation; the move also teaches the spam filter about the sender. */
+  function toggleJunk() {
+    if (!last) return
+    haptic.tap()
+    update.mutate(
+      { id: last.id, patch: { folder: junk ? 'inbox' : 'junk' } },
+      { onSuccess: () => (toast(junk ? 'Moved to inbox; not junk' : 'Moved to Spam'), router.back()) },
+    )
+  }
+
   function reply() {
     if (!last) return
     // Answer the latest message from someone else; if every message is yours, write to the same people again.
@@ -99,6 +113,7 @@ export default function Thread() {
         right={
           <>
             <IconButton icon={pinned ? PinOff : Pin} label={pinned ? 'Unpin' : 'Pin'} onPress={togglePin} />
+            {canJunk ? <IconButton icon={junk ? Inbox : ShieldAlert} label={junk ? 'Not junk' : 'Junk'} onPress={toggleJunk} /> : null}
             <IconButton icon={Archive} label={archived ? 'Move to inbox' : 'Archive'} onPress={archive} />
           </>
         }
