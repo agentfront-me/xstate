@@ -83,6 +83,32 @@ export function essentialRecords(
   return records
 }
 
+/**
+ * The records for a domain whose mail the mailbox store holds, or is moving to it (docs/mailbox-store-plan.md,
+ * phase 4a): SES receives (MX) and sends (SPF, SES's DKIM keys). Nothing points at Stalwart, so its IMAP/CalDAV SRV,
+ * autoconfig and MTA-STS records are left out. DMARC is recommended, not required; any policy the owner already has
+ * counts.
+ */
+export function storeRecords(region: string, sesDkim: Omit<DnsRecord, 'found'>[]): Omit<DnsRecord, 'found'>[] {
+  return [
+    { type: 'MX', name: '@', value: `10 inbound-smtp.${region}.amazonaws.com`, purpose: 'Mail', required: true },
+    { type: 'TXT', name: '@', value: 'v=spf1 include:amazonses.com -all', purpose: 'SPF', required: true },
+    ...sesDkim,
+    { type: 'TXT', name: '_dmarc', value: 'v=DMARC1; p=reject', purpose: 'DMARC', required: false },
+  ]
+}
+
+/** Records as a zone file, the shape the DNS records endpoint returns. */
+export function zoneFile(domain: string, records: Omit<DnsRecord, 'found'>[]): string {
+  return records
+    .map((r) => {
+      const owner = r.name === '@' ? `${domain}.` : `${r.name}.${domain}.`
+      const value = r.type === 'TXT' ? `"${r.value}"` : r.type === 'MX' ? `${r.value}.` : `${r.value}.`
+      return `${owner} IN ${r.type} ${value}`
+    })
+    .join('\n')
+}
+
 /** Looks each record up in public DNS. */
 export async function checkRecords(records: Omit<DnsRecord, 'found'>[], domain: string): Promise<DnsRecord[]> {
   return Promise.all(

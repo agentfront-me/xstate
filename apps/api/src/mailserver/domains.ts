@@ -3,7 +3,7 @@ import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
 import { EmailError, withRollback } from './errors'
-import { checkRecords, essentialRecords, isTestDomain, lookupDomain, otherMxHosts, resolveTxt, type DnsProvider, type DnsRecord } from './dns'
+import { checkRecords, essentialRecords, isTestDomain, lookupDomain, otherMxHosts, resolveTxt, storeRecords, zoneFile, type DnsProvider, type DnsRecord } from './dns'
 import * as domainConnect from './domain-connect'
 import * as ses from './ses'
 import * as stalwart from './stalwart/domains'
@@ -97,6 +97,8 @@ export async function listDomains(env: EmailEnv, actor: Actor, organizationId: s
  */
 export async function getDomainDnsRecords(env: EmailEnv, actor: Actor, domainId: string): Promise<string> {
   const { domain } = await domainContext(env, actor, domainId, 'read')
+  // On the mailbox store (or moving to it): SES's records, nothing from Stalwart (phase 4a).
+  if (domain.mail_path !== 'stalwart') return zoneFile(domain.name, storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain)))
   const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
   if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
   const sesDkim = sesDkimRecords(domain)
@@ -141,11 +143,17 @@ export async function verifyDomain(
     console.error(`ses: syncing ${row.name} failed`, err)
     return row
   })
-  const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
-  if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
   // Until mail moves, the ownership TXT record comes first: it's all a Google Workspace import needs to start.
   const owner = domain.status === 'verified' ? [] : [ownershipRecord(domain)]
-  const expected = [...owner, ...essentialRecords(zone, domain.name, sesDkimRecords(domain))]
+  let mail: Omit<DnsRecord, 'found'>[]
+  if (domain.mail_path !== 'stalwart') {
+    mail = storeRecords(env.AWS_SES_REGION, sesDkimRecords(domain))
+  } else {
+    const zone = await stalwart.getDnsZone(env, domain.stalwart_id)
+    if (zone === undefined) throw new EmailError('domain_missing_on_mail_server', `${domain.name} is not on the mail server`, 502)
+    mail = essentialRecords(zone, domain.name, sesDkimRecords(domain))
+  }
+  const expected = [...owner, ...mail]
   const records = isTestDomain(env, domain.name)
     ? expected.map((r) => ({ ...r, found: true }))
     : await checkRecords(expected, domain.name)
@@ -205,6 +213,8 @@ export async function domainConnectUrl(
   const { domain } = await domainContext(env, actor, domainId, 'read')
   const none = { applyUrl: null, provider: null, replacesMx: [] }
   if (!domainConnect.domainConnectEnabled(env, domain.name) || isTestDomain(env, domain.name)) return none
+  // The published template sets Stalwart's records; a domain on the mailbox store adds SES's records by hand (phase 4a).
+  if (domain.mail_path !== 'stalwart') return none
   const tokens = domain.ses_dkim_tokens ? (JSON.parse(domain.ses_dkim_tokens) as string[]) : []
   if (tokens.length !== 3) return none
 

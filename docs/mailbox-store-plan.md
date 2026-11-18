@@ -1873,6 +1873,139 @@ event editor wants to show guests' availability.
 
 The MX switch and flip above, one domain at a time, starting with our own.
 
+**Design (written 2026-11-18, for review; nothing built except where noted).**
+
+#### Where things stand (production, 2026-11-18)
+
+| Domain | Mailboxes | Store copy |
+|---|---|---|
+| xstate.com | asif@ (personal), hello@, no-reply@ (shared; no-reply@ is `SYSTEM_MAIL_FROM`) | asif@ `read` with raw copies; the two shared ones not copied |
+| hireninja.com | asif@ (personal, aliases hello@ and sales@ on the same domain) | `read`, 53,761/53,761 raw, check ok |
+| asif.pk | mohammad@ (aliases m@, muhammad@, connect@, same domain) | not copied |
+| upfold.me | asif@ | not copied |
+| xstate.io | asif@ (Stalwart's admin account), hello@, sales@, support@ | not copied |
+| 99events.com | hello@, team@ (the pilot) | on the store; domain status still `pending` (below) |
+
+No alias crosses domains today, so every domain can move on its own.
+
+#### The order of a switch, and why
+
+Two things change for a domain: where the internet delivers its mail (the MX record) and where its mailboxes live
+(`mailboxes.backend`). Either order alone loses or loops mail:
+- **Mailboxes first:** the internet still delivers to Stalwart; the routing rule (phase 3) makes Stalwart relay the
+  domain's mail through SES, SES looks up the MX, finds Stalwart, and the message loops.
+- **MX first:** SES receives mail for mailboxes still on Stalwart, and `receive.ts` drops it (`not_on_store`).
+
+So a domain goes through a third state in between, `switching`, and the flip happens only once public DNS shows the
+new MX:
+
+1. **Ready** (days before): every mailbox on the domain has a complete store copy (`store_mode` `read`, raw `n/n`,
+   threading backfill done), and the MX record's TTL is lowered to 300 seconds a day ahead.
+2. **Switching:** `domains.mail_path` becomes `switching`. Mail SES receives for the domain's mailboxes is **handed
+   to Stalwart** (imported into the account's Inbox, or Junk by our spam decision, with JMAP `Email/import`) instead
+   of being dropped, and logged as `delivered` with `handedToStalwart`. Stalwart stays the source of truth; the
+   shadow copy brings it into the store as now. This can last as long as the customer needs.
+3. **MX change:** the MX record now points at `inbound-smtp.us-east-2.amazonaws.com`. For our own domains we change it
+   in Cloudflare; for customers the domain page shows it. The API checks public DNS (as "Check DNS" does).
+4. **Flip** (once the new MX is seen and the old TTL has passed): one operation, in order:
+   1. a last shadow sync of each mailbox;
+   2. `mailboxes.backend` → `store`, `domains.mail_path` → `store`;
+   3. calendars copied (3a's `ensureCopied`);
+   4. Stalwart routing rule synced at once (not waiting for the hour): from now on, mail that still reaches Stalwart
+      through a cached old MX is relayed through SES to the store (no loop: the MX is SES now);
+   5. the sweep runs at once for the domain (anything Stalwart delivered between the last sync and the rule);
+   6. each mailbox's Stalwart account has sending blocked (`setSendingBlocked`) and its password removed, so a mail
+      app can't keep sending from or reading the old copy (see "Mail apps" below).
+5. **Watch** for two days: the delivery log, `stalwart-sweep` and `stalwart-routing` lines, drops.
+6. **Old accounts kept 30 days** untouched (rollback), then deleted in phase 5.
+
+#### Rollback (within the 30 days)
+
+MX back to Stalwart, then flip back: `backend` → `stalwart`, rule removed, accounts' sending unblocked, and
+everything the store received or changed since the flip copied back into Stalwart: messages by `Email/import` (a
+reverse sweep, keyed by Message-ID so it is safe to repeat), folder moves and flags by the store's change log,
+calendar events by UID. Built as part of 4d so it exists before the first real switch, and tried on the pilot.
+
+#### Pieces to build
+
+- **4a DNS records without Stalwart.** For a domain on the store (or switching), the records page and "Check DNS" are
+  built from our own list instead of Stalwart's zone file: MX `10 inbound-smtp.us-east-2.amazonaws.com`, SPF
+  `v=spf1 include:amazonses.com -all` (Stalwart's `mx` term dropped), SES's three DKIM CNAMEs, DMARC (optional,
+  as now). The IMAP/SMTP/CalDAV SRV and autoconfig records and MTA-STS (all served by Stalwart) are left out. This
+  also fixes 99events.com showing `pending`: its check still expects Stalwart's MX.
+- **4b Mailboxes and aliases on a store domain.** A new mailbox on a `store` domain is created with
+  `backend = 'store'` (it still gets a Stalwart account, because `stalwart_id` is required until phase 5; the
+  routing rule covers its domain). An alias that would put a Stalwart mailbox on a store domain, or a store mailbox
+  on a Stalwart domain, is refused with a clear error (it would make the domain mixed, which keeps local delivery).
+- **4c Threading headers** for copied mail: designed below ("Threading headers for copied mail").
+- **4d The switch itself:** `domains.mail_path` (`stalwart` | `switching` | `store`, migration), the hand-to-Stalwart
+  delivery, the flip, the rollback, and an owner-only operation per domain with its status (ready checks, DNS seen,
+  flipped at, last sweep). Not on MCP. A screen for it can come with customers.
+- **4e System mail through the store.** `sendSystemEmail` submits through Stalwart from no-reply@xstate.com; once
+  xstate.com is on the store it sends with `sendFromStore` (SES), Sent copy in the store. Needed before xstate.com
+  moves.
+- **4f Workspace mail import into the store** (the gap found in 3d): `migration/mail.ts` writes raw messages to R2
+  and calls the store's `deliver` with a `migrated` source (original received time, Gmail labels as folders, seen
+  and flagged kept, no SES verdicts), then `new` events with `offer: false` (filed and indexed; no agents, calendar
+  rules or pushes). Needed before a Google Workspace customer moves onto a store domain; not for our own domains.
+- **4g New domains start on the store.** Once our own domains have moved, a newly added domain gets
+  `mail_path = 'store'` from the start (records from 4a, no Stalwart domain needed except for `stalwart_id`).
+
+**Decided (2026-11-18):** the proposals: passwords removed at the flip, old accounts kept 30 days.
+
+#### Step 4a: DNS records without Stalwart (approved and built 2026-11-18, uncommitted)
+
+- Migration 0038: `domains.mail_path` (`stalwart` | `switching` | `store`, default `stalwart`), set to `store` for
+  domains whose addresses all belong to store-held mailboxes (in production: 99events.com). The API's domain has
+  `mailPath`.
+- `dns.ts` `storeRecords(region, sesDkim)`: MX `10 inbound-smtp.<region>.amazonaws.com`, SPF
+  `v=spf1 include:amazonses.com -all`, SES's DKIM CNAMEs, DMARC `v=DMARC1; p=reject` (optional; any policy counts).
+  `zoneFile` writes them as the zone text the records endpoint returns.
+- `email_get_dns_records` and `email_verify_domain` use them for any domain not on `stalwart`; Stalwart's zone file
+  is no longer read for those. SPF matching already ignores the `all` term, so the pilot's `~all` passes.
+- **Domain Connect is off for store domains:** the published template sets Stalwart's records. A store template can
+  be published with 4g; until then those domains add their records by hand.
+
+**Local test:** acme.test marked `store`: the records endpoint returned the six store records (no SRV, autoconfig,
+MTA-STS or Stalwart DKIM), "Check DNS" listed them and kept the domain verified; back on `stalwart`, the Stalwart zone
+as before. 3 new unit tests (the records and zone text, the pilot's published records found, Stalwart's MX not
+taken for a store domain); 440 tests pass.
+
+**After deploy:** "Check DNS" on 99events.com should turn it from `pending` to `verified` (its MX, SPF and DKIM are
+SES's already).
+
+#### Mail apps (IMAP, SMTP, CalDAV)
+
+A moved mailbox's mail is no longer in Stalwart, so IMAP shows a frozen copy and SMTP sending would leave no Sent
+copy in the store and skip its rules. At the flip the account's sending is blocked and its password removed, so mail
+apps stop rather than drift. Reading and sending are in the web app, the mobile app and the API. For our own domains
+that is only you; for customers it is announced, and `security.md` and the domain setup docs change with 4a/4d.
+
+#### Order for our own domains
+
+1. **xstate.com** (after 4a, 4b, 4c, 4d, 4e): copy hello@ and no-reply@ first; asif@ is ready.
+2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
+   xstate.com has had a quiet week.
+3. **asif.pk and upfold.me:** copy, then move.
+4. **xstate.io last:** asif@xstate.io is Stalwart's admin login, which must keep working until phase 5; its mail can
+   move, its Stalwart account stays (the flip doesn't block an admin account: `setSendingBlocked` already returns
+   `admin` for it). The host name `mx.xstate.io` stays until Stalwart is retired.
+
+#### Tests
+
+- 4a: records for a store domain, and "Check DNS" passing 99events.com with its real records.
+- 4d, locally: a test domain through every state with fake SES: mail during `switching` lands in Stalwart and then the
+  store; nothing is dropped; after the flip, mail from another Stalwart mailbox and a message delivered straight to
+  Stalwart (as a cached MX would) both reach the store; the rollback brings a message received after the flip back
+  into Stalwart.
+- On production: the full sequence first on a new throwaway domain we own, then xstate.com.
+
+#### Open questions
+
+- Remove the old accounts' passwords at the flip (proposed), or only block sending and leave IMAP readable for the
+  30 days?
+- How long to keep the old Stalwart accounts (proposed 30 days)?
+
 #### Threading headers for copied mail (design written 2026-11-18, for review; nothing built)
 
 **Why:** a copied mailbox (hireninja: 53,747 messages, 5.1 GB of raw copies, in `read` mode) has every message, but

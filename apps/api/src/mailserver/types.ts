@@ -50,6 +50,8 @@ export type Domain = {
   /** Sending to outside addresses: Amazon SES has verified the domain. null when it isn't registered with SES. */
   sending: 'pending' | 'verified' | 'failed' | null
   enabled: boolean
+  /** Where its mail lives: Stalwart, moving to the mailbox store (MX on its way to SES), or the store. */
+  mailPath: 'stalwart' | 'switching' | 'store'
   verifiedAt: string | null
   createdAt: string
   updatedAt: string
@@ -79,6 +81,7 @@ export function toDomain(row: DomainRow): Domain {
     owned: row.status === 'verified' || !!row.owned_at,
     sending: row.ses_status,
     enabled: row.enabled === 1,
+    mailPath: row.mail_path ?? 'stalwart',
     verifiedAt: row.verified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

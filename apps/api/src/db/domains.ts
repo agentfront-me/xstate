@@ -6,6 +6,8 @@ export type DomainRow = {
   name: string
   stalwart_id: string
   status: 'pending' | 'verified'
+  /** Where its mail lives (migration 0038): Stalwart, moving (MX on its way to SES), or the mailbox store. */
+  mail_path: 'stalwart' | 'switching' | 'store'
   enabled: number
   verified_at: string | null
   ses_status: 'pending' | 'verified' | 'failed' | null
