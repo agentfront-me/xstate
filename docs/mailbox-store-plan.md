@@ -1435,8 +1435,130 @@ occurrences, all-day, ranges, time columns, RRULE, ids, patches); 399 tests pass
 **Deploy:** no migration, queue or secret. After the push, the pilot's calendars are copied on the next hourly run or
 when one is opened; the log line `calendar-copy` shows the counts.
 
+**Deployed (2026-11-18, "Implemented Calendar support").** On the pilot, `hello@` and `team@` answered with Work
+(default) and Personal and no events, as in Stalwart. On `hello@`: a weekly series (three Thursdays) came back from
+the store (ULID id, store occurrence ids), an event with a guest was refused with `invitations_unavailable`, and the
+series was deleted again. The web app's Calendar shows only the signed-in person's personal mailbox, so the pilot's
+shared mailboxes can't be seen there; asif@xstate.com's own calendar (still Stalwart) was unaffected.
+
+#### Step 3b: invitations out (approved and built 2026-11-18, uncommitted)
+
+Store-held mailboxes email guests themselves, through SES, instead of refusing with `invitations_unavailable`.
+
+**What gets sent, and when** (the same moments Stalwart sends today, so `notify` and "Save without emailing guests"
+keep their meaning):
+
+| Change | Who | iTIP method |
+|---|---|---|
+| Event created with guests | every guest | `REQUEST` |
+| Event changed (time, place, title, description, repeat, one occurrence) | guests still on it | `REQUEST` (sequence raised) |
+| Guest removed | that guest | `CANCEL` |
+| Event deleted by the organizer | every guest | `CANCEL` (status cancelled) |
+| One occurrence deleted by the organizer | every guest | `CANCEL` with that occurrence's `RECURRENCE-ID` |
+| Invitation answered (`calendar_respond_to_event`, or Add with an answer from the invite card) | the organizer | `REPLY` with only our own attendee line |
+
+A guest deleting an event from their own calendar tells nobody, as now. A change that only touches a guest's answer
+doesn't raise the sequence (3a already does this).
+
+**Decisions proposed:**
+
+- **One email per change to all the guests it concerns**, From the mailbox with the organizer's name (as Stalwart
+  does, via `organizerOf`), To every guest. Guests see each other in the invitation anyway. Removed guests get their
+  own `CANCEL`.
+- **No Sent copy** (as today). Each recipient gets a `sent` line in the delivery log with
+  `detail.invite: request | cancel | reply`, and SES's delivery, bounce and complaint notifications are counted
+  against the mailbox like any mail.
+- **Caps unchanged:** `withSendingCaps` already reserves the invitation caps for every recipient and the email caps
+  for outside ones, and refuses suppressed addresses. The `invitations_unavailable` refusal goes.
+- **Answering gets simpler:** for a store-held mailbox `respondToEvent` sets our own answer and sends the `REPLY`.
+  The Stalwart workaround (deleting and re-creating an invitation from outside so Stalwart sends a reply) stays only
+  for Stalwart mailboxes.
+- **The email itself**, shaped like Google's and Outlook's, which every calendar app understands:
+  ```
+  multipart/mixed
+    multipart/alternative
+      text/plain                         what, when, where, who, and the description
+      text/html                          the same, laid out
+      text/calendar; method=REQUEST      the event (Outlook and Apple read this part)
+    application/ics; name=invite.ics     the same event as a file (Gmail and others offer "Add")
+  ```
+  Subjects: "Invitation: Title @ Thu 19 Nov 2026 3pm – 3:30pm (PKT)", "Updated invitation: …", "Cancelled: …",
+  "Accepted: …" / "Declined: …" / "Tentative: …". Times are shown in the event's own zone, named, because we don't
+  know each guest's zone; their calendar app shows the event in their own. No footer: the free plan's footer is added by
+  Stalwart, and the store's own sends (`sendFromStore`) don't add one either.
+- **The iCalendar is built by a pure module** (`mailbox/ical-out.ts`, with ical.js's writer) from the JSCalendar
+  event:
+  - `VEVENT`: `UID`, `SEQUENCE`, `DTSTAMP`, `DTSTART`/`DTEND` (`VALUE=DATE` for all-day; `TZID` for timed), `SUMMARY`,
+    `DESCRIPTION`, `LOCATION`, `STATUS`, `ORGANIZER;CN=…`, one `ATTENDEE` per guest with `ROLE`
+    (`REQ-PARTICIPANT` / `OPT-PARTICIPANT`), `PARTSTAT` and `RSVP=TRUE`.
+  - Repeats: `RRULE` (the 3a converter), `EXDATE` for deleted occurrences, and one extra `VEVENT` with
+    `RECURRENCE-ID` for each changed occurrence.
+  - **Time zones:** Outlook refuses a `TZID` without a matching `VTIMEZONE`. We generate it from the runtime's own
+    zone data: find the zone's offset changes (by probing with `Intl`) from the event's first start to a few years
+    ahead, and write them as `STANDARD`/`DAYLIGHT` blocks. No time-zone database to ship. A zone with no changes (Asia/Karachi)
+    gets a single `STANDARD` block.
+- **Internal guests travel the same way:** an invitation to a Stalwart-held xstate mailbox goes out through SES and
+  arrives at Stalwart like one from outside, which shows it with the invite card (Stalwart doesn't file outside
+  invitations by itself). Invitations to store-held mailboxes are filed on arrival in 3c.
+
+**What 3b doesn't do yet:** a guest's answer comes back as an email (Gmail sends "Accepted: …") and lands in the
+organizer's inbox, but the guest list isn't updated until 3c reads it. So 3b and 3c are best tried on the pilot
+together. Building 3b first keeps each step small; I'd push them one after the other.
+
+**Tests:**
+- Pure: build → parse back with ical.js for a single event, an all-day one, a weekly series with one moved and one
+  deleted occurrence, a reply and a cancel. The generated `VTIMEZONE` gives the same UTC times as `zonedToUtc` across
+  New York's and London's daylight-saving changes. Subjects and the summary text.
+- Locally: fake SES sends (`SES_MODE=fake`) for create, change, remove a guest, delete one occurrence, delete, answer,
+  checking recipients, method, sequence and the delivery-log lines.
+- On the pilot, from `hello@`:
+  - an invitation to your Gmail and to an Outlook.com address; both show the right time, with Accept/Decline
+  - moving it: both calendars follow
+  - removing one guest: that guest's copy is cancelled
+  - deleting one occurrence of a series, then the whole event
+  - an invitation from Gmail to `hello@`, accepted through the API: Gmail shows the answer
+
+**Built:**
+- `mailbox/ical-out.ts`: the iCalendar file as jCal, written by ical.js (escaping, folding). `VTIMEZONE` from
+  `zoneOffsetMinutes` (new in `mailserver/calendar-events.ts`): the offset at a year before the event, then each
+  change found by daily probes narrowed to the minute, up to a year after the event ends (five years for an open
+  series). `UNTIL` is written in UTC for a zoned series.
+- `mailbox/invite-mail.ts`: subjects ("Invitation: … @ Mon 2 Mar 2026 9am – 9:45am (GMT-5)") and the text and HTML.
+  `Intl` names zones like Karachi "GMT+5", not "PKT".
+- `mailbox/scheduling.ts` (pure): what a change means for whom, as in the table, plus one thing the table didn't
+  say: when the guest list changes, the guests who stay also get an update (the list they were shown changed), as
+  Google and Stalwart do.
+- `mailbox/invite-send.ts`: builds and sends each email, logs a `sent` line per recipient (`detail.invite`,
+  `detail.kind`, `uid`, `occurrence`).
+- `mailbox/compose.ts`: `OutMessage.calendar` adds the `text/calendar; method=…` part (base64) to the alternative
+  and `invite.ics` as an attachment.
+- `mailbox/calendar-store.ts`: create, update and destroy save first, then work out and send the emails when
+  `notify`; a failed send answers 502 `invite_send_failed` ("Saved, but emailing the guests failed"). Deleting one
+  occurrence raises the sequence.
+- `mailserver/calendar.ts`: the 3a refusal (`invitations_unavailable`) is gone; answering from a store-held mailbox
+  always takes the simple path (set our answer, the store sends the reply).
+
+**Local test** (fake SES), on dev@acme.test held by the store:
+- organizer: a weekly series with Sam and optional Kim → one invitation to both; moving it → update to both;
+  renaming → update; swapping Kim for Lee → cancel to Kim, invitation to Lee, update to Sam; deleting one
+  occurrence → one cancellation of that occurrence to Sam and Lee, nothing else; a change with `notify: false` →
+  nothing; deleting the series → cancellation to both. Every recipient has its line in the delivery log.
+- guest: an invitation from Priya built by our own code (`text/calendar` in the alternative plus `invite.ics`),
+  delivered through the fake SES path, was read by Stalwart's parser (a second iCalendar implementation) with the
+  right title, time and zone; adding it with "accepted" sent one reply to Priya; declining sent another; deleting it
+  sent nothing.
+- 16 new unit tests: requests parse back with ical.js; every occurrence of a weekly series over a year matches
+  `zonedToUtc` in New York, London, Sydney and Karachi; EXDATE and moved occurrences; all-day dates; cancelling one
+  occurrence; replies carry one attendee; a zone without daylight saving gets one STANDARD block; the scheduling
+  cases; subjects; HTML escaping; the message structure. 415 tests pass.
+
+**Not yet:** guests' answers update the organizer's guest list only from 3c on (until then they arrive as emails).
+Not tried against real Gmail and Outlook yet: that is the pilot test after the push.
+
 #### Open questions
 
+- For 3b: is there an Outlook.com (or Microsoft 365) address we can send test invitations to? Outlook is the strictest
+  about time zones, so it is the one worth testing.
 - Free/busy: build it in 3d, or later?
 - Whether new invitations from unknown senders should still be added, shown as "needs action" (Google's default), or
   stay email only (proposed).

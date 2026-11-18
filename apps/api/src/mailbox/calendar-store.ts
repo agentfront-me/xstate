@@ -3,8 +3,9 @@
 // (./calendar-expand.ts). The first time a store-held mailbox's calendar is used, what Stalwart holds for it is
 // copied over once, ids and all, so links keep working.
 //
-// Invitations aren't sent from here yet (phase 3b): ../mailserver/calendar.ts refuses a change that would email
-// guests before it reaches this code.
+// With `notify`, a change emails the guests (or, for a guest's own answer, the organizer) the way Stalwart does for its
+// mailboxes (phase 3b: ./scheduling.ts decides, ./invite-send.ts sends). The change is saved first; if the email then
+// fails, the caller hears so (invite_send_failed) and the event stays as saved.
 
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
@@ -15,6 +16,8 @@ import type { JmapCalendar, JmapEvent } from '../mailserver/stalwart/calendar'
 import type { EmailEnv } from '../mailserver/types'
 import { applyPatch, changesSchedule, expand, occurrenceOf, parseOccurrenceId, timeColumns, withTimes } from './calendar-expand'
 import { ulid } from './inbound'
+import { sendInvites } from './invite-send'
+import { scheduling } from './scheduling'
 import type { StoreCalendar, StoreEventPut } from './store'
 import { store } from './stub'
 
@@ -30,6 +33,17 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
   const series = async (id: string): Promise<JmapEvent | null> => (await rows([id]))[0] ?? null
   const put = async (e: JmapEvent) => stub.putEvents([toRow(e)])
   const calendars = async (): Promise<JmapCalendar[]> => (await stub.calendarRows()).map(toCalendar)
+  const own = ownAddresses(mailbox)
+  const notifyGuests = async (before: JmapEvent | null, after: JmapEvent | null) => {
+    const emails = scheduling(before, after, own)
+    if (!emails.length) return
+    try {
+      await sendInvites(env, mailbox, emails, own)
+    } catch (err) {
+      console.error(`calendar: invitation email from ${mailbox.id} failed`, err)
+      throw new EmailError('invite_send_failed', `Saved, but emailing the guests failed: ${err instanceof Error ? err.message : String(err)}`, 502)
+    }
+  }
 
   const backend: CalendarBackend = {
     kind: 'store',
@@ -65,17 +79,19 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       const e = await series(id)
       return e ? withTimes(e) : null
     },
-    async createEvent(event) {
+    async createEvent(event, notify) {
       const calendarId = Object.keys((event.calendarIds as Record<string, true> | undefined) ?? {})[0]
       if (!calendarId || !(await calendars()).some((c) => c.id === calendarId)) {
         throw new EmailError('calendar_not_found', 'That calendar does not exist', 404)
       }
       const id = ulid()
       const now = new Date().toISOString()
-      await put({ uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as JmapEvent)
+      const created = { uid: crypto.randomUUID(), sequence: 0, ...event, id, created: now, updated: now } as unknown as JmapEvent
+      await put(created)
+      if (notify) await notifyGuests(null, created)
       return id
     },
-    async updateEvent(id, patch) {
+    async updateEvent(id, patch, notify) {
       // A change addressed to one occurrence applies to its series, as the calls in ../mailserver/calendar.ts expect.
       const current = await series(parseOccurrenceId(id)?.seriesId ?? id)
       if (!current) throw new EmailError('event_not_found', 'That event no longer exists', 404)
@@ -83,17 +99,22 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       if (changesSchedule(patch)) next.sequence = (current.sequence ?? 0) + 1
       next.updated = new Date().toISOString()
       await put(next)
+      if (notify) await notifyGuests(current, next)
     },
-    async destroyEvent(id) {
+    async destroyEvent(id, notify) {
       const occurrence = parseOccurrenceId(id)
       if (!occurrence) {
+        const before = notify ? await series(id) : null
         await stub.deleteEvent(id)
+        if (before) await notifyGuests(before, null)
         return
       }
       // One occurrence: left out of its series from now on.
       const base = await series(occurrence.seriesId)
       if (!base) return
-      await put({ ...base, recurrenceOverrides: { ...(base.recurrenceOverrides ?? {}), [occurrence.recurrenceId]: { excluded: true } } })
+      const next = { ...base, recurrenceOverrides: { ...(base.recurrenceOverrides ?? {}), [occurrence.recurrenceId]: { excluded: true } }, sequence: (base.sequence ?? 0) + 1 }
+      await put(next)
+      if (notify) await notifyGuests(base, next)
     },
   }
   return backend
@@ -112,6 +133,17 @@ function toRow(e: JmapEvent): StoreEventPut {
     endUtc: time.endUtc,
     recurring: time.recurring,
   }
+}
+
+/** The mailbox's own addresses, lowercase: its address and aliases. */
+function ownAddresses(mailbox: MailboxRow): string[] {
+  let aliases: string[] = []
+  try {
+    aliases = JSON.parse(mailbox.aliases ?? '[]') as string[]
+  } catch {
+    // A malformed list just means no aliases.
+  }
+  return [mailbox.address, ...aliases].map((a) => a.toLowerCase())
 }
 
 function toCalendar(c: StoreCalendar): JmapCalendar {

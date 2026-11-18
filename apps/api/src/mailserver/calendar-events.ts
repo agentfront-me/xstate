@@ -299,6 +299,15 @@ export function zonedToUtc(local: string, timeZone: string): string {
   return `${new Date(t).toISOString().slice(0, 19)}Z`
 }
 
+/** The zone's offset from UTC, in minutes, at an instant (positive east of Greenwich). Unknown zones are UTC. */
+export function zoneOffsetMinutes(timeZone: string, ms: number): number {
+  const format = zoneFormat(timeZone)
+  if (!format) return 0
+  const t = Math.floor(ms / 1000) * 1000
+  const p = Object.fromEntries(format.formatToParts(new Date(t)).map((x) => [x.type, x.value]))
+  return Math.round((Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour!, +p.minute!, +p.second!) - t) / 60000)
+}
+
 /** One formatter per zone: building them is the slow part, and a long series converts many times. */
 const zoneFormats = new Map<string, Intl.DateTimeFormat | null>()
 function zoneFormat(timeZone: string): Intl.DateTimeFormat | null {

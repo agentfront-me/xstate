@@ -35,6 +35,12 @@ export type OutMessage = {
   /** Extra headers, already limited to allowed names and checked for line breaks (emails/service.ts). */
   headers?: Record<string, string>
   files?: OutFile[]
+  /**
+   * An invitation (iTIP over email, RFC 6047): the iCalendar text goes inside the text/html alternative as
+   * `text/calendar; method=…` (what Outlook and Apple Calendar read) and again as an invite.ics attachment (what Gmail
+   * offers to add).
+   */
+  calendar?: { method: string; ics: string }
 }
 
 const enc = new TextEncoder()
@@ -68,12 +74,14 @@ export function buildMessage(m: OutMessage, options: { includeBcc: boolean; boun
 
   const textPart = textEntity('text/plain', m.text)
   let body: Entity = textPart
-  if (m.html) {
-    let htmlPart = textEntity('text/html', m.html)
-    if (inline.length) htmlPart = multipart('related', [htmlPart, ...inline.map((f) => fileEntity(f, 'inline'))], boundary())
-    body = multipart('alternative', [textPart, htmlPart], boundary())
+  const calendarPart = m.calendar ? calendarEntity(m.calendar.method, m.calendar.ics) : null
+  if (m.html || calendarPart) {
+    let htmlPart = m.html ? textEntity('text/html', m.html) : null
+    if (htmlPart && inline.length) htmlPart = multipart('related', [htmlPart, ...inline.map((f) => fileEntity(f, 'inline'))], boundary())
+    body = multipart('alternative', [textPart, ...(htmlPart ? [htmlPart] : []), ...(calendarPart ? [calendarPart] : [])], boundary())
   }
-  if (attached.length) body = multipart('mixed', [body, ...attached.map((f) => fileEntity(f, 'attachment'))], boundary())
+  const invite = m.calendar ? [fileEntity({ name: 'invite.ics', type: 'application/ics', bytes: enc.encode(m.calendar.ics) }, 'attachment')] : []
+  if (attached.length || invite.length) body = multipart('mixed', [body, ...attached.map((f) => fileEntity(f, 'attachment')), ...invite], boundary())
 
   return assemble([lines.join('\r\n') + '\r\n', ...entityChunks(body), '\r\n'])
 }
@@ -98,6 +106,14 @@ function textEntity(type: string, text: string): Entity {
   return plain
     ? { headers: [`Content-Type: ${type}; charset="us-ascii"`, 'Content-Transfer-Encoding: 7bit'], body: [normalized] }
     : { headers: [`Content-Type: ${type}; charset="utf-8"`, 'Content-Transfer-Encoding: quoted-printable'], body: [quotedPrintable(normalized)] }
+}
+
+/** The invitation itself, base64 so no mail server rewraps its folded lines. */
+function calendarEntity(method: string, ics: string): Entity {
+  return {
+    headers: [`Content-Type: text/calendar; charset="utf-8"; method=${method.replace(/[^A-Z]/gi, '')}`, 'Content-Transfer-Encoding: base64'],
+    body: [{ file: enc.encode(ics) }],
+  }
 }
 
 function fileEntity(f: OutFile, disposition: 'inline' | 'attachment'): Entity {

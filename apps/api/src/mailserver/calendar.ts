@@ -1,8 +1,8 @@
 // Calendars and events. A mailbox's calendar is read and changed by the same people as its mail (mailContext in
 // ./access): a personal mailbox's calendar only by its owner. Events live in Stalwart (JMAP Calendars, see
 // ./stalwart/calendar), or in the mailbox's store once its mail is there (./calendar-backend, phase 3 of
-// docs/mailbox-store-plan.md). Invitations to guests go out from Stalwart by email, so outside guests count against
-// the same sending caps and suppression list as email_send (./sending); store-held mailboxes can't send them yet.
+// docs/mailbox-store-plan.md). Invitations to guests go out by email (from Stalwart, or through SES for store-held
+// mailboxes), so outside guests count against the same sending caps and suppression list as email_send (./sending).
 
 import * as eventsDb from '../db/email-events'
 import * as mailboxAccessDb from '../db/mailbox-access'
@@ -225,7 +225,8 @@ export async function respondToEvent(
   // reply when the event is created with the answer, so that copy is quietly replaced. Its id changes.
   const outside = !!event.organizer && (await outsideAddresses(env.DB, [event.organizer])).length > 0
   const id = await withSendingCaps(env, mailbox, event.organizer ? [event.organizer] : [], async () => {
-    if (!outside) {
+    // A store-held mailbox sends the answer itself (mailbox/scheduling.ts), whoever organizes the event.
+    if (!outside || cal.kind === 'store') {
       await cal.updateEvent(eventId, { [`participants/${key}/participationStatus`]: status }, true)
       return eventId
     }
@@ -420,14 +421,6 @@ async function withSendingCaps<T>(
   change: () => Promise<T>,
 ): Promise<T> {
   if (!recipients.length) return change()
-  // Store-held mailboxes send invitations from phase 3b on; until then nothing that would email guests is done.
-  if (mailbox.backend === 'store') {
-    throw new EmailError(
-      'invitations_unavailable',
-      "This mailbox can't email guests yet. Save without emailing guests, or remove them.",
-      409,
-    )
-  }
   if (recipients.length > MAX_GUESTS) throw new EmailError('too_many_guests', `An event can have at most ${MAX_GUESTS} guests`)
   const blocked = await eventsDb.suppressedFor(env.DB, mailbox.organization_id, recipients)
   if (blocked.length) {
