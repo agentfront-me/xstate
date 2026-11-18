@@ -1,7 +1,8 @@
 // Calendars and events. A mailbox's calendar is read and changed by the same people as its mail (mailContext in
 // ./access): a personal mailbox's calendar only by its owner. Events live in Stalwart (JMAP Calendars, see
-// ./stalwart/calendar); invitations to guests go out from Stalwart by email, so outside guests count against the
-// same sending caps and suppression list as email_send (./sending).
+// ./stalwart/calendar), or in the mailbox's store once its mail is there (./calendar-backend, phase 3 of
+// docs/mailbox-store-plan.md). Invitations to guests go out from Stalwart by email, so outside guests count against
+// the same sending caps and suppression list as email_send (./sending); store-held mailboxes can't send them yet.
 
 import * as eventsDb from '../db/email-events'
 import * as mailboxAccessDb from '../db/mailbox-access'
@@ -25,18 +26,18 @@ import {
 import { serverBlobId } from '../mailbox/read'
 import { EmailError, forbidden, notFound as missing } from './errors'
 import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
+import { calendarsOf, type CalendarBackend } from './calendar-backend'
 import * as jmap from './stalwart/calendar'
 import type { Actor, EmailEnv } from './types'
 
 export type Calendar = { id: string; name: string; isDefault: boolean; color: string | null }
 export type { CalendarEvent, EventInput, Guest, GuestStatus, Repeat } from './calendar-events'
+export { setUpCalendars } from './calendar-backend'
 
 /** Most guests one event can have: Stalwart stores at most 20 participants per event, the organizer included. */
 export const MAX_GUESTS = 19
 /** Widest range one list call may cover: Stalwart expands repeats over at most 52 weeks and a day. */
 const MAX_RANGE_DAYS = 365
-/** The name Stalwart gives the calendar it creates with every account. */
-const STALWART_DEFAULT = /^Stalwart Calendar\b/
 
 // ---------------------------------------------------------------------------------------------------------------
 // Calendars
@@ -46,25 +47,11 @@ const STALWART_DEFAULT = /^Stalwart Calendar\b/
  * "Work" and a "Personal" one is added.
  */
 export async function listCalendars(env: EmailEnv, actor: Actor, mailboxId: string): Promise<Calendar[]> {
-  const { mailbox, write } = await context(env, actor, mailboxId, 'read')
-  const calendars = write ? await setUpCalendars(env, mailbox.stalwart_id) : await jmap.getCalendars(env, mailbox.stalwart_id)
+  const { cal, write } = await context(env, actor, mailboxId, 'read')
+  const calendars = write ? await cal.setUp() : await cal.getCalendars()
   return calendars
     .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
     .map(({ id, name, isDefault, color }) => ({ id, name, isDefault, color }))
-}
-
-/**
- * A mailbox's calendars, set up the first time: Stalwart's automatic calendar is renamed "Work" and a "Personal" one
- * added. Also used by the Google import before it copies into the default calendar.
- */
-export async function setUpCalendars(env: EmailEnv, accountId: string): Promise<jmap.JmapCalendar[]> {
-  const calendars = await jmap.getCalendars(env, accountId)
-  if (calendars.length !== 1 || !STALWART_DEFAULT.test(calendars[0]!.name)) return calendars
-  await jmap.setCalendars(env, accountId, {
-    update: { [calendars[0]!.id]: { name: 'Work' } },
-    create: { personal: { name: 'Personal', sortOrder: 1 } },
-  })
-  return jmap.getCalendars(env, accountId)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -77,29 +64,29 @@ export async function listEvents(
   mailboxId: string,
   range: { from: string; to: string; calendarId?: string },
 ): Promise<CalendarEvent[]> {
-  const { mailbox } = await context(env, actor, mailboxId, 'read')
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'read')
   const from = Date.parse(range.from)
   const to = Date.parse(range.to)
   if (!(to > from)) throw new EmailError('invalid', '"to" must be after "from"')
   if (to - from > MAX_RANGE_DAYS * 86400000) throw new EmailError('invalid', `At most ${MAX_RANGE_DAYS} days at a time`)
 
-  const events = await jmap.queryEvents(env, mailbox.stalwart_id, {
+  const events = await cal.queryEvents({
     after: utc(from),
     before: utc(to),
     calendarId: range.calendarId,
   })
   const addresses = ownAddresses(mailbox)
   const series = [...new Set(events.map((e) => e.baseEventId).filter((id): id is string => !!id))]
-  const rules = await jmap.getRecurrenceRules(env, mailbox.stalwart_id, series)
+  const rules = await cal.getRecurrenceRules(series)
   return events.map((e) => toEvent(e.baseEventId ? { ...e, recurrenceRule: rules.get(e.baseEventId) ?? null } : e, addresses))
 }
 
 export async function getEvent(env: EmailEnv, actor: Actor, mailboxId: string, eventId: string): Promise<CalendarEvent> {
-  const { mailbox } = await context(env, actor, mailboxId, 'read')
-  const event = await jmap.getEvent(env, mailbox.stalwart_id, eventId)
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'read')
+  const event = await cal.getEvent(eventId)
   if (!event) throw notFound()
   if (event.baseEventId && !event.recurrenceRule) {
-    event.recurrenceRule = (await jmap.getRecurrenceRules(env, mailbox.stalwart_id, [event.baseEventId])).get(event.baseEventId) ?? null
+    event.recurrenceRule = (await cal.getRecurrenceRules([event.baseEventId])).get(event.baseEventId) ?? null
   }
   return toEvent(event, ownAddresses(mailbox))
 }
@@ -111,15 +98,14 @@ export async function createEvent(
   mailboxId: string,
   input: EventInput & { notify?: boolean },
 ): Promise<CalendarEvent> {
-  const { mailbox } = await context(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-  const calendarId = input.calendarId ?? (await defaultCalendarId(env, accountId))
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'write')
+  const calendarId = input.calendarId ?? (await defaultCalendarId(cal))
   const people = participants(await organizerOf(env, actor, mailbox), input.guests ?? [], null)
   const fields = { ...readable(() => eventFields(input)), calendarIds: { [calendarId]: true }, participants: people }
 
   const notify = input.notify !== false && !!people
   const id = await withSendingCaps(env, mailbox, notify ? guestEmails(people) : [], () =>
-    jmap.createEvent(env, accountId, fields, notify),
+    cal.createEvent(fields, notify),
   )
   return getEvent(env, actor, mailboxId, id)
 }
@@ -136,9 +122,8 @@ export async function updateEvent(
   eventId: string,
   input: EventInput & { scope?: 'series' | 'occurrence'; occurrence?: string; notify?: boolean },
 ): Promise<CalendarEvent> {
-  const { mailbox } = await context(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-  const current = await jmap.getEvent(env, accountId, eventId)
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'write')
+  const current = await cal.getEvent(eventId)
   if (!current) throw notFound()
   const addresses = ownAddresses(mailbox)
   if (!toEvent(current, addresses).isOrganizer) {
@@ -186,7 +171,7 @@ export async function updateEvent(
   const recipients = [...new Set([...guestEmails(current.participants ?? null), ...guestEmails(people)])]
   const notify = input.notify !== false && recipients.length > 0
   await withSendingCaps(env, mailbox, notify ? recipients : [], () =>
-    jmap.updateEvent(env, accountId, eventId, patch, notify),
+    cal.updateEvent(eventId, patch, notify),
   )
   return getEvent(env, actor, mailboxId, eventId)
 }
@@ -202,9 +187,8 @@ export async function deleteEvent(
   eventId: string,
   options: { occurrence?: string; notify?: boolean } = {},
 ): Promise<void> {
-  const { mailbox } = await context(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-  const current = await jmap.getEvent(env, accountId, eventId)
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'write')
+  const current = await cal.getEvent(eventId)
   if (!current) return
   const organizer = toEvent(current, ownAddresses(mailbox)).isOrganizer
   const notify = options.notify !== false && organizer && !!current.participants
@@ -214,11 +198,11 @@ export async function deleteEvent(
     if (!current.recurrenceRule) throw new EmailError('invalid', 'This event does not repeat')
     const overrides = { ...(current.recurrenceOverrides ?? {}), [localKey(options.occurrence)]: { excluded: true } }
     await withSendingCaps(env, mailbox, recipients, () =>
-      jmap.updateEvent(env, accountId, eventId, { recurrenceOverrides: overrides }, notify),
+      cal.updateEvent(eventId, { recurrenceOverrides: overrides }, notify),
     )
     return
   }
-  await withSendingCaps(env, mailbox, recipients, () => jmap.destroyEvent(env, accountId, eventId, notify))
+  await withSendingCaps(env, mailbox, recipients, () => cal.destroyEvent(eventId, notify))
 }
 
 /** Answers an invitation: accepted, tentative (maybe) or declined. The organizer is told by email. */
@@ -229,9 +213,8 @@ export async function respondToEvent(
   eventId: string,
   status: Exclude<GuestStatus, 'needs-action'>,
 ): Promise<CalendarEvent> {
-  const { mailbox } = await context(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
-  const current = await jmap.getEvent(env, accountId, eventId)
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'write')
+  const current = await cal.getEvent(eventId)
   if (!current) throw notFound()
   const event = toEvent(current, ownAddresses(mailbox))
   const key = ownParticipantKey(current.participants, ownAddresses(mailbox))
@@ -243,19 +226,19 @@ export async function respondToEvent(
   const outside = !!event.organizer && (await outsideAddresses(env.DB, [event.organizer])).length > 0
   const id = await withSendingCaps(env, mailbox, event.organizer ? [event.organizer] : [], async () => {
     if (!outside) {
-      await jmap.updateEvent(env, accountId, eventId, { [`participants/${key}/participationStatus`]: status }, true)
+      await cal.updateEvent(eventId, { [`participants/${key}/participationStatus`]: status }, true)
       return eventId
     }
-    const base = current.baseEventId ? await jmap.getEvent(env, accountId, current.baseEventId) : current
+    const base = current.baseEventId ? await cal.getEvent(current.baseEventId) : current
     if (!base) throw notFound()
     const people = { ...(base.participants ?? {}) }
     const baseKey = ownParticipantKey(people, ownAddresses(mailbox)) ?? key
     people[baseKey] = { ...people[baseKey], participationStatus: status }
     const copy = { ...inviteFields(base, event.organizer!), participants: people, calendarIds: base.calendarIds }
-    await jmap.destroyEvent(env, accountId, base.id, false)
-    return jmap.createEvent(env, accountId, copy, true).catch(async (err) => {
+    await cal.destroyEvent(base.id, false)
+    return cal.createEvent(copy, true).catch(async (err) => {
       // Put the copy back as it was rather than lose it.
-      await jmap.createEvent(env, accountId, { ...inviteFields(base, event.organizer!), participants: base.participants, calendarIds: base.calendarIds }, false)
+      await cal.createEvent({ ...inviteFields(base, event.organizer!), participants: base.participants, calendarIds: base.calendarIds }, false)
       throw err
     })
   })
@@ -281,8 +264,8 @@ export type Invite = {
 }
 
 export async function getInvite(env: EmailEnv, actor: Actor, mailboxId: string, blobId: string): Promise<Invite> {
-  const { mailbox } = await context(env, actor, mailboxId, 'read')
-  const { parsed, existing } = await loadInvite(env, mailbox, blobId)
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'read')
+  const { parsed, existing } = await loadInvite(env, mailbox, cal, blobId)
   const addresses = ownAddresses(mailbox)
   const event = toEvent({ ...parsed, id: '', calendarIds: {} }, addresses)
   const method = inviteMethod(parsed.method)
@@ -312,15 +295,14 @@ export async function applyInvite(
   blobId: string,
   status?: Exclude<GuestStatus, 'needs-action'>,
 ): Promise<CalendarEvent | null> {
-  const { mailbox } = await context(env, actor, mailboxId, 'write')
-  const accountId = mailbox.stalwart_id
+  const { mailbox, cal } = await context(env, actor, mailboxId, 'write')
   const addresses = ownAddresses(mailbox)
-  const { parsed, existing } = await loadInvite(env, mailbox, blobId)
+  const { parsed, existing } = await loadInvite(env, mailbox, cal, blobId)
   const method = inviteMethod(parsed.method)
 
   if (method === 'cancel') {
     // A guest deleting their copy tells nobody; the organizer already knows.
-    if (existing) await jmap.destroyEvent(env, accountId, existing.id, false)
+    if (existing) await cal.destroyEvent(existing.id, false)
     return null
   }
   if (method !== 'request') throw new EmailError('invalid', 'This email has nothing to add to your calendar', 400)
@@ -332,14 +314,14 @@ export async function applyInvite(
 
   let id = existing?.id ?? null
   if (!id) {
-    const calendarId = await defaultCalendarId(env, accountId)
+    const calendarId = await defaultCalendarId(cal)
     const key = ownParticipantKey(parsed.participants, addresses)
     if (status && !key) throw new EmailError('not_invited', "You're not on this invitation's guest list", 409)
     const people = { ...(parsed.participants ?? {}) }
     if (status && key) people[key] = { ...people[key], participationStatus: status }
     const create = { ...fields, participants: people, calendarIds: { [calendarId]: true } }
     // Adding it with an answer sends that answer (a reply) to the organizer; adding it without one sends nothing.
-    id = await withSendingCaps(env, mailbox, status ? [organizer] : [], () => jmap.createEvent(env, accountId, create, !!status))
+    id = await withSendingCaps(env, mailbox, status ? [organizer] : [], () => cal.createEvent(create, !!status))
     return getEvent(env, actor, mailboxId, id)
   }
 
@@ -350,20 +332,20 @@ export async function applyInvite(
     const people = { ...(parsed.participants ?? {}) }
     const newKey = ownParticipantKey(people, addresses)
     if (newKey && mine) people[newKey] = { ...people[newKey], participationStatus: mine }
-    await jmap.updateEvent(env, accountId, id, { ...fields, participants: people }, false)
+    await cal.updateEvent(id, { ...fields, participants: people }, false)
   }
   if (status) return respondToEvent(env, actor, mailboxId, id, status)
   return getEvent(env, actor, mailboxId, id)
 }
 
-async function loadInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string) {
-  // An invitation in a message read from the mailbox's store is handed to the mail server to parse.
+async function loadInvite(env: EmailEnv, mailbox: MailboxRow, cal: CalendarBackend, blobId: string) {
+  // An invitation in a message read from the mailbox's store is handed to the mail server to parse (until 3c).
   const all = await jmap.parseInvite(env, mailbox.stalwart_id, await serverBlobId(env, mailbox, blobId, 'text/calendar'))
   // A repeating event's changed occurrences can come as extra entries; the first is the event itself.
   const parsed = all.find((e) => !e.recurrenceId) ?? all[0]
   if (!parsed) throw new EmailError('not_an_invite', "This attachment isn't a calendar invitation", 400)
-  const existingId = parsed.uid ? await jmap.findByUid(env, mailbox.stalwart_id, parsed.uid) : null
-  const existing = existingId ? await jmap.getEvent(env, mailbox.stalwart_id, existingId) : null
+  const existingId = parsed.uid ? await cal.findByUid(parsed.uid) : null
+  const existing = existingId ? await cal.getEvent(existingId) : null
   return { parsed, existing }
 }
 
@@ -409,7 +391,7 @@ async function context(env: EmailEnv, actor: Actor, mailboxId: string, need: 're
   if (!access.read) throw missing('mailbox')
   if (!inMailboxScope(actor, mailbox.id)) throw outOfScope()
   if (need === 'write' && !access.write) throw forbidden('You can only read this calendar')
-  return { mailbox, member, write: access.write }
+  return { mailbox, member, write: access.write, cal: await calendarsOf(env, mailbox) }
 }
 
 
@@ -419,8 +401,8 @@ async function organizerOf(env: EmailEnv, actor: Actor, mailbox: MailboxRow) {
   return { email: mailbox.address, name: user?.name ?? mailbox.display_name ?? null }
 }
 
-async function defaultCalendarId(env: EmailEnv, accountId: string): Promise<string> {
-  const calendars = await jmap.getCalendars(env, accountId)
+async function defaultCalendarId(cal: CalendarBackend): Promise<string> {
+  const calendars = await cal.setUp()
   const calendar = calendars.find((c) => c.isDefault) ?? calendars[0]
   if (!calendar) throw new EmailError('calendar_not_found', 'This mailbox has no calendar', 409)
   return calendar.id
@@ -438,6 +420,14 @@ async function withSendingCaps<T>(
   change: () => Promise<T>,
 ): Promise<T> {
   if (!recipients.length) return change()
+  // Store-held mailboxes send invitations from phase 3b on; until then nothing that would email guests is done.
+  if (mailbox.backend === 'store') {
+    throw new EmailError(
+      'invitations_unavailable',
+      "This mailbox can't email guests yet. Save without emailing guests, or remove them.",
+      409,
+    )
+  }
   if (recipients.length > MAX_GUESTS) throw new EmailError('too_many_guests', `An event can have at most ${MAX_GUESTS} guests`)
   const blocked = await eventsDb.suppressedFor(env.DB, mailbox.organization_id, recipients)
   if (blocked.length) {

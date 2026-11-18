@@ -61,6 +61,8 @@ change how something works. Recent changes are listed [at the end](#changes).
   included) in your organization's own storage bucket, from which the message and its attachments can be opened.
   It is kept separately for each mailbox, reached only through the same access checks as the mail itself, and
   deleted when the message or the mailbox is deleted. We are turning this on mailbox by mailbox.
+  For mailboxes on the new mail path, the calendars are kept the same way, in that mailbox's own store, with the
+  same access as the mailbox.
 - **Stopping abuse.** Each mailbox and organization has hourly and daily limits on mail to outside addresses.
   Sending is suspended automatically when bounces or spam complaints pass a safe rate. Addresses that bounced or
   complained aren't sent to again.
@@ -191,6 +193,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Calendars of mailboxes on the new mail path are kept in that mailbox's own store, with the
+  same access checks as its mail.
 - **November 18, 2026:** A delivery log for mailboxes on the new mail path: where each message went, without its
   content, kept 30 days and readable only by owners and admins.
 - **November 18, 2026:** Domains on xstate's new mail path receive through Amazon SES, which scans each message

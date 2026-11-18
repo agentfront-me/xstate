@@ -113,6 +113,10 @@ export type StoreEventRow = {
 }
 
 /** A step a message took, for the delivery log (`logDelivery`): what support reads to answer "where is my email". */
+export type StoreCalendar = { id: string; name: string; color: string | null; isDefault: boolean; sortOrder: number }
+export type StoreEventJson = { id: string; json: string }
+export type StoreEventPut = { id: string; calendarId: string; uid: string | null; json: string; startUtc: string; endUtc: string | null; recurring: boolean }
+
 export type DeliveryStep = 'delivered' | 'refused' | 'scanned' | 'sent' | 'ses_delivered' | 'bounced' | 'complained'
 export type DeliveryLine = {
   step: DeliveryStep
@@ -233,6 +237,14 @@ export class MailboxStore extends Agent<Env> {
     sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_at ON delivery_log (at_s)`)
     sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_email ON delivery_log (email_id) WHERE email_id IS NOT NULL`)
     sql.exec(`CREATE INDEX IF NOT EXISTS delivery_log_ses ON delivery_log (ses_id) WHERE ses_id IS NOT NULL`)
+    // Calendars (phase 3a): events as JSCalendar JSON, with the columns ranges are found by (./calendar-expand.ts).
+    sql.exec(`CREATE TABLE IF NOT EXISTS calendars (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT, is_default INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0)`)
+    sql.exec(`CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, uid TEXT, json TEXT NOT NULL,
+      start_utc TEXT NOT NULL, end_utc TEXT, recurring INTEGER NOT NULL, updated_at TEXT NOT NULL)`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS events_uid ON events (uid) WHERE uid IS NOT NULL`)
+    sql.exec(`CREATE INDEX IF NOT EXISTS events_time ON events (recurring, start_utc)`)
     // Sent mail from before the table existed, once.
     if (this.meta('owner') === 'store' && this.meta('correspondents_filled') !== '1') {
       for (const row of sql.exec(`SELECT to_json, received_s FROM messages WHERE folder = 'sent'`)) {
@@ -881,6 +893,100 @@ export class MailboxStore extends Agent<Env> {
   /** Drops delivery-log lines older than `before` (seconds). */
   purgeDeliveryLog(before: number): number {
     return [...this.db.exec(`DELETE FROM delivery_log WHERE at_s < ? RETURNING id`, before)].length
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Calendars (docs/mailbox-store-plan.md, phase 3a). Events cross as JSON text; ../mailserver/calendar.ts and
+  // ./calendar-store.ts do the rest.
+
+  calendarRows(): StoreCalendar[] {
+    return [...this.db.exec(`SELECT id, name, color, is_default, sort_order FROM calendars`)].map((r) => ({
+      id: r.id as string,
+      name: r.name as string,
+      color: (r.color as string | null) ?? null,
+      isDefault: r.is_default === 1,
+      sortOrder: r.sort_order as number,
+    }))
+  }
+
+  /** Adds and changes calendars. Making one the default unmarks the others. */
+  setCalendarRows(rows: StoreCalendar[]) {
+    this.ctx.storage.transactionSync(() => {
+      for (const c of rows) {
+        if (c.isDefault) this.db.exec(`UPDATE calendars SET is_default = 0 WHERE id != ?`, c.id)
+        this.db.exec(
+          `INSERT INTO calendars (id, name, color, is_default, sort_order) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (id) DO UPDATE SET name = excluded.name, color = excluded.color, is_default = excluded.is_default, sort_order = excluded.sort_order`,
+          c.id, c.name, c.color, c.isDefault ? 1 : 0, c.sortOrder,
+        )
+      }
+    })
+  }
+
+  /** Single events overlapping [after, before), and series that may have occurrences in it (to be expanded). */
+  eventsInRange(after: string, before: string, calendarId: string | null): StoreEventJson[] {
+    return [
+      ...this.db.exec(
+        `SELECT id, json FROM events
+          WHERE start_utc < ?2 AND (end_utc IS NULL OR end_utc > ?1 OR (recurring = 0 AND end_utc = start_utc AND start_utc >= ?1))
+            AND (?3 IS NULL OR calendar_id = ?3)`,
+        after, before, calendarId,
+      ),
+    ].map((r) => ({ id: r.id as string, json: r.json as string }))
+  }
+
+  eventRows(ids: string[]): StoreEventJson[] {
+    if (!ids.length) return []
+    return [...this.db.exec(`SELECT id, json FROM events WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids))].map((r) => ({
+      id: r.id as string,
+      json: r.json as string,
+    }))
+  }
+
+  eventByUid(uid: string): string | null {
+    return ([...this.db.exec(`SELECT id FROM events WHERE uid = ? ORDER BY recurring DESC LIMIT 1`, uid)][0]?.id as string | undefined) ?? null
+  }
+
+  putEvents(rows: StoreEventPut[]) {
+    const now = new Date().toISOString()
+    this.ctx.storage.transactionSync(() => {
+      for (const e of rows) {
+        this.db.exec(
+          `INSERT OR REPLACE INTO events (id, calendar_id, uid, json, start_utc, end_utc, recurring, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          e.id, e.calendarId, e.uid, e.json, e.startUtc, e.endUtc, e.recurring ? 1 : 0, now,
+        )
+      }
+    })
+  }
+
+  deleteEvent(id: string): boolean {
+    return [...this.db.exec(`DELETE FROM events WHERE id = ? RETURNING id`, id)].length > 0
+  }
+
+  /**
+   * The one-time copy of a mailbox's calendars from Stalwart. 'claim' starts it (emptying any half-done copy) unless
+   * it is done or another copy started in the last five minutes; 'done' finishes it.
+   */
+  calendarCopy(step: 'claim' | 'done'): 'claimed' | 'busy' | 'done' {
+    const state = this.meta('calendar_copy')
+    if (state === 'done') return 'done'
+    const now = Math.floor(Date.now() / 1000)
+    if (step === 'done') {
+      this.setMeta('calendar_copy', 'done')
+      return 'done'
+    }
+    if (state?.startsWith('running:') && now - Number(state.slice(8)) < 300) return 'busy'
+    this.ctx.storage.transactionSync(() => {
+      this.db.exec(`DELETE FROM events`)
+      this.db.exec(`DELETE FROM calendars`)
+      this.setMeta('calendar_copy', `running:${now}`)
+    })
+    return 'claimed'
+  }
+
+  calendarCounts(): { calendars: number; events: number } {
+    const row = [...this.db.exec(`SELECT (SELECT count(*) FROM calendars) AS calendars, (SELECT count(*) FROM events) AS events`)][0]!
+    return { calendars: row.calendars as number, events: row.events as number }
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

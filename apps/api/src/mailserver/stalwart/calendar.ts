@@ -150,6 +150,28 @@ export async function getRecurrenceRules(
   return new Map(list.map((e) => [e.id, e.recurrenceRule ?? null]))
 }
 
+/**
+ * Every event in the account as stored (series not expanded), with their per-occurrence changes: for copying a
+ * mailbox's calendars into its store (mailbox/calendar-store.ts).
+ */
+export async function allEvents(env: StalwartEnv, accountId: string): Promise<JmapEvent[]> {
+  const ids: string[] = []
+  for (let position = 0; ; position += 500) {
+    const [result] = await calendar(env, [['CalendarEvent/query', { accountId, position, limit: 500 }]])
+    const page = (result?.ids as string[] | undefined) ?? []
+    ids.push(...page)
+    if (page.length < 500) break
+  }
+  const events: JmapEvent[] = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const [result] = await calendar(env, [
+      ['CalendarEvent/get', { accountId, ids: ids.slice(i, i + 200), properties: [...BASE_PROPERTIES, 'recurrenceOverrides'] }],
+    ])
+    events.push(...((result?.list as JmapEvent[] | undefined) ?? []))
+  }
+  return events
+}
+
 /** A parsed invite email part: the event(s) it carries and the iTIP method (request, reply, cancel, …). */
 export type ParsedInvite = JmapEvent & { method?: string | null; iCalendar?: unknown; isOrigin?: unknown; isDraft?: unknown }
 

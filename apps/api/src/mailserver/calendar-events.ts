@@ -287,21 +287,8 @@ export function mailto(address: string | null | undefined): string | null {
 /** A wall-clock time in an IANA zone as a UTC instant (…Z). Unknown zones are taken as UTC. */
 export function zonedToUtc(local: string, timeZone: string): string {
   const wallMs = wall(local)
-  let format: Intl.DateTimeFormat
-  try {
-    format = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-  } catch {
-    return `${withSeconds(local)}Z`
-  }
+  const format = zoneFormat(timeZone)
+  if (!format) return `${withSeconds(local)}Z`
   // The zone's offset at an instant: what its clock shows then, minus the instant. Two passes settle DST edges.
   const offset = (t: number) => {
     const p = Object.fromEntries(format.formatToParts(new Date(t)).map((x) => [x.type, x.value]))
@@ -310,6 +297,30 @@ export function zonedToUtc(local: string, timeZone: string): string {
   let t = wallMs - offset(wallMs)
   t = wallMs - offset(t)
   return `${new Date(t).toISOString().slice(0, 19)}Z`
+}
+
+/** One formatter per zone: building them is the slow part, and a long series converts many times. */
+const zoneFormats = new Map<string, Intl.DateTimeFormat | null>()
+function zoneFormat(timeZone: string): Intl.DateTimeFormat | null {
+  if (!zoneFormats.has(timeZone)) {
+    let format: Intl.DateTimeFormat | null = null
+    try {
+      format = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    } catch {
+      // An unknown zone: callers treat the time as UTC.
+    }
+    zoneFormats.set(timeZone, format)
+  }
+  return zoneFormats.get(timeZone)!
 }
 
 export function durationMinutes(duration: string): number {

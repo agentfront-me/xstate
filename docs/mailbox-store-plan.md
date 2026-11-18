@@ -177,8 +177,9 @@ results.
 
 ### Calendars
 
-- Events live in the mailbox object: the full iCalendar data, plus columns for start, end, recurrence and
-  attendees. A repeating event is stored once and expanded when shown. Time zones come from the event.
+- Events live in the mailbox object as JSCalendar (what Stalwart and our code already use; iCalendar only for
+  invitation emails, see phase 3), plus columns for start, end, recurrence and attendees. A repeating event is stored
+  once and expanded when shown. Time zones come from the event.
 - **Invitations are calendar emails through SES.** Creating, changing or cancelling an event with guests sends the
   matching email with a `.ics` attached. An incoming invitation arrives like any other mail: the mailbox object
   reads its calendar file, shows it as an invite, and sends the accept or decline reply by email. Replies update the
@@ -1237,8 +1238,9 @@ sends to Gmail, although SES's notifications reached `/webhooks/ses`.
 `mail.source` as the whole From header (`99events <hello@99events.com>`). The webhook looked that up as an address,
 found no mailbox, and so never counted deliveries, bounces or complaints against store-held senders (their rates and
 automatic suspension included; `delivery_counts` stops on 2026-11-17). Fixed with `sourceAddress` in
-`mailbox/inbound.ts`, used by the webhook and for received mail. Uncommitted; after deploy, a send to Gmail should add
-a `ses_delivered` line and a `delivery_counts` row for the day.
+`mailbox/inbound.ts`, used by the webhook and for received mail. Deployed 2026-11-18 ("Fixed minor bugs"): a send
+from `hello@` to Gmail at 05:51:36 UTC logged `ses_delivered` a second later (found by its message id with the `sent`
+line), and `delivery_counts` has a row for 2026-11-18. Deliveries between the two fixes were never counted.
 
 #### Our own MX name (discussed 2026-11-17, deferred)
 
@@ -1267,6 +1269,178 @@ careful about:
 
 Events, invitations in and out, free/busy, FullCalendar against the new API, the Google Workspace imports writing
 to the store.
+
+**Design (written 2026-11-18, for review; nothing built).**
+
+#### Why before switching domains
+
+Today every mailbox's calendar is in Stalwart, the pilot's included (`mailserver/calendar.ts` calls JMAP with the
+mailbox's `stalwart_id`). Stalwart also does the scheduling: it emails invitations itself and files invitations and
+replies that reach it by mail. Once a domain's MX points at SES, that mail lands in the store instead, so:
+
+- guests' answers to our invitations no longer update the organizer's event;
+- updates and cancellations from outside organizers no longer change the copy in the calendar;
+- invitations between two xstate mailboxes are no longer filed automatically.
+
+The pilot has this gap already; it shows up only because nobody on it uses the calendar. Phase 3 moves calendars and
+scheduling into the store so phase 4 can switch real domains.
+
+#### Decisions proposed
+
+- **Events are stored as JSCalendar (RFC 8984), not raw iCalendar.** This changes the earlier plan ("the full
+  iCalendar data"). Everything we have already speaks JSCalendar: Stalwart returns it, so the copy is a straight move;
+  `mailserver/calendar-events.ts` maps it to and from the API's flat event (with its tests, overrides and repeat
+  rules); the Google import (`migration/calendar-rules.ts`) produces it. iCalendar is only needed at the edges,
+  for invitation emails in and out. Storing iCalendar would mean rewriting all of that for no gain.
+- **One library for iCalendar: ical.js** (Mozilla, used by Thunderbird; MPL-2.0, which is fine to use unmodified;
+  2.2.1; pure JavaScript, nothing Node-only). It parses `.ics` and builds it, and its recurrence iterator expands
+  repeat rules. We convert JSCalendar ⇄ iCalendar ourselves in a pure module with tests, the way
+  `calendar-events.ts` does for JMAP. Time zones: events keep IANA names and local times (as now); occurrences are
+  expanded in local time and turned into UTC with the existing `zonedToUtc`, so daylight saving is handled by the
+  runtime's own time-zone data. Outlook's Windows zone names ("Pacific Standard Time") are mapped with a small table.
+- **Calendars move with the mail.** No separate switch: a mailbox whose `backend` is `store` has its calendars in
+  the store. Its Stalwart calendars are copied when it switches (for the pilot, once now), then left alone. One
+  state per mailbox is easier to reason about than two.
+- **Scheduling goes through SES like any mail.** Invitations, updates, cancellations and answers are emails with a
+  `text/calendar` part, sent by `mailbox/outbound.ts`. Invitations between two xstate mailboxes travel the same way
+  and are filed on arrival (below), so there is one path, not a shortcut for internal guests.
+- **The API stays the same.** The `calendar_*` operations, routes and the flat event keep their shapes, so the web
+  app (FullCalendar), the mobile app and the MCP tools need no change. The service picks Stalwart or the store per
+  mailbox, as mail already does.
+
+#### Storage in the mailbox object
+
+- `calendars`: id, name, color, is_default, sort_order. Work and Personal are created on first use, as now.
+- `events`: id, calendar_id, uid, `json` (the JSCalendar event: title, times, time zone, repeat rule, per-occurrence
+  overrides, participants, sequence), and columns for finding them: `start_utc`, `end_utc` (a single event's real
+  times; for a series, its first start and its last end, or null when it never ends), `recurring`, `organizer`,
+  `my_status`, `updated_at`. Index on uid and on the time columns.
+- **Listing a range:** single events by the time columns; series that overlap the range are expanded with ical.js
+  and their overrides applied (a moved occurrence, a changed one, or a deleted one). The existing 365-day cap on a
+  query stays.
+- **Ids:** new events get ULIDs; copied ones keep their Stalwart ids, so links to them still open. An occurrence's
+  id is the series id plus its original local start, as the flat event already carries it (`occurrence`).
+- Deleted with the mailbox, like its mail.
+
+#### Invitations out (3b)
+
+- Creating, changing or deleting an event with guests sends one email to the guests, from the mailbox, with a short
+  HTML summary (what, when in the guest's terms, where, who) and the event as `text/calendar; method=REQUEST` or
+  `CANCEL`, plus the same as `invite.ics`. `SEQUENCE` goes up on every change that matters (time, place, guests).
+  Removing a guest sends that guest a `CANCEL`.
+- **Answering** an invitation (`calendar_respond_to_event`) sends the organizer a `REPLY` that carries only the
+  mailbox's own attendee line. This replaces today's workaround of re-creating the event in Stalwart to make it send
+  a reply.
+- Caps, suppressed addresses and guest limits work as now (`withSendingCaps`: invitation caps for every recipient,
+  `email_send` caps for outside ones). Stalwart's 20-participant limit goes away; `MAX_GUESTS` stays 19 until we
+  decide otherwise (a later one-line change).
+- No Sent copy, as with Stalwart's invitations today. The delivery log gets the `sent` lines (detail
+  `invite: request|cancel|reply`), and bounces count against the mailbox as usual.
+- "Save without emailing guests" keeps working: the event is saved, nothing is sent.
+
+#### Invitations in (3c)
+
+An incoming message with a `text/calendar` part is stored and shown like any mail (the invite card works on it as
+now). In addition, the mail-events queue (`mailbox/events.ts`, after delivery, so receiving stays fast) applies it to
+the calendar when it is safe:
+
+- **A reply** to an event this mailbox organizes (same uid): updates that guest's answer, but only when the message
+  comes from that guest's own address and passed SPF or DKIM for it, so nobody can answer for someone else.
+- **An update or cancellation** of an event already in the calendar: applied when it comes from that event's
+  organizer (same checks) and its `SEQUENCE` is not older. An update that moves the time resets the mailbox's own
+  answer to "needs action", as Google does. A cancelled event stays, shown as cancelled, as now.
+- **A new invitation** is added on its own (answer "needs action") only when its sender would reach the Inbox under
+  layer 3 of the spam rules: someone in the organization, or someone the mailbox has written to, or a contact. From
+  anyone else it stays an email with the card's **Add to calendar**. This keeps calendar spam out.
+- Nothing in **Junk** touches the calendar, and a message that failed DMARC never does.
+- `calendar_get_invite` and `calendar_apply_invite` read the invitation from the store and use the same conversion,
+  without uploading it to Stalwart to parse.
+- Each automatic change is logged in the delivery log (`detail.calendar: added|updated|cancelled|answer`).
+
+#### Copying from Stalwart (3a)
+
+- One job per mailbox: read every calendar and event over JMAP (Stalwart returns JSCalendar), write them to the
+  store, count both sides. Rerunning it replaces what the store holds for that mailbox.
+- For the pilot now; for every other mailbox as part of its switch in phase 4, while mail still flows through Stalwart
+  and nothing changes in its calendar for a few minutes.
+
+#### Google Calendar import (3d)
+
+`migration/calendar.ts` writes through the same store methods when the target mailbox is store-held. Its conversion
+(`calendar-rules.ts`) already produces JSCalendar; only the writer changes.
+
+#### Free/busy (3d, optional)
+
+Not offered today: Stalwart supports it, but no API or screen uses it. Proposed: a `calendar_get_availability` that
+returns busy blocks (times only, no titles) for mailboxes in the same organization that the caller can read, so the
+event editor can show when guests are free. It asks each mailbox's store in parallel. Could be left for later.
+
+#### What goes away
+
+- **CalDAV**, with Stalwart (as already noted). We have never told customers about it, so nothing in the docs
+  changes; phone calendars come with the mobile app.
+- Stalwart's own scheduling quirks and the workarounds for them in `mailserver/calendar.ts`.
+
+#### Steps
+
+1. **3a, storage and API:** the store tables and methods; repeat expansion with ical.js; the service choosing the
+   store for store-held mailboxes (events without guests only, until 3b); the copy job; the pilot copied and
+   switched. Tests: expansion across a daylight-saving change, monthly "second Tuesday", an occurrence moved, one
+   deleted, an all-day event, a series edited from one occurrence on.
+2. **3b, invitations out:** the JSCalendar → iCalendar builder and the emails. Tests: build and parse back
+   (round trip); locally, a fake send; on the pilot, an invitation to Gmail and to an Outlook.com address, accepted
+   there, and the answer coming back.
+3. **3c, invitations in:** iCalendar → JSCalendar, the automatic rules above, the invite card on the store. Tests:
+   real invitation files from Google, Outlook and Apple Calendar kept as fixtures; replies, updates, cancels, a
+   forged reply (refused), and one from an unknown sender (card only).
+4. **3d, Google import and, if wanted, free/busy.**
+
+Each step is written up, approved and pushed separately, as in phase 2.
+
+#### Step 3a: storage and API (approved and built 2026-11-18, uncommitted)
+
+- **`mailbox/calendar-expand.ts`** (pure, tested): JSCalendar repeat rule → RRULE for ical.js, occurrences counted in
+  local time and placed in UTC with `zonedToUtc` (formatters now cached per zone), overrides applied (moved, changed,
+  deleted, and ones moved in from outside the range), the time columns, JMAP-style patches, and which changes raise
+  the sequence. Occurrence ids are `<seriesId>.<YYYYMMDDTHHMMSS>` (original local start).
+- **Store:** tables `calendars` and `events` (JSON plus `start_utc`, `end_utc`, `recurring`, `uid`); methods
+  `calendarRows`, `setCalendarRows`, `eventsInRange`, `eventRows`, `eventByUid`, `putEvents`, `deleteEvent`,
+  `calendarCopy`, `calendarCounts`.
+- **`mailserver/calendar-backend.ts`:** the calls `mailserver/calendar.ts` makes (calendars, set up, query, get,
+  create, update, destroy, find by uid), with a Stalwart and a store implementation (`mailbox/calendar-store.ts`),
+  picked by `mailboxes.backend`. The service otherwise kept its code; parsing an invitation still goes to Stalwart
+  (until 3c).
+- **No invitations from store-held mailboxes yet:** anything that would email guests (creating or changing an event
+  with guests, deleting one as organizer, answering an invitation) is refused with 409 `invitations_unavailable`
+  ("Save without emailing guests, or remove them"). Saving with `notify: false` works.
+- **Copy from Stalwart:** the first time a store-held mailbox's calendar is used, and from the hourly run for those
+  nobody opens, its Stalwart calendars and events are copied once (ids kept; an untouched "Stalwart Calendar" becomes
+  Work, plus Personal). Counts must match or the copy fails and is retried; a second request while one copies gets
+  503 `calendar_busy`. The store remembers it is done (`meta.calendar_copy`), so later Stalwart changes aren't
+  picked up: fine, because nothing writes a store-held mailbox's Stalwart calendar any more (except the Google
+  import, until 3d, and Stalwart filing an invitation from another Stalwart mailbox, until 3c).
+- **Changed ids:** series keep their Stalwart ids; occurrence ids change format (Stalwart's were opaque, like
+  `h0ehqeaaaabf`), so a link to one occurrence made before the switch opens nothing. The web app finds occurrences by
+  series and start, so it isn't affected.
+
+**Local test:** on dev@acme.test, four events made on Stalwart (a one-off, a weekly series across New York's DST
+change with one occurrence moved, a daily series with one deleted, an all-day event), 49 occurrences from February
+to May. After switching the mailbox to the store, the copy ran on first use (2 calendars, 4 events) and the same
+range returned the same 49 occurrences, field for field and in the same order. On the store: create a twice-weekly
+series in Personal, move the whole series (overrides follow), change one occurrence, delete one, open one by its
+occurrence id, delete the series (then 404); an event with guests and emails refused with 409, the same with
+`notify: false` saved. The hourly run ran clean. 15 new unit tests (DST, second Tuesday, moved and deleted
+occurrences, all-day, ranges, time columns, RRULE, ids, patches); 399 tests pass.
+
+**Deploy:** no migration, queue or secret. After the push, the pilot's calendars are copied on the next hourly run or
+when one is opened; the log line `calendar-copy` shows the counts.
+
+#### Open questions
+
+- Free/busy: build it in 3d, or later?
+- Whether new invitations from unknown senders should still be added, shown as "needs action" (Google's default), or
+  stay email only (proposed).
+- Whether `MAX_GUESTS` rises once Stalwart's limit is gone, and to what.
 
 ### 4. Switching domains
 
