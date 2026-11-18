@@ -2183,6 +2183,15 @@ that is only you; for customers it is announced, and `security.md` and the domai
     left as they were. No old mail-app records existed. MTA-STS route deployed (580c37d), `_mta-sts`
     `id=20261118T1` added. Tests: mail from asif@xstate.com (store) and asif@hireninja.com (Stalwart, relayed)
     both landed in the store.
+1c. **hireninja.com: switched 2026-11-18.** Start 12:05, MX to SES and SPF to `v=spf1 include:amazonses.com -all`
+    12:06, flip 12:12 UTC. Own step: 53,765 messages; calendars: 16 calendars, 316 events; routing now 99events.com,
+    hireninja.com, upfold.me, xstate.com. The flip ran past the browser's 45 s limit (the sweep alone took about a
+    minute for this mailbox); the request still finished on the server, and a second call re-ran the later steps
+    harmlessly (a second notice email). For big mailboxes, start the flip without waiting and poll the status. No
+    old mail-app records existed; DMARC (p=reject) and `envelope.mail.hireninja.com` left as they were. MTA-STS
+    route deployed (2847797), `_mta-sts id=20261118T1` added. Tests, all delivered to the store: Gmail, asif@xstate.com
+    (store), mohammad@asif.pk (Stalwart, relayed) to the `hello@` alias, and a reply that joined the old "Testing"
+    thread (`co`, now 7 messages). Phase 5 note: hireninja.com's root A record points at deepo (3.130.37.150).
 2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
    xstate.com has had a quiet week.
 3. **asif.pk and upfold.me:** copy, then move.
