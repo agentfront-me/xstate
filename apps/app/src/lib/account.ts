@@ -161,4 +161,7 @@ export async function createMailbox(client: QueryClient, domainId: string, input
   return result
 }
 
+/** Reloads the account (its mailboxes), after something else created or removed one, such as adding a member. */
+export const refreshAccount = (client: QueryClient) => client.invalidateQueries({ queryKey: KEY })
+
 export { useQueryClient }

@@ -101,6 +101,8 @@ export function LoginStep({ resume }: { resume: () => Promise<void> }) {
   const [password, setPassword] = useState('')
   const [formHelp, setFormHelp] = useState<Message>(null)
   const [pending, run] = usePending()
+  // Signed in with a temporary password an admin set: they choose their own before going in.
+  const [changeToken, setChangeToken] = useState<string | null>(null)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -113,10 +115,16 @@ export function LoginStep({ resume }: { resume: () => Promise<void> }) {
         saveSession(res)
         await resume()
       } catch (err) {
+        if (err instanceof ApiError && err.code === 'password_change_required' && typeof err.details?.changeToken === 'string') {
+          setPassword('')
+          return setChangeToken(err.details.changeToken)
+        }
         setFormHelp({ text: errorMessage(err) })
       }
     })
   }
+
+  if (changeToken) return <NewPasswordStep email={email.trim()} changeToken={changeToken} resume={resume} restart={() => setChangeToken(null)} />
 
   return (
     <>
@@ -155,6 +163,51 @@ export function LoginStep({ resume }: { resume: () => Promise<void> }) {
           Create an account
         </a>
       </div>
+    </>
+  )
+}
+
+/** After signing in with a temporary password: choose your own, then you're in. */
+function NewPasswordStep({ email, changeToken, resume, restart }: { email: string; changeToken: string; resume: () => Promise<void>; restart: () => void }) {
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [formHelp, setFormHelp] = useState<Message>(null)
+  const [pending, run] = usePending()
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (password.length < 8) return setFormHelp({ text: 'Use at least 8 characters for your password.' })
+    if (password !== confirm) return setFormHelp({ text: "The two passwords don't match." })
+    setFormHelp(null)
+    await run(async () => {
+      try {
+        saveSession(await api<Session>('POST', '/auth/password/change', { changeToken, password }))
+        await resume()
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'invalid_token') return restart()
+        setFormHelp({ text: errorMessage(err) })
+      }
+    })
+  }
+
+  return (
+    <>
+      <Head title="Choose your password" sub={`You signed in to ${email} with a temporary password. Choose your own to continue.`} />
+      <form className="stack" id="form" noValidate onSubmit={submit}>
+        <input type="email" name="email" autoComplete="username" value={email} readOnly hidden />
+        <label className="field">
+          New password
+          <PasswordInput value={password} onChange={setPassword} autoComplete="new-password" placeholder="At least 8 characters" minLength={8} />
+        </label>
+        <label className="field">
+          Repeat it
+          <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" placeholder="The same password" minLength={8} />
+        </label>
+        <Help id="form-help" message={formHelp} />
+        <button className="btn btn-primary" type="submit" disabled={pending} aria-busy={pending || undefined}>
+          Continue
+        </button>
+      </form>
     </>
   )
 }

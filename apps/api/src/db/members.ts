@@ -45,6 +45,7 @@ export type MemberRow = {
   status: MemberStatus
   name: string | null
   email: string
+  recovery_email: string | null
   created_at: string
   /** From the open invitation, for invited members. */
   invited_by_name: string | null
@@ -53,7 +54,7 @@ export type MemberRow = {
 }
 
 const MEMBER_SELECT = `
-  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, m.created_at,
+  SELECT m.id, m.organization_id, m.user_id, m.role, m.status, u.name, u.email, u.recovery_email, m.created_at,
          ib.name AS invited_by_name, i.sent_at, i.expires_at
   FROM members m
   JOIN users u ON u.id = m.user_id
@@ -116,4 +117,20 @@ export function removeDomainFromPermissions(db: D1Database, organizationId: stri
   return db
     .prepare('UPDATE members SET permissions = jsonb_remove(permissions, ?) WHERE organization_id = ?')
     .bind(`$.domains."${domainId}"`, organizationId)
+}
+
+/** Each member's own (personal) mailbox in the organization, with all its addresses, primary first. */
+export async function personalMailboxes(db: D1Database, organizationId: string, memberId?: string) {
+  const { results } = await db
+    .prepare(
+      `SELECT ma.member_id, mb.id AS mailbox_id, mb.backend, a.id AS address_id, a.address, a.domain_id, a.is_primary
+       FROM mailbox_access ma
+       JOIN mailboxes mb ON mb.id = ma.mailbox_id AND mb.kind = 'personal'
+       JOIN addresses a ON a.mailbox_id = mb.id
+       WHERE ma.access = 'owner' AND mb.organization_id = ? AND (? IS NULL OR ma.member_id = ?)
+       ORDER BY a.is_primary DESC, a.created_at`,
+    )
+    .bind(organizationId, memberId ?? null, memberId ?? null)
+    .all<{ member_id: string; mailbox_id: string; backend: 'stalwart' | 'store'; address_id: string; address: string; domain_id: string; is_primary: number }>()
+  return results
 }

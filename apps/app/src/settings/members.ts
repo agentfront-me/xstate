@@ -15,6 +15,28 @@ export type OrgMember = {
   you: boolean
   joinedAt: string
   invite: { sentAt: string | null; expiresAt: string; invitedBy: string | null } | null
+  /** Where invites and reset links go. Only shown for yourself, or to people who manage members. */
+  recoveryEmail: string | null
+  /** Their own mailbox: every address, the primary one (their sign-in) first. */
+  mailbox: MemberMailbox | null
+}
+
+export type MemberMailbox = {
+  id: string
+  /** 'store': on the new mail system, where the primary address can be changed. */
+  backend: 'stalwart' | 'store'
+  addresses: { id: string; address: string; domainId: string; primary: boolean }[]
+}
+
+export type NewAddress = { localPart: string; domainId: string }
+
+export type NewMember = {
+  name: string
+  role: 'admin' | 'member'
+  mailbox: NewAddress
+  alsoAt: NewAddress[]
+  signIn: 'invite' | 'password'
+  recoveryEmail?: string
 }
 
 /** Whether the invite email went out. Outside production the API also returns the link (local mail goes nowhere). */
@@ -42,6 +64,35 @@ export async function inviteMember(client: QueryClient, orgId: string, input: { 
   return result
 }
 
+/** Adds someone with their own mailbox. `password` is the temporary password, shown once. */
+export async function addMember(client: QueryClient, orgId: string, input: NewMember) {
+  const result = await api<{ member: OrgMember; email: Delivery | null; password?: string }>('POST', `/members/orgs/${orgId}/add`, input)
+  put(client, orgId, result.member)
+  return result
+}
+
+export async function updateMember(client: QueryClient, orgId: string, memberId: string, changes: { name?: string; recoveryEmail?: string | null }) {
+  const { member } = await api<{ member: OrgMember }>('PATCH', `/members/${memberId}`, changes)
+  put(client, orgId, member)
+  return member
+}
+
+export async function setPrimaryAddress(client: QueryClient, orgId: string, memberId: string, addressId: string) {
+  const { member } = await api<{ member: OrgMember }>('POST', `/members/${memberId}/addresses/${addressId}/primary`)
+  put(client, orgId, member)
+}
+
+/** Adds or removes an extra address on the member's mailbox, then reloads the members. */
+export async function addMemberAddress(client: QueryClient, orgId: string, mailboxId: string, address: NewAddress) {
+  await api('POST', `/email/mailboxes/${mailboxId}/aliases`, address)
+  await client.invalidateQueries({ queryKey: key(orgId) })
+}
+
+export async function removeMemberAddress(client: QueryClient, orgId: string, mailboxId: string, address: string) {
+  await api('DELETE', `/email/mailboxes/${mailboxId}/aliases/${encodeURIComponent(address)}`)
+  await client.invalidateQueries({ queryKey: key(orgId) })
+}
+
 export async function resendInvite(client: QueryClient, orgId: string, memberId: string) {
   const result = await api<{ member: OrgMember; email: Delivery }>('POST', `/members/${memberId}/invite`)
   put(client, orgId, result.member)
@@ -51,6 +102,7 @@ export async function resendInvite(client: QueryClient, orgId: string, memberId:
 export async function setMemberRole(client: QueryClient, orgId: string, memberId: string, role: 'admin' | 'member') {
   const { member } = await api<{ member: OrgMember }>('PATCH', `/members/${memberId}`, { role })
   put(client, orgId, member)
+  return member
 }
 
 export async function removeMember(client: QueryClient, orgId: string, memberId: string) {

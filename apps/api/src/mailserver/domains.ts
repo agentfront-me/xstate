@@ -90,8 +90,16 @@ export async function getDomain(env: EmailEnv, actor: Actor, domainId: string): 
 /** Domains in the organization that the actor can see. */
 export async function listDomains(env: EmailEnv, actor: Actor, organizationId: string): Promise<Domain[]> {
   const member = await loadMember(env, organizationId, actor.userId)
-  const rows = await domainsDb.listByOrganization(env.DB, organizationId)
-  return rows.filter((d) => domainAccess(member, d.id)).map(toDomain)
+  const [rows, opened] = await Promise.all([
+    domainsDb.listByOrganization(env.DB, organizationId),
+    // Plus the domains of mailboxes they can open (their own, shared ones), so a member with no domain permissions
+    // still sees their addresses grouped under their domain. Listing gives no access to the domain itself.
+    env.DB.prepare('SELECT DISTINCT a.domain_id FROM mailbox_access ma JOIN addresses a ON a.mailbox_id = ma.mailbox_id WHERE ma.member_id = ?')
+      .bind(member.id)
+      .all<{ domain_id: string }>(),
+  ])
+  const mine = new Set(opened.results.map((r) => r.domain_id))
+  return rows.filter((d) => domainAccess(member, d.id) || mine.has(d.id)).map(toDomain)
 }
 
 /**

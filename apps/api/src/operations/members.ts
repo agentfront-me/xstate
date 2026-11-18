@@ -1,5 +1,18 @@
 import { z } from 'zod'
-import { acceptInvite, inviteMember, listMembers, lookupInvite, removeMember, resendInvite, setRole } from '../members/service'
+import { syncSeats } from '../billing/service'
+import {
+  acceptInvite,
+  addMember,
+  inviteMember,
+  listMembers,
+  lookupInvite,
+  removeMember,
+  resendInvite,
+  setPrimaryAddress,
+  setRole,
+  updateMember,
+} from '../members/service'
+import { ApiError } from '../errors'
 import { defineOperation } from './define'
 
 const id = z.string().min(1).max(64)
@@ -32,6 +45,41 @@ export const membersInvite = defineOperation({
   run: ({ env, actor }, { organizationId, ...input }) => inviteMember(env, actor, organizationId, input),
 })
 
+const address = z.object({ localPart: z.string().trim().min(1).max(64), domainId: id })
+
+export const membersAdd = defineOperation({
+  name: 'members_add',
+  description:
+    'Adds someone with their own mailbox. They sign in with its primary address. alsoAt adds more addresses (on any of the organization\'s domains) that deliver to the same mailbox. signIn "invite" emails a link to recoveryEmail so they choose a password; "password" returns a temporary password once, which they must change when they first sign in.',
+  input: z.object({
+    organizationId: id,
+    name: z.string().trim().min(1).max(100),
+    role: role.default('member'),
+    mailbox: address,
+    alsoAt: z.array(address).max(10).default([]),
+    signIn: z.enum(['invite', 'password']),
+    recoveryEmail: z.email().max(254).optional(),
+  }),
+  http: { method: 'POST', path: '/members/orgs/:organizationId/add', status: 201 },
+  mcp: false,
+  run: async ({ env, actor, waitUntil }, { organizationId, ...input }) => {
+    const result = await addMember(env, actor, organizationId, input)
+    // A personal mailbox is a seat.
+    waitUntil(syncSeats(env, organizationId))
+    return result
+  },
+})
+
+export const membersSetPrimaryAddress = defineOperation({
+  name: 'members_set_primary_address',
+  description:
+    "Makes another of a member's addresses their primary one, which is also what they sign in with. Only for mailboxes on xstate's new mail system.",
+  input: z.object({ memberId: id, addressId: id }),
+  http: { method: 'POST', path: '/members/:memberId/addresses/:addressId/primary' },
+  mcp: false,
+  run: async ({ env, actor }, input) => ({ member: await setPrimaryAddress(env, actor, input.memberId, input.addressId) }),
+})
+
 export const membersSendInvite = defineOperation({
   name: 'members_send_invite',
   description: 'Sends an invited member their invite email again, with a new link. The previous link stops working.',
@@ -43,11 +91,24 @@ export const membersSendInvite = defineOperation({
 
 export const membersUpdate = defineOperation({
   name: 'members_update',
-  description: "Changes a member's role to admin or member. Owners and admins only; the owner's role can't change.",
-  input: z.object({ memberId: id, role }),
+  description:
+    "Changes a member's role (owners and admins only; the owner's role can't change), name or recovery email (the address their invites and reset links go to). Members can change their own name and recovery email.",
+  input: z.object({
+    memberId: id,
+    role: role.optional(),
+    name: z.string().trim().min(1).max(100).optional(),
+    recoveryEmail: z.union([z.email().max(254), z.literal(''), z.null()]).optional(),
+  }),
   http: { method: 'PATCH', path: '/members/:memberId' },
   mcp: false,
-  run: async ({ env, actor }, input) => ({ member: await setRole(env, actor, input.memberId, input.role) }),
+  run: async ({ env, actor }, { memberId, role, ...details }) => {
+    let member = role ? await setRole(env, actor, memberId, role) : undefined
+    if (details.name !== undefined || details.recoveryEmail !== undefined) {
+      member = await updateMember(env, actor, memberId, { name: details.name, recoveryEmail: details.recoveryEmail || null })
+    }
+    if (!member) throw new ApiError('nothing_to_change', 'Nothing to change')
+    return { member }
+  },
 })
 
 export const membersRemove = defineOperation({
@@ -90,6 +151,8 @@ export const invitationAccept = defineOperation({
 export const memberOperations = [
   membersList,
   membersInvite,
+  membersAdd,
+  membersSetPrimaryAddress,
   membersSendInvite,
   membersUpdate,
   membersRemove,

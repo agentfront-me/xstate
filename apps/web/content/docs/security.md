@@ -3,7 +3,7 @@ title: Security
 description: How xstate protects your accounts, email, files and agents, and what it does with risky attachments.
 ---
 
-**Last updated:** November 16, 2026
+**Last updated:** November 18, 2026
 
 This page describes what xstate actually does to keep your organization's data safe. We update it whenever we
 change how something works. Recent changes are listed [at the end](#changes).
@@ -21,7 +21,11 @@ change how something works. Recent changes are listed [at the end](#changes).
   On the web the token stays on go.xstate.com and is never put in a cookie. xstate.com only sees a `signed_in`
   cookie that says you're signed in, so it can show "Open app"; it holds no token and grants no access.
 - **Invitations** use a long random link. We store only a hash of it, and it expires after 14 days. Sending a new
-  invitation cancels the old link.
+  invitation cancels the old link. Someone added with their own mailbox signs in with its address; their
+  invitation goes to a secondary email they can already read.
+- **Temporary passwords.** An admin can add someone with a temporary password instead of an invitation. It's shown
+  to the admin once and stored only as a hash. Signing in with it only lets the person choose their own password
+  (a 15-minute, single-purpose token), and the new one must be different.
 
 ## Who can see what
 
@@ -201,6 +205,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Members can be added with their own mailbox and sign in with its address. Admins can
+  set a temporary password, which must be changed at the first sign-in.
 - **November 18, 2026:** xstate's old mail server and its ClamAV scanner were shut down. Received mail is
   virus-scanned by Amazon SES; uploads are no longer virus-scanned (the file-type rules still apply).
 - **November 18, 2026:** Virus scanning is enforced: incoming mail with a virus is refused during delivery,

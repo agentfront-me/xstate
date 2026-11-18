@@ -445,3 +445,32 @@ button.sender { width: 100%; text-align: left; }
 .plan-card .plan-features { margin: 0; padding: 0 0 0 16px; flex: 1; font-size: 12.5px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
 .plan-card .btn { align-self: flex-start; }
 @media (max-width: 760px) { .plan-grid { grid-template-columns: 1fr; } }
+
+/* Settings → Members dialogs (settings/MemberDialogs.tsx) */
+.member-form { gap: 16px; }
+.member-form .inline-form .select { flex-shrink: 0; }
+.member-form .seg { align-self: flex-start; }
+.member-form .seg button { height: 26px; padding: 0 10px; }
+.member-form .hint, .member-detail .hint { font-size: 12px; color: var(--text-dim); margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { height: 28px; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+.chip[aria-pressed="true"] { border-color: var(--border-hi); color: var(--text-hi); background: var(--bg-muted); }
+.modal-body.member-detail { gap: 0; padding: 0; }
+.member-detail > * { padding: 14px 16px; }
+.member-detail > section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+.member-detail h3 { font-size: 14px; font-weight: 400; color: var(--text-hi); margin: 0; }
+.member-detail h3.danger { color: #dc2626; }
+.dark .member-detail h3.danger { color: #f87171; }
+.member-detail .md-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.member-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.member-head .text { display: flex; flex-direction: column; min-width: 0; }
+.member-head .name { display: flex; align-items: center; gap: 8px; color: var(--text-hi); }
+.member-head .sub { font-size: 12px; color: var(--text-dim); }
+.address-row { gap: 10px; color: var(--text-muted); }
+.address-row .name { flex: 1; min-width: 0; color: var(--text-hi); }
+.address-row .right { display: flex; align-items: center; gap: 4px; }
+.btn.danger { color: #dc2626; }
+.dark .btn.danger { color: #f87171; }
+button.card-row { width: 100%; text-align: left; cursor: pointer; }
+button.card-row:hover { background: var(--bg-hover); }
+.member-row .right { display: flex; align-items: center; gap: 10px; color: var(--text-dim); }

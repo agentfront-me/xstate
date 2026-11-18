@@ -32,7 +32,8 @@ import type { Domain, MailboxKind } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
 import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
-import { inviteMember, membersSub, removeMember, resendInvite, setMemberRole, useMembers, type OrgMember } from './members'
+import { AddMemberDialog, MemberDialog } from './MemberDialogs'
+import { membersSub, removeMember, useMembers, type OrgMember } from './members'
 import { AiProvidersSection, LiveSecretsSection } from './AiSections'
 import { BillingSection as LiveBillingSection } from './Billing'
 import { ConnectedAppsSection } from './ConnectedApps'
@@ -445,109 +446,41 @@ function sentLabel(m: OrgMember): string {
   return `Invited ${day}`
 }
 
-/** What happened to the invite email, as a line under the form. */
-type InviteNote = { email: string; sent: boolean; reason?: string; url?: string } | null
+/** The line under a member's name: their sign-in, how many domains they're on, and invite state. */
+function memberSub(m: OrgMember): string {
+  const domains = new Set(m.mailbox?.addresses.map((a) => a.domainId)).size
+  const parts = [m.email]
+  if (domains > 1) parts.push(`${domains} domains`)
+  if (m.status === 'invited') parts.push(sentLabel(m))
+  return parts.join(' · ')
+}
 
 function LiveMembers({ account }: { account: Account }) {
   const client = useQueryClient()
   const orgId = account.org.id
   const query = useMembers(orgId, true)
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'admin' | 'member'>('member')
-  const [error, setError] = useState('')
-  const [sending, setSending] = useState(false)
-  const [note, setNote] = useState<InviteNote>(null)
+  const [adding, setAdding] = useState(false)
+  const [openId, setOpenId] = useState<string | null>(null)
   const [removing, setRemoving] = useState<OrgMember | null>(null)
   const manage = canManageMembers(account)
   const rows = query.data ?? []
-
-  const report = (to: string, delivery: { sent: boolean; reason?: string; inviteUrl?: string }) => {
-    setNote({ email: to, sent: delivery.sent, reason: delivery.reason, url: delivery.inviteUrl })
-    if (delivery.sent) toast(`Invite sent to ${to}`)
-  }
-
-  const invite = async (event: FormEvent) => {
-    event.preventDefault()
-    const value = email.trim().toLowerCase()
-    if (!isEmail(value)) return setError('Enter a valid email address.')
-    if (rows.some((m) => m.email === value)) return setError(`${value} is already on the team.`)
-    setError('')
-    setSending(true)
-    try {
-      const result = await inviteMember(client, orgId, { email: value, role })
-      setEmail('')
-      report(value, result.email)
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const resend = async (m: OrgMember) => {
-    try {
-      report(m.email, (await resendInvite(client, orgId, m.id)).email)
-    } catch (err) {
-      toast(errorMessage(err))
-    }
-  }
-
-  const changeRole = async (m: OrgMember, next: 'admin' | 'member') => {
-    try {
-      await setMemberRole(client, orgId, m.id, next)
-      toast('Role updated')
-    } catch (err) {
-      toast(errorMessage(err))
-    }
-  }
+  const open = rows.find((m) => m.id === openId) ?? null
 
   return (
     <>
-      {manage && (
-        <div className="group">
-          <GroupHead title="Invite" sub="Members can use the shared inbox, storage and agents. Admins can also manage members, billing and secrets." />
-          <form className="inline-form invite-form" noValidate onSubmit={(e) => void invite(e)}>
-            <input
-              className="text-input"
-              type="email"
-              placeholder="name@company.com"
-              aria-label="Email to invite"
-              autoComplete="off"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <select className="select" aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button className="btn btn-primary" style={{ height: 34 }} disabled={sending} aria-busy={sending || undefined}>
-              Send invite
-            </button>
-          </form>
-          <div className="form-error" role="alert">
-            {error}
-          </div>
-          {note && !note.sent && (
-            <div className="invite-note" role="status">
-              <Icon name="circle-alert" size={14} />
-              <span>
-                The invite to {note.email} wasn't emailed: {note.reason ?? 'unknown reason'}.
-                {note.url ? ' Share this link with them instead:' : ' Try sending it again.'}
-                {note.url && (
-                  <span className="invite-link">
-                    <code className="ellipsis">{note.url}</code>
-                    <button className="btn btn-sm" type="button" onClick={() => void copyText(note.url!).then((ok) => ok && toast('Link copied'))}>
-                      Copy
-                    </button>
-                  </span>
-                )}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
       <div className="group">
-        <GroupHead title="Members" />
+        <GroupHead
+          title="Members"
+          sub="Members can use the shared inbox, storage and agents. Admins can also manage members, billing and secrets."
+          aside={
+            manage && (
+              <button className="btn btn-primary" onClick={() => setAdding(true)}>
+                <Icon name="plus" size={14} />
+                Add member
+              </button>
+            )
+          }
+        />
         {query.isError ? (
           <div className="form-error" role="alert">
             {errorMessage(query.error)}
@@ -562,54 +495,42 @@ function LiveMembers({ account }: { account: Account }) {
             {rows.map((m) => {
               const invited = m.status === 'invited'
               const label = m.name || m.email
-              const editable = manage && m.role !== 'owner'
               return (
-                <div className="card-row member-row" key={m.id}>
+                <button className="card-row member-row" key={m.id} onClick={() => setOpenId(m.id)}>
                   <span className="avatar md">{invited && !m.name ? m.email[0]!.toUpperCase() : initials(label)}</span>
                   <div className="text">
                     <span className="name ellipsis">
                       {label}
                       {m.you && <span className="muted"> (you)</span>}
                     </span>
-                    <span className="sub ellipsis">{invited ? `${m.name ? `${m.email} · ` : ''}${sentLabel(m)}` : m.email}</span>
+                    <span className="sub ellipsis">{memberSub(m)}</span>
                   </div>
                   <span className="right">
-                    {invited && manage && (
-                      <button className="btn btn-sm btn-quiet" onClick={() => void resend(m)}>
-                        {m.invite?.sentAt ? 'Send again' : 'Send invite'}
-                      </button>
-                    )}
-                    {editable ? (
-                      <>
-                        <select
-                          className="select sm"
-                          aria-label={`Role for ${label}`}
-                          value={m.role}
-                          onChange={(e) => void changeRole(m, e.target.value as 'admin' | 'member')}
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="member">Member</option>
-                        </select>
-                        <button className="x-btn" aria-label={invited ? `Cancel invite for ${label}` : `Remove ${label}`} onClick={() => setRemoving(m)}>
-                          <Icon name="x" size={14} />
-                        </button>
-                      </>
-                    ) : (
-                      cap(m.role)
-                    )}
+                    {invited && <span className="tag">Invite pending</span>}
+                    <span className="muted">{cap(m.role)}</span>
+                    <Icon name="chevron-right" size={14} />
                   </span>
-                </div>
+                </button>
               )
             })}
           </div>
         )}
       </div>
+      {adding && <AddMemberDialog account={account} onClose={() => setAdding(false)} />}
+      {open && !removing && (
+        <MemberDialog
+          account={account}
+          member={open}
+          onClose={() => setOpenId(null)}
+          onRemove={(m) => setRemoving(m)}
+        />
+      )}
       {removing && (
         <ConfirmDialog
           title={removing.status === 'invited' ? 'Cancel invite' : 'Remove member'}
           body={
             removing.status === 'invited'
-              ? `Cancel the invite for ${removing.email}? Their invite link stops working.`
+              ? `Cancel the invite for ${removing.name || removing.email}? Their invite link stops working.`
               : `Remove ${removing.name || removing.email} from ${account.org.name}? They lose access right away, and their own My Files are deleted.`
           }
           action={removing.status === 'invited' ? 'Cancel invite' : 'Remove'}
@@ -617,6 +538,7 @@ function LiveMembers({ account }: { account: Account }) {
           onConfirm={async () => {
             try {
               await removeMember(client, orgId, removing.id)
+              setOpenId(null)
               toast(removing.status === 'invited' ? 'Invite cancelled' : 'Member removed')
             } catch (err) {
               toast(errorMessage(err))
@@ -935,7 +857,7 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
 
 const KIND_LABEL: Record<MailboxKind, string> ={ personal: 'Personal', shared: 'Shared', agent: 'Agent' }
 const KIND_HINT: Record<MailboxKind, string> = {
-  personal: "One person's inbox. They open it in xstate or any mail app.",
+  personal: "An inbox for someone already in the organization. To add a new person with their own mailbox, use Members.",
   shared: 'For addresses like hello@ or support@. No password: you get access now, and can give it to others later.',
   agent: 'For an AI agent. It signs in with the password shown after you create it.',
 }
@@ -1012,7 +934,8 @@ function AddMailboxForm({
     ? (members.data ?? []).map((m) => ({ id: m.id, label: `${m.name ?? m.email}${m.status === 'invited' ? ' (invited)' : ''}` }))
     : [{ id: account.org.memberId ?? 'me', label: account.user.name ?? account.user.email }]
   const [local, setLocal] = useState('')
-  const [kind, setKind] = useState<MailboxKind>('personal')
+  // New people get their mailbox from Members → Add member; here it's mostly shared and agent addresses.
+  const [kind, setKind] = useState<MailboxKind>('shared')
   const [owner, setOwner] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState('')

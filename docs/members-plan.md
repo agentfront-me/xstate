@@ -1,6 +1,7 @@
 # Plan: managing members
 
-Status: **proposed 2026-11-18, not approved.** No code written yet.
+Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
+(see "Phase 1 as built" below). Phases 2–6 not started.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -145,6 +146,26 @@ App:
 - The Domains page's mailbox form stops offering **Personal** (only shared and agent mailboxes), and links to
   Members.
 - A change-password screen after sign-in when the server asks for one.
+
+#### Phase 1 as built (2026-11-18)
+
+Differences from the plan above:
+- Migration `0040_members.sql` adds only `users.recovery_email` and `users.must_change_password`. The new member
+  status, `sessions_after`, `delete_after` and `last_seen_at` move to the phases that use them (3 and 4), so the
+  `members` table rebuild happens once, in phase 3.
+- `POST /members/orgs/:org/add` (`members_add`) adds someone with a mailbox. The old invite-by-email
+  (`members_invite`) stays for orgs with no verified domain and for migrations.
+- Extra addresses use the existing alias endpoints (`/email/mailboxes/:id/aliases`). Making one primary is
+  `POST /members/:id/addresses/:addressId/primary`, and only works for mailboxes on the new mail system.
+- Aliases of mailboxes on the new mail system are no longer written to Stalwart. A switch rollback writes them
+  back (`resyncStalwartAliases`).
+- Temporary password sign-in: `auth_login` answers 403 `password_change_required` with a 15-minute
+  `changeToken`; `POST /auth/password/change` sets the new password and returns a session. The mobile app shows
+  the message and points to the web, and doesn't have the new-password screen yet.
+- A member now also sees the domains of mailboxes they can open (`listDomains`). Without that, a member with no
+  domain permissions didn't see their own mailbox in the mail sidebar.
+- The Domains page keeps the Personal option for giving an existing member a mailbox. It now defaults to Shared
+  and says to use Members for new people.
 
 ### Phase 2: passwords and reset links
 

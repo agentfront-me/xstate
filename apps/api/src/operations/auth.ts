@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { getMe, login, register } from '../auth/service'
+import { changePassword, getMe, login, register } from '../auth/service'
 import { ensureBucketsInBackground } from '../storage/buckets'
 import { defineOperation } from './define'
 
@@ -36,6 +36,17 @@ export const authLogin = defineOperation({
   run: ({ env, ip }, input) => login(env, input, ip),
 })
 
+export const authChangePassword = defineOperation({
+  name: 'auth_change_password',
+  description:
+    'Finish signing in after a temporary password: auth_login answered password_change_required with a changeToken. Sets the new password and returns a session token.',
+  input: z.object({ changeToken: z.string().min(20).max(2000), password }),
+  public: true,
+  http: { method: 'POST', path: '/auth/password/change' },
+  mcp: false,
+  run: ({ env }, input) => changePassword(env, input),
+})
+
 export const authMe = defineOperation({
   name: 'auth_me',
   description: 'The signed-in user and the organizations they belong to, with their role and member id in each.',
@@ -50,4 +61,4 @@ export const authMe = defineOperation({
   },
 })
 
-export const authOperations = [authRegister, authLogin, authMe]
+export const authOperations = [authRegister, authLogin, authChangePassword, authMe]

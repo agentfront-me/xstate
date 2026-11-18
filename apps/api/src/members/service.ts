@@ -13,12 +13,16 @@ import { revokeTokensOfMember } from '../auth/api-tokens'
 import { hashPassword } from '../auth/password'
 import { issueToken } from '../auth/token'
 import type { Actor } from '../auth/types'
+import * as addressesDb from '../db/addresses'
+import * as domainsDb from '../db/domains'
 import * as invitationsDb from '../db/invitations'
 import * as membersDb from '../db/members'
-import type { MemberRow, MemberStatus, Role } from '../db/members'
+import type { Member, MemberRow, MemberStatus, Role } from '../db/members'
 import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
+import { addAlias, createMailbox, deleteMailbox } from '../mailserver'
 import { isAdmin, loadMember, requireOrgPermission } from '../mailserver/access'
+import { generatePassword, normalizeLocalPart } from '../mailserver/validation'
 import { sendSystemEmail, type SystemMailEnv } from '../mailserver/system-mail'
 import { inviteEmail } from './invite-email'
 
@@ -39,12 +43,40 @@ export type OrgMember = {
   joinedAt: string
   /** Invited members only: when the email last went out (null: not sent yet), and when the link stops working. */
   invite: { sentAt: string | null; expiresAt: string; invitedBy: string | null } | null
+  /** Where invites and reset links go. Only shown to the member themselves and to people who manage members. */
+  recoveryEmail: string | null
+  /** Their own mailbox in the organization, if they have one: every address, the primary (their sign-in) first. */
+  mailbox: MemberMailbox | null
 }
+
+export type MemberMailbox = {
+  id: string
+  /** 'store': on the new mail system, where the primary address can be changed. */
+  backend: 'stalwart' | 'store'
+  addresses: { id: string; address: string; domainId: string; primary: boolean }[]
+}
+
+type Extras = { mailboxes: Map<string, MemberMailbox>; canManage: boolean }
+
+async function extrasFor(env: MembersEnv, organizationId: string, me: Member, memberId?: string): Promise<Extras> {
+  const mailboxes = new Map<string, MemberMailbox>()
+  for (const r of await membersDb.personalMailboxes(env.DB, organizationId, memberId)) {
+    let box = mailboxes.get(r.member_id)
+    // One personal mailbox per member is the rule; if there were more, the first one found is theirs here.
+    if (box && box.id !== r.mailbox_id) continue
+    if (!box) mailboxes.set(r.member_id, (box = { id: r.mailbox_id, backend: r.backend, addresses: [] }))
+    box.addresses.push({ id: r.address_id, address: r.address, domainId: r.domain_id, primary: !!r.is_primary })
+  }
+  return { mailboxes, canManage: canManage(me) }
+}
+
+const canManage = (me: Member) => isAdmin(me) || me.permissions.org.includes('members.manage')
 
 /** Whether the invite email went out. Outside production the link comes back too, since local mail goes nowhere. */
 export type Delivery = { sent: boolean; reason?: string; inviteUrl?: string }
 
-function toMember(row: MemberRow, actor: Actor): OrgMember {
+function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
+  const you = row.user_id === actor.userId
   return {
     id: row.id,
     userId: row.user_id,
@@ -52,13 +84,21 @@ function toMember(row: MemberRow, actor: Actor): OrgMember {
     email: row.email,
     role: row.role,
     status: row.status,
-    you: row.user_id === actor.userId,
+    you,
     joinedAt: row.created_at,
     invite:
       row.status === 'invited' && row.expires_at
         ? { sentAt: row.sent_at, expiresAt: row.expires_at, invitedBy: row.invited_by_name }
         : null,
+    recoveryEmail: you || extras?.canManage ? row.recovery_email : null,
+    mailbox: extras?.mailboxes.get(row.id) ?? null,
   }
+}
+
+/** The member as the list shows them, after a change. */
+async function reload(env: MembersEnv, actor: Actor, me: Member, memberId: string): Promise<OrgMember> {
+  const row = (await membersDb.findById(env.DB, memberId))!
+  return toMember(row, actor, await extrasFor(env, row.organization_id, me, memberId))
 }
 
 const notFound = () => new ApiError('member_not_found', 'Member not found', 404)
@@ -77,8 +117,9 @@ async function memberContext(env: MembersEnv, actor: Actor, memberId: string) {
 // Members
 
 export async function listMembers(env: MembersEnv, actor: Actor, organizationId: string): Promise<OrgMember[]> {
-  await loadMember(env, organizationId, actor.userId)
-  return (await membersDb.listForOrg(env.DB, organizationId)).map((row) => toMember(row, actor))
+  const me = await loadMember(env, organizationId, actor.userId)
+  const [rows, extras] = await Promise.all([membersDb.listForOrg(env.DB, organizationId), extrasFor(env, organizationId, me)])
+  return rows.map((row) => toMember(row, actor, extras))
 }
 
 export async function setRole(env: MembersEnv, actor: Actor, memberId: string, role: Exclude<Role, 'owner'>): Promise<OrgMember> {
@@ -86,7 +127,30 @@ export async function setRole(env: MembersEnv, actor: Actor, memberId: string, r
   if (!isAdmin(me)) throw forbidden('Only owners and admins can change roles')
   if (target.role === 'owner') throw forbidden("The owner's role can't be changed")
   await membersDb.setRole(env.DB, memberId, role, new Date().toISOString()).run()
-  return toMember((await membersDb.findById(env.DB, memberId))!, actor)
+  return reload(env, actor, me, memberId)
+}
+
+/**
+ * Changes a member's name or recovery email. Members can change their own; people who manage members can change
+ * anyone's except the owner's.
+ */
+export async function updateMember(
+  env: MembersEnv,
+  actor: Actor,
+  memberId: string,
+  changes: { name?: string; recoveryEmail?: string | null },
+): Promise<OrgMember> {
+  const { target, me } = await memberContext(env, actor, memberId)
+  if (target.user_id !== actor.userId) {
+    requireOrgPermission(me, 'members.manage')
+    if (target.role === 'owner') throw forbidden("Only the owner can change the owner's details")
+  }
+  const recoveryEmail = changes.recoveryEmail === undefined ? undefined : changes.recoveryEmail?.trim().toLowerCase() || null
+  if (recoveryEmail && recoveryEmail === target.email) {
+    throw new ApiError('invalid_recovery_email', 'Use an address other than the one they sign in with')
+  }
+  await usersDb.update(env.DB, target.user_id, { name: changes.name?.trim() || undefined, recoveryEmail }, new Date().toISOString()).run()
+  return reload(env, actor, me, memberId)
 }
 
 export async function removeMember(env: MembersEnv, actor: Actor, memberId: string): Promise<void> {
@@ -120,6 +184,147 @@ export async function removeMember(env: MembersEnv, actor: Actor, memberId: stri
   }
   // Invited and never accepted: the placeholder account goes too, or they could never sign up on their own.
   if (target.status === 'invited') await usersDb.removeIfUnclaimed(env.DB, target.user_id).run()
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Adding someone with a mailbox
+
+export type AddMemberInput = {
+  name: string
+  role: Exclude<Role, 'owner'>
+  /** Their mailbox's primary address, which is also what they sign in with. */
+  mailbox: { localPart: string; domainId: string }
+  /** More addresses delivering to the same mailbox, on any of the organization's domains. */
+  alsoAt: { localPart: string; domainId: string }[]
+  /** 'invite': a link to choose a password goes to recoveryEmail. 'password': a temporary password, returned once. */
+  signIn: 'invite' | 'password'
+  recoveryEmail?: string
+}
+
+/**
+ * Adds someone with their own mailbox (docs/members-plan.md, phase 1). They sign in with its primary address. Every
+ * address is checked before anything is created, and a failure part way through undoes what was made.
+ */
+export async function addMember(
+  env: Env,
+  actor: Actor,
+  organizationId: string,
+  input: AddMemberInput,
+): Promise<{ member: OrgMember; email: Delivery | null; password?: string }> {
+  const me = await loadMember(env, organizationId, actor.userId)
+  requireOrgPermission(me, 'members.manage')
+  if (input.role === 'admin' && !isAdmin(me)) throw forbidden('Only owners and admins can add admins')
+  const name = input.name.trim()
+  if (!name) throw new ApiError('name_required', 'Enter their name')
+
+  // Every address, primary first: on the organization's domains, all handled by the same mail system, not repeated,
+  // and free.
+  const wanted = [input.mailbox, ...input.alsoAt]
+  const domains = new Map<string, domainsDb.DomainRow>()
+  const addresses: string[] = []
+  for (const w of wanted) {
+    const domain = domains.get(w.domainId) ?? (await domainsDb.find(env.DB, w.domainId))
+    if (!domain || domain.organization_id !== organizationId) throw new ApiError('domain_not_found', 'Domain not found', 404)
+    domains.set(domain.id, domain)
+    const address = `${normalizeLocalPart(w.localPart)}@${domain.name}`
+    if (addresses.includes(address)) throw new ApiError('duplicate_address', `${address} is listed twice`)
+    addresses.push(address)
+  }
+  const primaryDomain = domains.get(input.mailbox.domainId)!
+  for (const d of domains.values()) {
+    if (d.mail_path !== primaryDomain.mail_path) {
+      throw new ApiError(
+        'domain_mail_path_differs',
+        `${d.name} and ${primaryDomain.name} are handled by different mail systems right now, so one mailbox can't have addresses on both.`,
+        409,
+      )
+    }
+  }
+  for (const address of addresses) {
+    if ((await addressesDb.taken(env.DB, address)) || (await usersDb.findByEmail(env.DB, address))) {
+      throw new ApiError('address_taken', `${address} is already in use`, 409)
+    }
+  }
+  const primary = addresses[0]!
+
+  const recoveryEmail = input.recoveryEmail?.trim().toLowerCase() || null
+  if (input.signIn === 'invite' && !recoveryEmail) throw new ApiError('recovery_email_required', 'Enter the email to send their invite to')
+  if (recoveryEmail && addresses.includes(recoveryEmail)) {
+    throw new ApiError('invalid_recovery_email', "Use an email they can already read, not one of their new addresses")
+  }
+
+  const now = new Date().toISOString()
+  const userId = crypto.randomUUID()
+  const memberId = crypto.randomUUID()
+  const password = input.signIn === 'password' ? generatePassword() : undefined
+  const token = input.signIn === 'invite' ? newToken() : undefined
+  try {
+    await env.DB.batch([
+      usersDb.insertWithMailbox(env.DB, { id: userId, email: primary, name, recoveryEmail, passwordHash: password ? await hashPassword(password) : null, now }),
+      // With a temporary password they're in straight away; with an invite, once they accept it.
+      membersDb.insert(env.DB, { id: memberId, organizationId, userId, role: input.role, status: token ? 'invited' : 'active', now }),
+      ...(token
+        ? [invitationsDb.upsert(env.DB, { memberId, organizationId, tokenHash: await sha256(token), invitedBy: actor.userId, sentAt: null, expiresAt: expiry(), now })]
+        : []),
+    ])
+  } catch (err) {
+    if (String(err).includes('UNIQUE constraint failed')) throw new ApiError('address_taken', `${primary} was just taken. Try another name.`, 409)
+    throw err
+  }
+
+  let mailboxId: string | undefined
+  try {
+    const created = await createMailbox(env, actor, {
+      kind: 'personal',
+      domainId: input.mailbox.domainId,
+      localPart: input.mailbox.localPart,
+      displayName: name,
+      ownerMemberId: memberId,
+    })
+    mailboxId = created.mailbox.id
+    for (const alias of input.alsoAt) await addAlias(env, actor, mailboxId, alias)
+  } catch (err) {
+    // Undo, newest first. Each step is tried even if one before it fails, and the original error is what's reported.
+    if (mailboxId) await deleteMailbox(env, actor, mailboxId).catch((e) => console.error('add member: undoing the mailbox failed', e))
+    await env.DB.batch([membersDb.remove(env.DB, memberId), usersDb.remove(env.DB, userId)]).catch((e) =>
+      console.error('add member: undoing the member failed', e),
+    )
+    throw err
+  }
+
+  const email = token ? await deliver(env, actor, memberId, token) : null
+  return { member: await reload(env, actor, me, memberId), email, ...(password && { password }) }
+}
+
+/**
+ * Makes another of the member's addresses their primary one, which is also what they sign in with. Only on the new
+ * mail system: on the current mail server the primary address is the account's name.
+ */
+export async function setPrimaryAddress(env: Env, actor: Actor, memberId: string, addressId: string): Promise<OrgMember> {
+  const { target, me } = await memberContext(env, actor, memberId)
+  requireOrgPermission(me, 'members.manage')
+  if (target.role === 'owner' && target.user_id !== actor.userId) throw forbidden("Only the owner can change the owner's addresses")
+  const box = (await extrasFor(env, target.organization_id, me, memberId)).mailboxes.get(memberId)
+  const next = box?.addresses.find((a) => a.id === addressId)
+  if (!box || !next) throw new ApiError('address_not_found', 'Address not found', 404)
+  if (next.primary) return reload(env, actor, me, memberId)
+  if (box.backend !== 'store') {
+    throw new ApiError(
+      'primary_needs_new_mail_system',
+      "The primary address can be changed once this domain has moved to xstate's new mail system.",
+      409,
+    )
+  }
+  const old = box.addresses.find((a) => a.primary)!
+  const now = new Date().toISOString()
+  const taken = await usersDb.findByEmail(env.DB, next.address)
+  if (taken && taken.id !== target.user_id) throw new ApiError('address_taken', `${next.address} is already someone's sign-in`, 409)
+  await env.DB.batch([
+    env.DB.prepare('UPDATE addresses SET is_primary = (id = ?) WHERE mailbox_id = ?').bind(next.id, box.id),
+    // Their sign-in follows the primary address, unless they sign in with an email of their own.
+    ...(target.email === old.address ? [usersDb.setEmail(env.DB, target.user_id, next.address, now)] : []),
+  ])
+  return reload(env, actor, me, memberId)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -168,7 +373,7 @@ export async function inviteMember(
   }
 
   const delivery = input.send ? await deliver(env, actor, memberId, token) : { sent: false, reason: 'Not sent yet' }
-  return { member: toMember((await membersDb.findById(env.DB, memberId))!, actor), email: delivery }
+  return { member: await reload(env, actor, me, memberId), email: delivery }
 }
 
 /** Sends the invite again, with a new link (the old one stops working). */
@@ -178,7 +383,7 @@ export async function resendInvite(env: MembersEnv, actor: Actor, memberId: stri
   if (target.status !== 'invited') throw new ApiError('already_accepted', `${target.email} has already joined`, 409)
   const token = await newInvitation(env, actor, target)
   const delivery = await deliver(env, actor, memberId, token)
-  return { member: toMember((await membersDb.findById(env.DB, memberId))!, actor), email: delivery }
+  return { member: await reload(env, actor, me, memberId), email: delivery }
 }
 
 /** Emails the invite link to the member (or to `sendTo`, the personal address a migration knows for them). */
@@ -198,7 +403,8 @@ async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: s
   })
   try {
     const result = await sendSystemEmail(env, {
-      to: { name: target!.name, email: sendTo ?? target!.email },
+      // Someone added with a mailbox can't read it yet: their invite goes to their recovery email.
+      to: { name: target!.name, email: sendTo ?? target!.recovery_email ?? target!.email },
       replyTo: inviter ? { name: inviter.name, email: inviter.email } : undefined,
       ...message,
     })

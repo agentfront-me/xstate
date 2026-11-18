@@ -6,7 +6,7 @@ import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
 import { hashPassword, verifyPassword } from './password'
 import { loginThrottled, registerThrottled, type ThrottleEnv } from './throttle'
-import { issueToken } from './token'
+import { issuePasswordChangeToken, issueToken, verifyPasswordChangeToken } from './token'
 import type { Actor, User } from './types'
 
 type AuthEnv = Pick<Env, 'DB' | 'JWT_SECRET'> & ThrottleEnv
@@ -64,6 +64,28 @@ export async function login(env: AuthEnv, input: { email: string; password: stri
   // Hash even when there's no such user, so response time doesn't reveal which emails are registered.
   const ok = await verifyPassword(input.password, user?.password_hash ?? (await dummyHash()))
   if (!user || !user.password_hash || !ok) throw new ApiError('invalid_credentials', 'Email or password is incorrect', 401)
+  // A temporary password an admin set: it only lets them choose their own (changePassword). An error rather than a
+  // different success shape, so an app that doesn't know about this shows the message instead of signing in.
+  if (user.must_change_password) {
+    throw new ApiError('password_change_required', 'Choose a new password to finish signing in. Do this on the web at go.xstate.com.', 403, {
+      changeToken: await issuePasswordChangeToken(env, user.id),
+    })
+  }
+  return { ...(await issueToken(env, user.id)), user: toUser(user) }
+}
+
+/** Ends a temporary password: sets the one they chose and signs them in. */
+export async function changePassword(env: AuthEnv, input: { changeToken: string; password: string }): Promise<Session> {
+  const userId = await verifyPasswordChangeToken(env, input.changeToken)
+  const user = await usersDb.findById(env.DB, userId)
+  // Already changed (another tab), or the admin set a password again since: start over from sign-in.
+  if (!user?.password_hash || !user.must_change_password) {
+    throw new ApiError('invalid_token', 'This sign-in has expired. Sign in again.', 401)
+  }
+  if (await verifyPassword(input.password, user.password_hash)) {
+    throw new ApiError('same_password', 'Choose a password different from the temporary one')
+  }
+  await usersDb.setPassword(env.DB, user.id, await hashPassword(input.password), new Date().toISOString()).run()
   return { ...(await issueToken(env, user.id)), user: toUser(user) }
 }
 

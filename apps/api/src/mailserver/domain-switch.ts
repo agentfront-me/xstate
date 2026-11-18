@@ -18,6 +18,7 @@ import { store } from '../mailbox/stub'
 import { organizationBucket, storageConfigured } from '../storage/buckets'
 import { getObject } from '../storage/r2'
 import { domainContext } from './access'
+import { resyncStalwartAliases } from './aliases'
 import { isTestDomain, mxHosts } from './dns'
 import { EmailError, forbidden } from './errors'
 import * as accounts from './stalwart/accounts'
@@ -181,6 +182,7 @@ export async function rollbackSwitch(env: SwitchEnv, actor: Actor, domainId: str
   for (const m of mailboxes) {
     copiedBack[m.address] = await copyBack(env, m, Math.floor(Date.parse(sw.flipped_at) / 1000))
     await accounts.setSendingBlocked(env, m.stalwart_id, false)
+    await resyncStalwartAliases(env, m.id, m.stalwart_id).catch((err) => console.error(`rollback: aliases of ${m.address} not restored`, err))
     // A fresh shadow copy: the store holds nothing Stalwart doesn't have now.
     await (await store(env, m.id)).destroy()
   }

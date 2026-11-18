@@ -26,7 +26,7 @@ export async function addAlias(
   await requireAddressFree(env, address)
 
   const before = await currentAliases(env, mailbox.id)
-  await stalwart.setAliases(env, mailbox.stalwart_id, [...before, { localPart, domainId: domain.stalwart_id }])
+  if (onStalwart(mailbox)) await stalwart.setAliases(env, mailbox.stalwart_id, [...before, { localPart, domainId: domain.stalwart_id }])
   await withRollback(
     () =>
       addressesDb
@@ -40,10 +40,16 @@ export async function addAlias(
           now: new Date().toISOString(),
         })
         .run(),
-    () => stalwart.setAliases(env, mailbox.stalwart_id, before),
+    () => (onStalwart(mailbox) ? stalwart.setAliases(env, mailbox.stalwart_id, before) : Promise.resolve()),
   )
   return toMailbox((await mailboxesDb.find(env.DB, mailbox.id))!)
 }
+
+/**
+ * Whether the mailbox's addresses live in Stalwart. A mailbox on the new mail system is reached through the addresses
+ * table alone (mailbox/receive.ts), and its primary address can change, so its Stalwart account is left alone.
+ */
+const onStalwart = (mailbox: mailboxesDb.MailboxRow) => mailbox.backend !== 'store'
 
 export async function removeAlias(env: EmailEnv, actor: Actor, mailboxId: string, address: string): Promise<Mailbox> {
   const { mailbox } = await mailboxContext(env, actor, mailboxId, 'manage')
@@ -53,12 +59,20 @@ export async function removeAlias(env: EmailEnv, actor: Actor, mailboxId: string
 
   const before = await currentAliases(env, mailbox.id)
   const after = await currentAliases(env, mailbox.id, row.id)
-  await stalwart.setAliases(env, mailbox.stalwart_id, after)
+  if (onStalwart(mailbox)) await stalwart.setAliases(env, mailbox.stalwart_id, after)
   await withRollback(
     () => addressesDb.remove(env.DB, row.id).run(),
-    () => stalwart.setAliases(env, mailbox.stalwart_id, before),
+    () => (onStalwart(mailbox) ? stalwart.setAliases(env, mailbox.stalwart_id, before) : Promise.resolve()),
   )
   return toMailbox((await mailboxesDb.find(env.DB, mailbox.id))!)
+}
+
+/**
+ * Puts the mailbox's aliases back into Stalwart, for a mailbox returning to it (domain-switch.ts rollbackSwitch):
+ * aliases added while it was on the new mail system were never written there.
+ */
+export async function resyncStalwartAliases(env: EmailEnv, mailboxId: string, stalwartId: string): Promise<void> {
+  await stalwart.setAliases(env, stalwartId, await currentAliases(env, mailboxId))
 }
 
 /** The mailbox's aliases as Stalwart expects them, optionally leaving one out. */
