@@ -1,6 +1,6 @@
 # Analytics plan
 
-Status: plan agreed 2026-11-18 (decisions in section 11). Phases 1–5 and 7 built 2026-11-18, uncommitted (sections 12–17). Phase 6 (Overview) waits for its design.
+Status: plan agreed 2026-11-18 (decisions in section 11). All phases built 2026-11-18 (sections 12–18); phase 6 (Overview) is uncommitted.
 
 The design (Claude Design, "xstate App", Analytics page) adds an **Analytics** section to the rail. Today the data
 already flows in (`POST /v1/collect` → the organization's `AudienceStore` Durable Object), but the only place it
@@ -359,3 +359,28 @@ Plan limits (events per month per plan) are left to the pricing task, like stora
   (`lib/analytics.ts` `profileSections`). Domain picked in the drawer scopes events and funnels.
 - Checked: API tests, MCP doc check, mobile `tsc` and `expo lint`. **Not run on a device or simulator** (local iOS
   builds fail on this Mac's Xcode; needs an EAS preview update to try on the phone).
+
+## 18. Phase 6 as built (2026-11-18): Overview
+
+From the Claude Design "xstate App" → Analytics → Overview (after the five design fixes were checked).
+
+- Decisions: visits (sessions) kept **180 days** so 90 days compare with the 90 before; their IP is cleared after
+  90 days; events stay 90 days. Referrers show **letter avatars only** (no favicon service). Revenue lives on the
+  visit (`sessions.revenue/orders`, upgrade 4 with backfill); a server order with no visit counts on the person's
+  latest visit within 30 days before it.
+- `audience/overview.ts`: ranges today/7/30/90 in the viewer's time zone (`tzOffset`), previous period of the same
+  length, SQL for totals, series (day/hour buckets), breakdowns (13 dimensions; composite keys
+  `source|medium|campaign`, `region|country`, `city|country`), filters (session columns, or "viewed page" / "did
+  event" via EXISTS). Bounce = ≤1 page view and under 10 s; duration = max(first→last, time on pages).
+- Store `trafficOverview` / `trafficBreakdown` (cached 60 s in memory), live = distinct people with events in 5 min.
+- Operations `analytics_overview`, `analytics_breakdown` (also MCP, contacts.read, read-only).
+- App `analytics/Overview.tsx` (+ `world-map.json`: 174 country outlines pre-projected from world-atlas 110m with
+  Natural Earth projection, 39 KB gzipped, lazy-loaded), styles in `analytics.css` (container queries on the
+  Overview's own width). Overview is the Analytics landing page; Live events moved to `?view=live`. URL keeps
+  `period` and `filters`.
+- Tests: `audience/overview.test.ts` on node:sqlite. Checked in the browser with seeded visits: tiles, chart and
+  tooltip ("so far"), every card, map shading, filter chips (URL), filtered-card note, View all (tabs, sorting,
+  Escape returns focus), empty state for a domain with no visits, no console errors. Conversions add up to the
+  Revenue tile.
+- Follow-up suggested: Analytics' domain switcher only lists mail domains; a tracked site on another domain shows
+  only under All domains.

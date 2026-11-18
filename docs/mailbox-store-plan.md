@@ -2437,6 +2437,9 @@ Then the clean-up in Cloudflare (queues, secrets).
   both (an unknown address and `--virus` dropped); an email with an attachment and an invite (both filed, the invite
   shown as a card); fake-SES send into Sent; a Storage upload; calendars set up; an event with a guest (invitation
   sent). No errors.
+- Deployed 2026-11-18 (12247b3): Gmail to and from all three addresses passed; the queues xstate-mail-sync and
+  xstate-mailbox-store detached and deleted. The secrets STALWART_API_KEY, STALWART_WEBHOOK_SECRET and
+  SCAN_SECRET deleted the same day. 5b is complete.
 
 ## What changes for customers
 

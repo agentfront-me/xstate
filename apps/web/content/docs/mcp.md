@@ -210,6 +210,8 @@ Read, or Read and change.
 | `audience_delete_segment` | read and change (deletes) | Delete a saved segment. |
 | `analytics_events` | read | Website and email events, newest first, with who did them: page views (type page), your own events (track), identify calls and email activity ($email_received, $email_sent, $email_replied, $email_bounced, $email_complained; only for mailboxes you can read). |
 | `analytics_event` | read | One event in full, with the visit it belongs to (source, device, location). |
+| `analytics_overview` | read | Website traffic for today or the last 7, 30 or 90 days, compared with the period before: visitors, visits, page views, bounce rate, average visit length, revenue and orders, per day (per hour for today), and visitors in the last 5 minutes. |
+| `analytics_breakdown` | read | The top values of one or more dimensions for a period, with visitors and visits (and revenue, orders and converted visits for visit dimensions): channels, referrers, campaigns (source\|medium\|campaign), pages, landing and exit pages, countries, regions and cities (value\|country), devices, browsers, systems, events. |
 | `analytics_funnels` | read | Saved funnels (ordered steps people take), each with its steps, conversion window and conversion over the last 30 days. |
 | `analytics_funnel_result` | read | How many people reached each step of a funnel over the last 7, 30 or 90 days, with drop-off and median time between steps. |
 

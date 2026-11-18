@@ -170,6 +170,23 @@ Mail between your xstate mailboxes and people already in your audience is record
   mailboxes they can read.
 - Mail in Junk, mail with a virus, and mail copied in by an import aren't recorded.
 
+## Overview
+
+**Analytics → Overview** sums up your traffic for today or the last 7, 30 or 90 days:
+
+- **Visitors, visits, page views, bounce rate, average visit length and revenue**, each with the change from the
+  period before (turn **Compare to previous period** off to hide it) and a small trend line.
+- **Visitors and visits** per day (per hour for today), with the period before as a dashed line.
+- **Top lists**: sources (channels, referring sites, campaigns), pages (top, landing and exit pages), locations
+  (a map, countries, regions, cities), devices, browsers and systems, your events, and revenue by channel or campaign.
+
+Click any row, or a country on the map, to filter the whole page to it: for example "Channel is Paid search" and
+then "Country is Germany". **View all** shows the full list, sorted however you like. A visit counts as a bounce when
+it has one page view and lasts under 10 seconds.
+
+Revenue counts on the visit it happened in. An order sent from your server counts on that person's latest visit in
+the 30 days before, so it's credited to the channel that brought them.
+
 ## Funnels
 
 A funnel shows how many people take a series of steps in order, and where they drop off: for example viewing a
@@ -270,7 +287,8 @@ Names starting with `$pageview`, `$identify` and `$email_` are recorded by xstat
 
 - 300 events a minute from each visitor (by IP address). Server calls with the secret key aren't limited this way.
 - 64 KB per request, 50 events per request, 4 KB of properties per event.
-- Events and visits are kept for 90 days.
+- Events are kept for 90 days, and visits (for the Overview) for 180 days, so 90 days can be compared with the
+  90 before.
 - Anonymous visitors who never give an email or phone number are deleted after 30 days without a visit.
 - Up to 100 attributes per person.
 
@@ -283,7 +301,7 @@ privacy policy and cookie notice. xstate processes this data on your behalf.
   cookies.
 - Nothing is sent when the visitor's browser asks not to be tracked (Do Not Track or Global Privacy Control),
   unless you set `respectDoNotTrack: false`.
-- IP addresses are kept with each visit for 90 days. To stop keeping them, turn off **Keep IP addresses** in
+- IP addresses are kept with each visit for 90 days, then removed from it. To stop keeping them, turn off **Keep IP addresses** in
   **Analytics → Install code** (owners, admins and members who manage users). The ones already kept are removed,
   and only the country, region and city are kept from then on.
 - Locations are kept to the city: the coordinates are rounded to about 10 km.

@@ -12,6 +12,17 @@
 // of it. Access checks happen in the Worker (audience/service.ts); this class trusts its callers.
 
 import { DurableObject } from 'cloudflare:workers'
+import {
+  type Dimension,
+  type OverviewFilter,
+  type OverviewRange,
+  SESSION_RETENTION_DAYS,
+  breakdownQuery,
+  periodOf,
+  seriesQuery,
+  sessionWhere,
+  totalsQuery,
+} from './overview'
 import { type Funnel, type FunnelInput, type FunnelRange, type FunnelResult, funnelQuery, summarize } from './funnels'
 import { addEngagement, applyEmail, applyEvent, identified, type Metrics, mergeMetrics } from './metrics'
 import {
@@ -192,6 +203,21 @@ const UPGRADES: ((sql: SqlStorage) => void)[] = [
   (sql) => {
     sql.exec("CREATE INDEX IF NOT EXISTS people_email_any ON people (email) WHERE email IS NOT NULL AND kind <> 'contact'")
   },
+  // 4: the Overview. Revenue is kept on the visit it came from (so it outlives events and splits by channel), and
+  // visits across all sites are read by time.
+  (sql) => {
+    const cols = sql.exec<{ name: string }>('PRAGMA table_info(sessions)').toArray().map((c) => c.name)
+    if (!cols.includes('revenue')) sql.exec('ALTER TABLE sessions ADD COLUMN revenue REAL NOT NULL DEFAULT 0')
+    if (!cols.includes('orders')) sql.exec('ALTER TABLE sessions ADD COLUMN orders INTEGER NOT NULL DEFAULT 0')
+    sql.exec(
+      `UPDATE sessions SET
+         revenue = coalesce((SELECT sum(CAST(json_extract(e.properties, '$.revenue') AS REAL)) FROM events e
+                             WHERE e.session_id = sessions.id AND e.type = 'track' AND typeof(json_extract(e.properties, '$.revenue')) IN ('integer', 'real')), 0),
+         orders = (SELECT count(*) FROM events e
+                   WHERE e.session_id = sessions.id AND e.type = 'track' AND typeof(json_extract(e.properties, '$.revenue')) IN ('integer', 'real'))`,
+    )
+    sql.exec('CREATE INDEX IF NOT EXISTS sessions_started ON sessions (started_at)')
+  },
 ]
 
 /** Organization-wide analytics settings, kept in the store's own storage. */
@@ -370,7 +396,9 @@ export class AudienceStore extends DurableObject<Env> {
     const now = Date.now()
     this.ctx.storage.transactionSync(() => {
       this.sql.exec('DELETE FROM events WHERE occurred_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
-      this.sql.exec('DELETE FROM sessions WHERE ended_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
+      // Visits outlive events (the Overview compares 90 days with the 90 before), but not their IP addresses.
+      this.sql.exec('DELETE FROM sessions WHERE ended_at < ?', daysAgo(SESSION_RETENTION_DAYS, now))
+      this.sql.exec('UPDATE sessions SET ip = NULL WHERE ip IS NOT NULL AND ended_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
       const stale = this.all<{ id: string }>(
         "SELECT id FROM people WHERE kind = 'lead' AND email IS NULL AND phone IS NULL AND last_seen_at < ?",
         daysAgo(ANONYMOUS_RETENTION_DAYS, now),
@@ -444,10 +472,30 @@ export class AudienceStore extends DurableObject<Env> {
       name,
       item.at,
     )
+    this.creditRevenue(person.id, item, visit.id)
     const current = this.one<{ metrics: string }>('SELECT metrics FROM people WHERE id = ?', person.id)!
     const metrics = applyEvent(JSON.parse(current.metrics) as Metrics, item, { newSession: visit.created })
     this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?), metrics = ? WHERE id = ?', item.at, JSON.stringify(metrics), person.id)
     return true
+  }
+
+  /**
+   * Revenue (a numeric "revenue" property) counts on the visit it happened in. A server call has no visit, so its
+   * order counts on the person's latest visit from the 30 days before: that's the visit that brought them.
+   */
+  private creditRevenue(personId: string, item: CollectItem, visitId: string | null) {
+    if (item.type !== 'track' || item.properties.revenue === undefined || item.properties.revenue === '') return
+    const revenue = Number(item.properties.revenue)
+    if (!Number.isFinite(revenue)) return
+    const target =
+      visitId ??
+      this.one<{ id: string }>(
+        'SELECT id FROM sessions WHERE person_id = ? AND started_at <= ? AND started_at >= ? ORDER BY started_at DESC LIMIT 1',
+        personId,
+        item.at,
+        new Date(Date.parse(item.at) - 30 * DAY).toISOString(),
+      )?.id
+    if (target) this.sql.exec('UPDATE sessions SET revenue = revenue + ?, orders = orders + 1 WHERE id = ?', revenue, target)
   }
 
   /**
@@ -783,6 +831,82 @@ export class AudienceStore extends DurableObject<Env> {
       }
     })
     return n
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Overview (overview.ts). Results are kept a minute: the page asks for the same thing on every tab switch.
+
+  private overviewCache = new Map<string, { at: number; value: unknown }>()
+
+  private cached<T>(key: string, compute: () => T): T {
+    const hit = this.overviewCache.get(key)
+    if (hit && Date.now() - hit.at < 60_000) return hit.value as T
+    const value = compute()
+    if (this.overviewCache.size > 100) this.overviewCache.clear()
+    this.overviewCache.set(key, { at: Date.now(), value })
+    return value
+  }
+
+  /** Totals for the period and the one before, a series for the chart and sparklines, and visitors right now. */
+  async trafficOverview(q: { range: OverviewRange; tzOffset: number; domain?: string; filters: OverviewFilter[] }) {
+    return this.cached(`o|${JSON.stringify(q)}`, () => {
+      const p = periodOf(q.range, q.tzOffset)
+      type Totals = { visitors: number; visits: number; pageviews: number; bounces: number; seconds: number; revenue: number; orders: number }
+      type Bucket = Totals & { b: string }
+      const kpis = (t: Totals) => ({
+        visitors: t.visitors,
+        visits: t.visits,
+        pageviews: t.pageviews,
+        bounceRate: t.visits ? t.bounces / t.visits : 0,
+        avgDuration: t.visits ? Math.round(t.seconds / t.visits) : 0,
+        revenue: Math.round(t.revenue * 100) / 100,
+        orders: t.orders,
+      })
+      const totals = (from: string, to: string) => {
+        const w = sessionWhere(from, to, q.domain, q.filters)
+        const t = totalsQuery(w)
+        return kpis(this.one<Totals>(t.sql, ...t.args)!)
+      }
+      const series = (from: string, to: string, labels: string[]) => {
+        const s = seriesQuery(sessionWhere(from, to, q.domain, q.filters), p.bucket, p.shift)
+        const rows = new Map(this.all<Bucket>(s.sql, ...s.args).map((r) => [r.b, r]))
+        return labels.map((b) => ({ t: b, ...kpis(rows.get(b) ?? { visitors: 0, visits: 0, pageviews: 0, bounces: 0, seconds: 0, revenue: 0, orders: 0 }) }))
+      }
+      const since = new Date(Date.now() - 5 * 60_000).toISOString()
+      const live = this.one<{ n: number }>(
+        `SELECT count(DISTINCT person_id) AS n FROM events WHERE occurred_at >= ? AND type IN ('page', 'track')${q.domain ? " AND (domain = ? OR substr(domain, -length(?) - 1) = '.' || ?)" : ''}`,
+        since,
+        ...(q.domain ? [q.domain, q.domain, q.domain] : []),
+      )!.n
+      return {
+        range: q.range,
+        bucket: p.bucket,
+        from: p.from,
+        to: p.to,
+        current: totals(p.from, p.to),
+        previous: totals(p.prevFrom, p.prevTo),
+        series: series(p.from, p.to, p.buckets),
+        previousSeries: series(p.prevFrom, p.prevTo, p.prevBuckets),
+        live,
+      }
+    })
+  }
+
+  /** The top values of each dimension (`limit` each), or of one (`dimension`, for View all). Shares are of all visitors. */
+  async trafficBreakdown(q: { range: OverviewRange; tzOffset: number; domain?: string; filters: OverviewFilter[]; dimensions: Dimension[]; limit: number }) {
+    return this.cached(`b|${JSON.stringify(q)}`, () => {
+      const p = periodOf(q.range, q.tzOffset)
+      const where = sessionWhere(p.from, p.to, q.domain, q.filters)
+      const t = totalsQuery(where)
+      const total = this.one<{ visitors: number; visits: number }>(t.sql, ...t.args)!
+      type Row = { key: string; visitors: number; visits: number; count?: number; revenue?: number; orders?: number; converted?: number }
+      const lists: Partial<Record<Dimension, Row[]>> = {}
+      for (const dim of q.dimensions) {
+        const b = breakdownQuery(dim, where, q.limit, p.from, p.to)
+        lists[dim] = this.all<Row>(b.sql, ...b.args).map((r) => ({ ...r, revenue: r.revenue === undefined ? undefined : Math.round(r.revenue * 100) / 100 }))
+      }
+      return { visitors: total.visitors, visits: total.visits, lists }
+    })
   }
 
   // -------------------------------------------------------------------------------------------------------------

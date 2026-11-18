@@ -17,6 +17,8 @@ import type { AnalyticsSettings, EventQuery, ListQuery, Viewer } from './store'
 import { METRICS, type MetricKey } from './types'
 import type { CollectBatch, FeedEvent, Filter, Person, PersonDetail, PersonFields, SegmentIcon, VisitContext } from './types'
 
+type AudienceStub = import('./store').AudienceStore
+
 const store = (env: Env, organizationId: string) => env.AUDIENCE.get(env.AUDIENCE.idFromName(organizationId))
 
 /** The organization's store and who's looking, for any member. */
@@ -88,6 +90,16 @@ export async function sendTestEvent(env: Env, actor: Actor, organizationId: stri
     ],
   }
   return s.collect(batch)
+}
+
+// Overview (overview.ts): traffic from visits. Any member can see it.
+
+export async function trafficOverview(env: Env, actor: Actor, organizationId: string, q: Parameters<AudienceStub['trafficOverview']>[0]) {
+  return (await reader(env, actor, organizationId)).s.trafficOverview(q)
+}
+
+export async function trafficBreakdown(env: Env, actor: Actor, organizationId: string, q: Parameters<AudienceStub['trafficBreakdown']>[0]) {
+  return (await reader(env, actor, organizationId)).s.trafficBreakdown(q)
 }
 
 // Funnels: any member can see them; creating, changing and deleting needs audience.manage, like segments.

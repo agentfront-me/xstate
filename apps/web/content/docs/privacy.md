@@ -166,8 +166,8 @@ personal data from the EU, UK or Switzerland, we rely on the European Commission
   previous versions of a file are kept, each for 30 days after it was replaced. Email in Trash is deleted for good 30
   days after it was moved there, together with its stored copy.
 - **Search indexes:** removed after the source item is deleted, usually within an hour.
-- **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events and
-  visit records (including IP addresses) after about 90 days; other audience records until the organization
+- **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events after about
+  90 days; visit records after about 180 days, with their IP addresses removed after 90 days; other audience records until the organization
   deletes them.
 - **Import records:** see section 5.
 - **Logs and delivery records:** typically up to 90 days, longer when needed to investigate abuse or security

@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { ConfirmDialog } from '../storage/dialogs'
 import { FunnelDialog, FunnelView } from './Funnels'
+import { Overview } from './Overview'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
@@ -24,6 +25,8 @@ import {
   type FeedEvent,
   type Funnel,
   type FunnelRange,
+  type OverviewFilter,
+  type OverviewRange,
   TYPE_LABEL,
   ago,
   analyticsApi,
@@ -35,7 +38,17 @@ import {
   whoLabel,
 } from './api'
 
-export type AnalyticsSearch = { view?: 'install'; type?: EventType; q?: string; event?: number; funnel?: string; range?: FunnelRange }
+/** No view (and no funnel) is the Overview; `period` and `filters` are its range and filter chips. */
+export type AnalyticsSearch = {
+  view?: 'install' | 'live'
+  type?: EventType
+  q?: string
+  event?: number
+  funnel?: string
+  range?: FunnelRange
+  period?: OverviewRange
+  filters?: OverviewFilter[]
+}
 
 type Dialog = { kind: 'new' } | { kind: 'edit'; funnel: Funnel } | { kind: 'delete'; funnel: Funnel }
 
@@ -98,7 +111,11 @@ function Analytics({ orgId, search, defaultDomain }: { orgId: string; search: An
           {canManage && <button className="ghost" title="New funnel" aria-label="New funnel" onClick={() => setDialog({ kind: 'new' })}><Icon name="plus" size={16} /></button>}
         </div>
         <nav className="s-sections">
-          <button className="s-section" aria-current={!install && !funnel ? 'true' : undefined} onClick={() => go({ type: search.type, q: search.q })} disabled={!connected}>
+          <button className="s-section" aria-current={!install && !funnel && search.view !== 'live' ? 'true' : undefined} onClick={() => go({ period: search.period })} disabled={!connected}>
+            <span className="s-tile"><Icon name="layout-dashboard" size={15} /></span>
+            <span className="s-section-name">Overview</span>
+          </button>
+          <button className="s-section" aria-current={search.view === 'live' && !install ? 'true' : undefined} onClick={() => go({ view: 'live' })} disabled={!connected}>
             <span className="s-tile"><Icon name="activity" size={15} /></span>
             <span className="s-section-name">Live events</span>
             {connected && <span className="a-live-dot" aria-hidden="true" />}
@@ -144,7 +161,7 @@ function Analytics({ orgId, search, defaultDomain }: { orgId: string; search: An
           </div>
         </section>
       ) : install ? (
-        <Install orgId={orgId} status={status.data} domain={domain ?? defaultDomain} onOpenLive={() => go({})} />
+        <Install orgId={orgId} status={status.data} domain={domain ?? defaultDomain} onOpenLive={() => go({ view: 'live' })} />
       ) : funnel ? (
         <FunnelView
           key={funnel}
@@ -157,8 +174,17 @@ function Analytics({ orgId, search, defaultDomain }: { orgId: string; search: An
           onEdit={(f) => setDialog({ kind: 'edit', funnel: f })}
           onDelete={(f) => setDialog({ kind: 'delete', funnel: f })}
         />
-      ) : (
+      ) : search.view === 'live' ? (
         <LiveEvents orgId={orgId} domain={domain} search={search} go={go} />
+      ) : (
+        <Overview
+          orgId={orgId}
+          domain={domain}
+          search={{ period: search.period, filters: search.filters }}
+          setSearch={(next) => go({ period: next.period, filters: next.filters?.length ? next.filters : undefined }, true)}
+          onOpenLive={() => go({ view: 'live' })}
+          onInstall={() => go({ view: 'install' })}
+        />
       )}
 
       {dialog?.kind === 'new' && <FunnelDialog orgId={orgId} onSave={(input) => saveFunnel(input)} onClose={() => setDialog(null)} />}

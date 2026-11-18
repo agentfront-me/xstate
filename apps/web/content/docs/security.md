@@ -191,8 +191,9 @@ A personal token lets your own server send email from mailboxes you can send fro
   visitor can't pass themselves off as one of your users from the browser.
 - Browser events are rate limited per visitor IP address, and bots, crawlers and automated browsers are dropped.
 - For each visit xstate keeps the visitor's IP address, the location Cloudflare derives from it (country, region,
-  city, coordinates rounded to about 10 km), their network provider and their browser and device. Events and
-  visits are deleted after 90 days, and anonymous visitors after 30 days without a visit. An organization can turn
+  city, coordinates rounded to about 10 km), their network provider and their browser and device. Events are
+  deleted after 90 days and visits after 180 (their IP addresses after 90), and anonymous visitors after 30 days
+  without a visit. An organization can turn
   off keeping IP addresses (Analytics → Install code), which also removes the ones already kept.
 - Any member can watch the event feed; changing analytics settings needs the permission to manage users.
   Connected AI apps with contacts access can read events and funnels, never change settings or funnels.
@@ -227,7 +228,9 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 - **November 18, 2026:** Website analytics records each visit's IP address, location, network and device, its
   campaign and referrer, and time on page. Bots are dropped, and Do Not Track and Global Privacy Control are
-  honoured by default. Organizations can turn off keeping IP addresses. Mail with people in the audience is
+  honoured by default. Organizations can turn off keeping IP addresses. The Overview keeps visits
+  for 180 days (IP addresses still go after 90) and shows referring sites with letters, not favicons fetched from a
+  third party. Mail with people in the audience is
   recorded as email events (mailbox and address only), visible to members who can read that mailbox.
 - **November 18, 2026:** Every mailbox's mail and calendars are kept in its own store; mailboxes no longer have
   a password of their own (mail apps over IMAP or SMTP aren't supported). Mail for a domain that's turned off is

@@ -4,6 +4,7 @@
 import { z } from 'zod'
 import * as audience from '../audience/service'
 import { FUNNEL_RANGES, funnelInput } from '../audience/funnels'
+import { DIMENSIONS, OVERVIEW_RANGES, overviewFilter } from '../audience/overview'
 import { filter, personFields, SEGMENT_ICONS } from '../audience/types'
 import { defineOperation } from './define'
 
@@ -252,6 +253,62 @@ export const analyticsUpdateSettings = defineOperation({
   run: ({ env, actor }, { organizationId, ...patch }) => audience.updateAnalyticsSettings(env, actor, organizationId, patch),
 })
 
+// Overview (audience/overview.ts)
+
+/** Filter chips arrive as JSON in the query string: [{ "dim": "channel", "value": "Paid search" }]. */
+const filtersParam = z
+  .string()
+  .max(4000)
+  .transform((raw, ctx) => {
+    try {
+      return z.array(overviewFilter).max(6).parse(JSON.parse(raw))
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'filters must be a JSON list of { dim, value }' })
+      return z.NEVER
+    }
+  })
+
+const overviewInput = {
+  organizationId: id,
+  range: z.enum(OVERVIEW_RANGES).default('30'),
+  /** Minutes behind UTC, as Date.getTimezoneOffset() gives it: days and hours are the viewer's. */
+  tzOffset: z.coerce.number().int().min(-840).max(840).default(0),
+  domain: domain.optional(),
+  filters: filtersParam.optional(),
+}
+
+export const analyticsOverview = defineOperation({
+  name: 'analytics_overview',
+  description:
+    'Website traffic for today or the last 7, 30 or 90 days, compared with the period before: visitors, visits, page views, ' +
+    'bounce rate, average visit length, revenue and orders, per day (per hour for today), and visitors in the last 5 minutes. ' +
+    'filters narrows it, e.g. [{"dim":"channel","value":"Paid search"}] (dims: ' + DIMENSIONS.join(', ') + ').',
+  input: z.object(overviewInput),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/overview' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, { organizationId, filters, ...q }) => audience.trafficOverview(env, actor, organizationId, { ...q, filters: filters ?? [] }),
+})
+
+export const analyticsBreakdown = defineOperation({
+  name: 'analytics_breakdown',
+  description:
+    'The top values of one or more dimensions for a period, with visitors and visits (and revenue, orders and converted ' +
+    'visits for visit dimensions): channels, referrers, campaigns (source|medium|campaign), pages, landing and exit pages, ' +
+    'countries, regions and cities (value|country), devices, browsers, systems, events.',
+  input: z.object({
+    ...overviewInput,
+    dimensions: z
+      .string()
+      .max(300)
+      .transform((s) => s.split(',').map((d) => d.trim()).filter(Boolean))
+      .pipe(z.array(z.enum(DIMENSIONS)).min(1).max(DIMENSIONS.length)),
+    limit: z.coerce.number().int().min(1).max(200).default(8),
+  }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/breakdown' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, { organizationId, filters, ...q }) => audience.trafficBreakdown(env, actor, organizationId, { ...q, filters: filters ?? [] }),
+})
+
 // Funnels (audience/funnels.ts)
 
 const funnelRange = z.coerce
@@ -362,6 +419,8 @@ export const audienceOperations = [
   analyticsEvent,
   analyticsTestEvent,
   analyticsUpdateSettings,
+  analyticsOverview,
+  analyticsBreakdown,
   analyticsFunnels,
   analyticsFunnelResult,
   analyticsFunnelOptions,

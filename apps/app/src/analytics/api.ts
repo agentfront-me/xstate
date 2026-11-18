@@ -66,6 +66,40 @@ export const analyticsApi = {
   deleteFunnel: (org: string, id: string) => api('DELETE', `/analytics/orgs/${org}/funnels/${id}`),
 }
 
+// Overview (api audience/overview.ts)
+
+export type OverviewRange = 'today' | '7' | '30' | '90'
+export type Dimension = 'channel' | 'referrer' | 'campaign' | 'page' | 'landing' | 'exit' | 'country' | 'region' | 'city' | 'device' | 'browser' | 'os' | 'event'
+export type OverviewFilter = { dim: Dimension; value: string }
+export type Kpis = { visitors: number; visits: number; pageviews: number; bounceRate: number; avgDuration: number; revenue: number; orders: number }
+export type OverviewData = {
+  range: OverviewRange
+  bucket: 'day' | 'hour'
+  from: string
+  to: string
+  current: Kpis
+  previous: Kpis
+  series: (Kpis & { t: string })[]
+  previousSeries: (Kpis & { t: string })[]
+  live: number
+}
+export type BreakdownRow = { key: string; visitors: number; visits: number; count?: number; revenue?: number; orders?: number; converted?: number }
+export type BreakdownData = { visitors: number; visits: number; lists: Partial<Record<Dimension, BreakdownRow[]>> }
+export type OverviewQuery = { range: OverviewRange; domain?: string; filters: OverviewFilter[] }
+
+const overviewParams = (q: OverviewQuery) => ({
+  range: q.range,
+  tzOffset: new Date().getTimezoneOffset(),
+  domain: q.domain,
+  filters: q.filters.length ? JSON.stringify(q.filters) : undefined,
+})
+
+export const overviewApi = {
+  overview: (org: string, q: OverviewQuery) => api<OverviewData>('GET', `/analytics/orgs/${org}/overview${qs(overviewParams(q))}`),
+  breakdown: (org: string, q: OverviewQuery, dimensions: Dimension[], limit: number) =>
+    api<BreakdownData>('GET', `/analytics/orgs/${org}/breakdown${qs({ ...overviewParams(q), dimensions: dimensions.join(','), limit })}`),
+}
+
 export const EMAIL_STEPS: { name: string; label: string }[] = [
   { name: '$email_received', label: 'Email received' },
   { name: '$email_replied', label: 'Email replied' },

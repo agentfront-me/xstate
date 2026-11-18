@@ -52,6 +52,17 @@ const users = createRoute({
 })
 
 const EVENT_TYPES = ['page', 'track', 'identify', 'email'] as const
+const DIMENSIONS = ['channel', 'referrer', 'campaign', 'page', 'landing', 'exit', 'country', 'region', 'city', 'device', 'browser', 'os', 'event'] as const
+
+/** The Overview's filter chips from the URL: at most six { dim, value }, anything else dropped. */
+function filtersOf(raw: unknown): AnalyticsSearch['filters'] {
+  if (!Array.isArray(raw)) return undefined
+  const list = raw
+    .filter((f): f is { dim: (typeof DIMENSIONS)[number]; value: string } => !!f && DIMENSIONS.includes(f.dim) && typeof f.value === 'string' && f.value.length <= 500)
+    .slice(0, 6)
+    .map((f) => ({ dim: f.dim, value: f.value }))
+  return list.length ? list : undefined
+}
 
 const analytics = createRoute({
   getParentRoute: () => root,
@@ -59,11 +70,13 @@ const analytics = createRoute({
   validateSearch: (raw: Record<string, unknown>): AnalyticsSearch => {
     const event = Number(raw.event)
     return {
-      view: raw.view === 'install' ? 'install' : undefined,
+      view: raw.view === 'install' || raw.view === 'live' ? raw.view : undefined,
       type: EVENT_TYPES.includes(raw.type as (typeof EVENT_TYPES)[number]) ? (raw.type as AnalyticsSearch['type']) : undefined,
       q: typeof raw.q === 'string' && raw.q.trim() ? raw.q.slice(0, 200) : undefined,
       event: Number.isInteger(event) && event > 0 ? event : undefined,
       funnel: str(raw.funnel),
+      period: raw.period === 'today' || raw.period === '7' || raw.period === '30' || raw.period === '90' ? raw.period : undefined,
+      filters: filtersOf(raw.filters),
       range: raw.range === 7 || raw.range === 90 || raw.range === 30 ? raw.range : undefined,
     }
   },
