@@ -23,6 +23,7 @@ import * as eventsDb from '../db/email-events'
 import * as sendingDb from '../db/sending'
 import { notifySuspension } from '../emails/notices'
 import { recordDeliveryEvent } from '../emails/service'
+import { recordEmailActivity } from '../audience/email'
 import { evaluateSender } from '../mailserver'
 import { isSnsUrl, verifySnsMessage, type SnsMessage } from './sns'
 
@@ -133,6 +134,21 @@ export async function handleSesWebhook(c: Context<{ Bindings: Env }>): Promise<R
   if (writes.length) await c.env.DB.batch(writes)
   await logStatus(kind === 'bounce' ? 'bounced' : 'complained', recipients)
   await logToStore(c.env, owner?.mailbox_id ?? null, kind === 'bounce' ? 'bounced' : 'complained', n.mail?.messageId ?? null, recipients, subtype)
+  // Analytics: the bounce or complaint on the people with those addresses (audience/email.ts).
+  if (owner) {
+    const mailbox = await mailboxesDb.find(c.env.DB, owner.mailbox_id)
+    if (mailbox) {
+      await recordEmailActivity(c.env, owner.organization_id, {
+        kind: kind === 'bounce' ? 'bounced' : 'complained',
+        addresses: recipients.map((r) => r.address),
+        mailboxId: mailbox.id,
+        mailbox: mailbox.address,
+        emailId: null,
+        at: now,
+        detail: subtype,
+      })
+    }
+  }
 
   // Suspend the sender if this pushed it over the line. A failure here mustn't make SNS redeliver the event.
   let suspended: string | null = null

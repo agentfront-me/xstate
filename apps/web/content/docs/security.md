@@ -184,6 +184,23 @@ A personal token lets your own server send email from mailboxes you can send fro
   and the delivery status for 30 days, never the body or the attachments. No tracking of opens or clicks is added
   to your email.
 
+## Website analytics
+
+- The tracking snippet uses the **publishable key**, which can only add visitors and events, never read them.
+  Saying who a visitor is (`identify` with a user id) needs a hash made on your server with the secret key, so a
+  visitor can't pass themselves off as one of your users from the browser.
+- Browser events are rate limited per visitor IP address, and bots, crawlers and automated browsers are dropped.
+- For each visit xstate keeps the visitor's IP address, the location Cloudflare derives from it (country, region,
+  city, coordinates rounded to about 10 km), their network provider and their browser and device. Events and
+  visits are deleted after 90 days, and anonymous visitors after 30 days without a visit. An organization can turn
+  off keeping IP addresses (Analytics → Install code), which also removes the ones already kept.
+- Any member can watch the event feed; changing analytics settings needs the permission to manage users.
+  Connected AI apps with contacts access can read events and funnels, never change settings or funnels.
+- Mail with people in the audience is recorded as email events that name the mailbox and the person's address,
+  never the subject or body. A member sees only the email events of mailboxes they can read, as with the mail.
+- The snippet sends nothing when the browser asks not to be tracked (Do Not Track or Global Privacy Control),
+  unless the site turns that off, or when the page is run by automation.
+
 ## Keys and webhooks
 
 - **Organization secret keys** are looked up by a hash and stored encrypted. Only owners and admins can view or
@@ -208,6 +225,10 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** Website analytics records each visit's IP address, location, network and device, its
+  campaign and referrer, and time on page. Bots are dropped, and Do Not Track and Global Privacy Control are
+  honoured by default. Organizations can turn off keeping IP addresses. Mail with people in the audience is
+  recorded as email events (mailbox and address only), visible to members who can read that mailbox.
 - **November 18, 2026:** Every mailbox's mail and calendars are kept in its own store; mailboxes no longer have
   a password of their own (mail apps over IMAP or SMTP aren't supported). Mail for a domain that's turned off is
   dropped.

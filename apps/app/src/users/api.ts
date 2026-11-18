@@ -22,11 +22,21 @@ export type Person = {
   lastSeenAt: string
   createdAt: string
   updatedAt: string
+  /** Worked out by xstate from activity: first/last touch, location, device, counters (api audience/metrics.ts). */
+  metrics?: Attributes
   /** Contacts: the member whose contact it is, or null when it's shared with the whole organization. */
   owner?: string | null
 }
 
-export type AudienceEvent = { id: number; name: string; properties: Record<string, unknown>; url: string | null; occurredAt: string }
+export type AudienceEvent = {
+  id: number
+  type?: 'page' | 'track' | 'identify' | 'email'
+  name: string
+  properties: Record<string, unknown>
+  url: string | null
+  sessionId?: string | null
+  occurredAt: string
+}
 
 export type DateField = 'last_seen' | 'first_seen' | 'created'
 export type TextField = 'name' | 'email' | 'phone' | 'source' | 'domain'
@@ -36,6 +46,8 @@ export type Condition =
   | { kind: 'type'; op: 'is' | 'is_not'; value: PersonKind }
   | { kind: 'text'; field: TextField; op: 'is' | 'is_not' | 'contains' | 'is_set' | 'not_set'; value: string }
   | { kind: 'attribute'; key: string; op: AttrOp; value: string | number }
+  /** What xstate works out about a person (./metrics.ts): first channel, country, visits, revenue… */
+  | { kind: 'metric'; key: string; op: AttrOp; value: string | number }
   | { kind: 'event'; name: string; op: 'at_least' | 'did_not'; count: number; days: number }
 export type Filter = { match: 'all' | 'any'; conditions: Condition[] }
 

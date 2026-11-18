@@ -208,6 +208,10 @@ Read, or Read and change.
 | `audience_create_segment` | read and change | Save a segment: a name and a filter (see audience_count for the filter shape). |
 | `audience_update_segment` | read and change | Rename a segment or replace its filter. |
 | `audience_delete_segment` | read and change (deletes) | Delete a saved segment. |
+| `analytics_events` | read | Website and email events, newest first, with who did them: page views (type page), your own events (track), identify calls and email activity ($email_received, $email_sent, $email_replied, $email_bounced, $email_complained; only for mailboxes you can read). |
+| `analytics_event` | read | One event in full, with the visit it belongs to (source, device, location). |
+| `analytics_funnels` | read | Saved funnels (ordered steps people take), each with its steps, conversion window and conversion over the last 30 days. |
+| `analytics_funnel_result` | read | How many people reached each step of a funnel over the last 7, 30 or 90 days, with drop-off and median time between steps. |
 
 ### Setup
 

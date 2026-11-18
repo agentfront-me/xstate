@@ -1,0 +1,97 @@
+/* Analytics: the side list, Connect analytics / Install code, the live feed and the event panel. Builds on the
+   Storage and Users layout (storage.css, users.css): s-side, s-main, s-table, u-panel, u-code. */
+
+/* Side list: Install code sits at the foot, as in the design. */
+.a-side .s-sections { flex: 1; }
+.a-side-foot { padding: 8px; border-top: 1px solid var(--border); }
+.a-side .s-section:disabled { opacity: 0.5; cursor: default; }
+.a-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-hi); flex-shrink: 0; margin-left: auto; animation: a-pulse 2s ease-in-out infinite; }
+@keyframes a-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .a-live-dot, .a-badge-dot, .a-wait-dot { animation: none; } }
+
+/* Connect analytics / Install code */
+.a-install { max-width: 620px; margin: 0 auto; padding: 48px 24px 56px; display: flex; flex-direction: column; gap: 14px; }
+.a-install-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.a-install-head h1 { margin: 0; font-size: 20px; font-weight: 500; color: var(--text-hi); letter-spacing: -0.01em; }
+.a-install-head p { margin: 0; line-height: 1.55; }
+.a-install-icon { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; color: var(--text-hi); }
+.a-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.a-card .grow { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.a-card p { margin: 0; line-height: 1.45; }
+.a-card-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; color: var(--text-toned); flex-shrink: 0; }
+.a-install-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.a-install .u-code pre { max-height: 340px; overflow: auto; }
+.a-install > p.small { margin: -4px 0 0; line-height: 1.5; }
+.a-wait { margin-top: 8px; }
+.a-wait-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; animation: a-pulse 1.6s ease-in-out infinite; }
+.a-wait .a-live-dot { margin-left: 0; }
+.a-privacy { background: transparent; }
+
+/* Live events */
+.a-crumb { display: inline-flex; align-items: center; gap: 8px; }
+.a-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.a-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-hi); animation: a-pulse 2s ease-in-out infinite; }
+.a-badge.is-paused .a-badge-dot { background: var(--text-dim); animation: none; }
+.a-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.a-toolbar .s-search { flex: 0 1 260px; min-width: 140px; }
+.a-row { grid-template-columns: 84px minmax(0, 1.5fr) minmax(0, 1.2fr) minmax(0, 2.4fr) 76px; padding: 9px 16px; cursor: default; }
+.a-row.s-row-head { padding: 9px 16px; }
+.a-row.is-selected { background: var(--s-selected); }
+.a-type { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 99px; font-size: 11px; white-space: nowrap; background: var(--bg-muted); color: var(--text-hi); border: 1px solid var(--border); }
+.a-type-identify, .a-type-email { background: transparent; color: var(--text-toned); }
+
+/* Event panel: over the right of the table, under the header. */
+.a-panel { width: 380px; }
+.a-json { margin: 0; padding: 16px 18px; font-size: 12px; line-height: 1.6; color: var(--text-toned); white-space: pre-wrap; word-break: break-word; }
+.a-panel-foot { display: flex; gap: 8px; }
+
+/* Funnels */
+.a-new-funnel .s-section-name { color: var(--text-muted); }
+.a-side-note { padding: 4px 12px; margin: 0; }
+.a-range { width: auto; }
+.a-funnel { padding: 20px 24px 32px; display: flex; flex-direction: column; gap: 22px; max-width: 1100px; }
+.a-overall { display: flex; flex-direction: column; gap: 4px; }
+.a-big { font-size: 34px; font-weight: 500; letter-spacing: -0.02em; color: var(--text-hi); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.a-bars { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 12px; }
+.a-bar-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.a-bar-num { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.a-bar-track { height: 220px; border-radius: 6px; background: var(--bg-muted); display: flex; align-items: flex-end; overflow: hidden; }
+.a-bar-fill { width: 100%; background: var(--text-hi); border-radius: 6px 6px 0 0; transition: height 0.3s ease; }
+.a-bar-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-steps { border: 1px solid var(--border); border-radius: 10px; }
+.a-step-row { grid-template-columns: minmax(0, 2.4fr) repeat(4, minmax(0, 1fr)); padding: 10px 16px; font-variant-numeric: tabular-nums; }
+.a-step-row.s-row-head { padding: 9px 16px; }
+.a-step-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.a-step-n { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-toned); flex-shrink: 0; }
+.a-step-edit .a-step-n { margin-right: 2px; }
+.a-window .seg-days { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .a-bar-fill { transition: none; } }
+
+/* storage.css hides a Storage table's 2nd, 3rd and 5th columns on narrow screens; here they're Event, User and
+   Time, which stay. Properties go first, then User. */
+@media (max-width: 1100px) {
+  /* Dropped goes first: it's the step before's people minus this one's. */
+  .s-row.a-step-row { grid-template-columns: minmax(0, 1fr) 64px 104px 92px; }
+  .s-row.a-step-row > :nth-child(2) { display: block; }
+  .s-row.a-step-row > :nth-child(4) { display: none; }
+  .a-bar-track { height: 160px; }
+  .s-row.a-row { grid-template-columns: 76px minmax(0, 1.5fr) minmax(0, 1.2fr) minmax(0, 1.6fr) 64px; }
+  .s-row.a-row > :nth-child(2) { display: block; }
+}
+@media (max-width: 900px) {
+  .s-row.a-row { grid-template-columns: 76px minmax(0, 1.5fr) minmax(0, 1.2fr) 64px; }
+  .s-row.a-row > :nth-child(4) { display: none; }
+}
+@media (max-width: 680px) {
+  .s-row.a-step-row { grid-template-columns: minmax(0, 1fr) 64px 104px; }
+  .s-row.a-step-row > :nth-child(3) { display: block; }
+  .s-row.a-step-row > :nth-child(5) { display: none; }
+  .a-funnel { padding: 16px; }
+  .a-bars { gap: 6px; }
+  .s-row.a-row { grid-template-columns: 76px minmax(0, 1fr) 60px; }
+  .s-row.a-row > :nth-child(3) { display: none; }
+  .s-row.a-row > :nth-child(5) { display: block; }
+  .a-panel { width: 100%; top: 0; }
+  .a-install { padding: 24px 16px 40px; }
+  .a-card { flex-wrap: wrap; }
+}

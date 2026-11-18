@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { ChevronRight, Mail } from 'lucide-react-native'
 import { ScrollView, Text, View } from 'react-native'
 import { useAccount } from '@/lib/account'
+import { profileSections } from '@/lib/analytics'
 import { api, errorMessage } from '@/lib/api'
 import { formatTime, initial, label, longDate, personName, relative } from '@/lib/format'
 import type { PersonDetail } from '@/lib/types'
@@ -63,6 +64,22 @@ export default function UserScreen() {
               </Row>
             ))}
           </Card>
+
+          {profileSections(p.metrics ?? {}).map((section) => (
+            <View key={section.title}>
+              <SectionLabel>{section.title}</SectionLabel>
+              <Card>
+                {section.rows.map(([k, v]) => (
+                  <Row key={k}>
+                    <Text style={{ color: c.muted, fontSize: 15 }}>{k}</Text>
+                    <Text numberOfLines={1} style={{ flex: 1, color: c.text, fontSize: 15, textAlign: 'right' }}>
+                      {v}
+                    </Text>
+                  </Row>
+                ))}
+              </Card>
+            </View>
+          ))}
 
           <SectionLabel>Conversations</SectionLabel>
           {detail.data.emails?.length ? (

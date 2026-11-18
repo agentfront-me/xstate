@@ -9,6 +9,7 @@ import { useAccount } from '../lib/account'
 import { errorMessage, initials } from '../lib/core'
 import type { MessageSummary } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
+import { profileSections } from './metrics'
 import { PersonDialog } from './PersonDialog'
 import {
   type AudienceEvent,
@@ -106,6 +107,15 @@ export function PersonPanel({
               <Row label="Last seen" value={relative(p.lastSeenAt)} title={new Date(p.lastSeenAt).toLocaleString()} />
             </dl>
 
+            {profileSections(p.metrics ?? {}).map((section) => (
+              <section className="u-section" key={section.title}>
+                <h3 className="u-label">{section.title}</h3>
+                <dl className="u-kv">
+                  {section.rows.map((r) => <Row key={r.label} label={r.label} value={r.value} code={r.mono} />)}
+                </dl>
+              </section>
+            ))}
+
             <section className="u-section">
               <h3 className="u-label">Segments</h3>
               {data.segments.length ? (
@@ -178,11 +188,12 @@ export function PersonPanel({
   )
 }
 
-function Row({ label, value, mono, title }: { label: string; value: string | null | undefined; mono?: boolean; title?: string }) {
+/** `mono`: label and value in monospace (attributes); `code`: only the value (paths). */
+function Row({ label, value, mono, code, title }: { label: string; value: string | null | undefined; mono?: boolean; code?: boolean; title?: string }) {
   return (
     <div className="u-kv-row">
       <dt className={mono ? 'mono' : undefined}>{label}</dt>
-      <dd className={`${mono ? 'mono ' : ''}${value ? '' : 'dim'}`} title={title ?? value ?? undefined}>{value || '—'}</dd>
+      <dd className={`${mono || code ? 'mono ' : ''}${value ? '' : 'dim'}`} title={title ?? value ?? undefined}>{value || '—'}</dd>
     </div>
   )
 }
@@ -219,6 +230,8 @@ export function Avatar({ person, size = 28, orgId }: { person: Person; size?: nu
 // Activity
 
 const PAGEVIEW = '$pageview'
+/** Page view properties the timeline line already says (or that aren't worth a chip). */
+const PAGE_KEYS = new Set(['title', 'path', 'search', 'hash'])
 
 function describe(e: AudienceEvent): { icon: IconName; text: string } {
   if (e.name === PAGEVIEW) {
@@ -230,6 +243,11 @@ function describe(e: AudienceEvent): { icon: IconName; text: string } {
       // Keep whatever was sent.
     }
     return { icon: 'eye', text: `Viewed ${path || 'a page'}` }
+  }
+  if (e.name === '$identify') return { icon: 'user', text: 'Identified' }
+  if (e.name === '$outbound_click') {
+    const domain = typeof e.properties.domain === 'string' ? e.properties.domain : 'another site'
+    return { icon: 'external-link', text: `Clicked a link to ${domain}` }
   }
   const words = e.name.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase()
   const text = words.charAt(0).toUpperCase() + words.slice(1)
@@ -268,7 +286,7 @@ function Timeline({ person, events, emails }: { person: Person; events: Audience
         }
         const e = item.event
         const d = describe(e)
-        const props = Object.entries(e.properties).filter(([k, v]) => v !== undefined && v !== null && v !== '' && !(e.name === PAGEVIEW && k === 'title'))
+        const props = Object.entries(e.properties).filter(([k, v]) => v !== undefined && v !== null && v !== '' && !(e.name === PAGEVIEW && PAGE_KEYS.has(k)) && !(e.name === '$outbound_click' && k === 'domain'))
         return (
           <li key={item.key}>
             <span className="u-dot"><Icon name={d.icon} size={13} /></span>

@@ -1,10 +1,10 @@
-// The side menu: the account, the domain switcher, the four sections, Settings and Log out, and the app's version
+// The side menu: the account, the domain switcher, the five sections, Settings and Log out, and the app's version
 // under them (tap to copy the details).
 
 import { useQuery } from '@tanstack/react-query'
 import * as Clipboard from 'expo-clipboard'
 import { router } from 'expo-router'
-import { Bot, Check, ChevronDown, ChevronUp, Globe, HardDrive, Inbox, LogOut, type LucideIcon, Settings, Users } from 'lucide-react-native'
+import { Bot, ChartLine, Check, ChevronDown, ChevronUp, Globe, HardDrive, Inbox, LogOut, type LucideIcon, Settings, Users } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { Animated, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -19,11 +19,12 @@ import { versionDetails, versionLabel } from '@/lib/version'
 import { Avatar } from '@/ui/kit'
 import { c } from '@/ui/theme'
 
-export type Section = 'email' | 'users' | 'storage' | 'agents'
+export type Section = 'email' | 'users' | 'analytics' | 'storage' | 'agents'
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: 'email', label: 'Email', icon: Inbox },
   { id: 'users', label: 'Users', icon: Users },
+  { id: 'analytics', label: 'Analytics', icon: ChartLine },
   { id: 'storage', label: 'Storage', icon: HardDrive },
   { id: 'agents', label: 'Agents', icon: Bot },
 ]

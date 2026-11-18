@@ -6,14 +6,16 @@
 // change. API keys are for owners and admins only: the secret key acts for the whole organization.
 
 import { messagesWith } from '../mailserver'
-import { isAdmin, loadMember, requireOrgPermission } from '../mailserver/access'
+import { isAdmin, loadMember, readableMailboxes, requireOrgPermission } from '../mailserver/access'
 import type { Actor } from '../auth/types'
 import { ApiError } from '../errors'
 import * as keys from './keys'
 import { organizationBucket } from '../storage/buckets'
 import { getObject } from '../storage/r2'
-import type { ListQuery, Viewer } from './store'
-import type { Filter, Person, PersonDetail, PersonFields, SegmentIcon } from './types'
+import type { Funnel, FunnelInput, FunnelRange, FunnelResult } from './funnels'
+import type { AnalyticsSettings, EventQuery, ListQuery, Viewer } from './store'
+import { METRICS, type MetricKey } from './types'
+import type { CollectBatch, FeedEvent, Filter, Person, PersonDetail, PersonFields, SegmentIcon, VisitContext } from './types'
 
 const store = (env: Env, organizationId: string) => env.AUDIENCE.get(env.AUDIENCE.idFromName(organizationId))
 
@@ -33,6 +35,93 @@ async function admin(env: Env, actor: Actor, organizationId: string) {
   if (!isAdmin(await loadMember(env, organizationId, actor.userId))) {
     throw new ApiError('forbidden', 'Only owners and admins can see API keys', 403)
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Analytics (the Analytics section). Any member can watch events; settings need audience.manage.
+
+/**
+ * What the Analytics page needs before anything else: whether events have arrived (else it shows the install
+ * screen), the publishable key for the snippet (it's public anyway: it sits in every page of the site), and the
+ * organization's settings.
+ */
+export async function analyticsStatus(env: Env, actor: Actor, organizationId: string, domain?: string) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const [status, settings, row] = await Promise.all([s.analyticsStatus(domain), s.getSettings(), keys.ensure(env, organizationId)])
+  return { ...status, publishableKey: row.publishable_key, settings, canManage: viewer.manage }
+}
+
+/** Email events show only to members who can read that mailbox, like the mail itself. */
+async function readableMailboxIds(env: Env, actor: Actor, organizationId: string): Promise<string[]> {
+  return (await readableMailboxes(env, actor, organizationId)).map((m) => m.id)
+}
+
+export async function listEvents(env: Env, actor: Actor, organizationId: string, input: Omit<EventQuery, 'mailboxIds'>) {
+  const { s } = await reader(env, actor, organizationId)
+  const query: EventQuery = { ...input, mailboxIds: await readableMailboxIds(env, actor, organizationId) }
+  // Properties are free-form JSON, which the RPC stub's types can't express; the shape is store.listEvents'.
+  return (await s.listEvents(query)) as { events: FeedEvent[]; recent: number; nextBefore: number | null }
+}
+
+export async function getEvent(env: Env, actor: Actor, organizationId: string, eventId: number) {
+  const { s } = await reader(env, actor, organizationId)
+  const result = (await s.getEvent(eventId, await readableMailboxIds(env, actor, organizationId))) as { event: FeedEvent; visit: VisitContext | null } | null
+  if (!result) throw notFound('event')
+  return result
+}
+
+/**
+ * "Send test event": a "Test Event" from a test visitor on that site, through the same path as real events, so
+ * the install screen and the live feed can be tried before the snippet is on the site. The visitor has no email, so
+ * it's deleted with other anonymous visitors after 30 days.
+ */
+export async function sendTestEvent(env: Env, actor: Actor, organizationId: string, domain: string) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  const at = new Date().toISOString()
+  const base = { domain, anonymousId: `vis_test_${viewer.memberId.slice(0, 12)}`, userId: null, email: null, url: `https://${domain}/`, at }
+  const batch: CollectBatch = {
+    trusted: true,
+    source: 'Test',
+    items: [
+      { ...base, type: 'identify', traits: { name: 'Test visitor' }, event: null, properties: {}, context: {} },
+      { ...base, type: 'track', traits: {}, event: 'Test Event', properties: { sent_from: 'xstate dashboard' }, context: { path: '/' } },
+    ],
+  }
+  return s.collect(batch)
+}
+
+// Funnels: any member can see them; creating, changing and deleting needs audience.manage, like segments.
+
+export async function listFunnels(env: Env, actor: Actor, organizationId: string, domain?: string) {
+  const { s, viewer } = await reader(env, actor, organizationId)
+  return { funnels: (await s.listFunnels(domain)) as (Funnel & { conversion: number })[], canManage: viewer.manage }
+}
+
+export async function funnelResult(env: Env, actor: Actor, organizationId: string, funnelId: string, range: FunnelRange, domain?: string) {
+  const { s } = await reader(env, actor, organizationId)
+  const result = (await s.computeFunnel(funnelId, range, domain)) as { funnel: Funnel; result: FunnelResult } | null
+  if (!result) throw notFound('funnel')
+  return result
+}
+
+export async function saveFunnel(env: Env, actor: Actor, organizationId: string, input: FunnelInput & { id?: string }) {
+  const saved = (await (await manager(env, actor, organizationId)).saveFunnel(input)) as Funnel | null | 'full'
+  if (saved === 'full') throw new ApiError('limit_reached', 'An organization can have up to 50 funnels', 409)
+  if (!saved) throw notFound('funnel')
+  return { funnel: saved }
+}
+
+export async function deleteFunnel(env: Env, actor: Actor, organizationId: string, funnelId: string) {
+  if (!(await (await manager(env, actor, organizationId)).deleteFunnel(funnelId))) throw notFound('funnel')
+  return { deleted: true }
+}
+
+export async function funnelOptions(env: Env, actor: Actor, organizationId: string) {
+  return (await reader(env, actor, organizationId)).s.funnelOptions()
+}
+
+export async function updateAnalyticsSettings(env: Env, actor: Actor, organizationId: string, patch: Partial<AnalyticsSettings>) {
+  return { settings: await (await manager(env, actor, organizationId)).setSettings(patch) }
 }
 
 const notFound = (what: string) => new ApiError('not_found', `No such ${what}`, 404)
@@ -145,9 +234,12 @@ export async function exportCsv(env: Env, actor: Actor, organizationId: string, 
   })
 }
 
+/** Metrics in the CSV, after the fixed columns. Email counts stay out: they'd show mail in mailboxes the viewer can't read. */
+const CSV_METRICS = (Object.keys(METRICS) as MetricKey[]).filter((k) => !k.startsWith('email'))
+
 function toCsv(people: Person[]): string {
   const attrKeys = [...new Set(people.flatMap((p) => Object.keys(p.attributes)))].sort()
-  const head = ['id', 'type', 'domain', 'user_id', 'visitor_id', 'name', 'email', 'phone', 'source', 'first_seen', 'last_seen', 'created', ...attrKeys]
+  const head = ['id', 'type', 'domain', 'user_id', 'visitor_id', 'name', 'email', 'phone', 'source', 'first_seen', 'last_seen', 'created', ...CSV_METRICS, ...attrKeys]
   const cell = (v: unknown) => {
     const s = v === null || v === undefined ? '' : String(v)
     // Quote everything that needs it, and defuse spreadsheet formulas.
@@ -155,7 +247,7 @@ function toCsv(people: Person[]): string {
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
   }
   const rows = people.map((p) =>
-    [p.id, p.kind, p.domain, p.externalId, p.anonymousId, p.name, p.email, p.phone, p.source, p.firstSeenAt, p.lastSeenAt, p.createdAt, ...attrKeys.map((k) => p.attributes[k])]
+    [p.id, p.kind, p.domain, p.externalId, p.anonymousId, p.name, p.email, p.phone, p.source, p.firstSeenAt, p.lastSeenAt, p.createdAt, ...CSV_METRICS.map((k) => p.metrics?.[k]), ...attrKeys.map((k) => p.attributes[k])]
       .map(cell)
       .join(','),
   )

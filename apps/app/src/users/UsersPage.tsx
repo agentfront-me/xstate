@@ -16,6 +16,7 @@ import { useDomainScope } from '../lib/scope'
 import { ConfirmDialog, Menu, type MenuItem } from '../storage/dialogs'
 import { saveBlob } from '../storage/api'
 import { type Person, type Segment, audienceApi, audienceKeys, displayName, isAnonymous, keysApi, kindLabel, relative, shortVisitor } from './api'
+import { countryName } from './metrics'
 import { Avatar, PersonPanel } from './PersonPanel'
 import { PersonDialog } from './PersonDialog'
 import { SegmentDialog } from './SegmentDialog'
@@ -300,6 +301,7 @@ function PeopleList({
               <span role="columnheader">Type</span>
               <span role="columnheader">Domain</span>
               <span role="columnheader">Source</span>
+              <span role="columnheader">Country</span>
               <span role="columnheader" className="num">Last seen</span>
             </div>
             {people.length === 0 ? (
@@ -323,6 +325,9 @@ function PeopleList({
 
 function PersonRow({ person: p, selected, onOpen }: { person: Person; selected: boolean; onOpen: () => void }) {
   const anon = isAnonymous(p)
+  // Where they first came from (Paid search, Referral…) says more than how they got here (Website, API, Import).
+  const channel = typeof p.metrics?.initial_channel === 'string' ? p.metrics.initial_channel : null
+  const country = typeof p.metrics?.country === 'string' ? p.metrics.country : null
   return (
     <div
       role="row"
@@ -340,7 +345,8 @@ function PersonRow({ person: p, selected, onOpen }: { person: Person; selected: 
       </span>
       <span role="cell"><span className="u-type">{kindLabel(p)}</span></span>
       <span role="cell" className="ellipsis muted">{p.domain || '—'}</span>
-      <span role="cell" className="ellipsis muted">{p.source}</span>
+      <span role="cell" className="ellipsis muted" title={channel ? `${channel} · added from ${p.source}` : p.source}>{channel ?? p.source}</span>
+      <span role="cell" className="ellipsis muted" title={country ? countryName(country) : undefined}>{country ? countryName(country) : '—'}</span>
       <span role="cell" className="num muted" title={new Date(p.lastSeenAt).toLocaleString()}>{relative(p.lastSeenAt)}</span>
     </div>
   )

@@ -4,6 +4,7 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
 import { type AgentsSearch, AgentsPage } from '../agents/AgentsPage'
+import { type AnalyticsSearch, AnalyticsPage } from '../analytics/AnalyticsPage'
 import { MailPage } from '../mail/MailPage'
 import { SettingsPage } from '../settings/SettingsPage'
 import { type StorageSearch, type StorageView, StoragePage } from '../storage/StoragePage'
@@ -47,6 +48,27 @@ const users = createRoute({
   }),
   component: function Users() {
     return <UsersPage search={users.useSearch()} />
+  },
+})
+
+const EVENT_TYPES = ['page', 'track', 'identify', 'email'] as const
+
+const analytics = createRoute({
+  getParentRoute: () => root,
+  path: '/analytics',
+  validateSearch: (raw: Record<string, unknown>): AnalyticsSearch => {
+    const event = Number(raw.event)
+    return {
+      view: raw.view === 'install' ? 'install' : undefined,
+      type: EVENT_TYPES.includes(raw.type as (typeof EVENT_TYPES)[number]) ? (raw.type as AnalyticsSearch['type']) : undefined,
+      q: typeof raw.q === 'string' && raw.q.trim() ? raw.q.slice(0, 200) : undefined,
+      event: Number.isInteger(event) && event > 0 ? event : undefined,
+      funnel: str(raw.funnel),
+      range: raw.range === 7 || raw.range === 90 || raw.range === 30 ? raw.range : undefined,
+    }
+  },
+  component: function Analytics() {
+    return <AnalyticsPage search={analytics.useSearch()} />
   },
 })
 
@@ -113,7 +135,7 @@ const soon = createRoute({
 })
 
 export const router = createRouter({
-  routeTree: root.addChildren([index, mail, storage, users, agents, calendar, settingsIndex, settings, soon]),
+  routeTree: root.addChildren([index, mail, storage, users, analytics, agents, calendar, settingsIndex, settings, soon]),
   history: createHashHistory(),
   defaultNotFoundComponent: () => <Navigate to="/mail" replace />,
 })

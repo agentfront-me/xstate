@@ -8,13 +8,14 @@ const ALL_PAGES: Page[] = [
   // Hidden for now: not in the rail, and their links go to Email. Remove `hidden` to bring them back.
   { id: 'databases', label: 'Databases', icon: 'database', hidden: true },
   { id: 'users', label: 'Users', icon: 'users' },
+  { id: 'analytics', label: 'Analytics', icon: 'chart-line' },
   { id: 'agents', label: 'Agents', icon: 'bot' },
   { id: 'sites', label: 'Sites', icon: 'globe', hidden: true },
   { id: 'calendar', label: 'Calendar', icon: 'calendar' },
 ]
 
 /** Pages with their own route; the rest go to the "coming soon" page. */
-export const ROUTED = new Set(['mail', 'storage', 'users', 'agents', 'calendar'])
+export const ROUTED = new Set(['mail', 'storage', 'users', 'analytics', 'agents', 'calendar'])
 
 /** The pages in the rail. */
 export const PAGES: Page[] = ALL_PAGES.filter((p) => !p.hidden)

@@ -2375,6 +2375,52 @@ Then the same smoke test in production.
   scanner app and scripts, unused D1 helpers (`accountsToBlock`, `stalwartIdsForMember`, `listAliases`).
 - Checked: API and app typecheck, 438 API tests pass. Not run locally against a stack without Stalwart; the
   production smoke test (Gmail to and from asif@hireninja.com, asif@xstate.com, mohammad@asif.pk) follows the deploy.
+- Production smoke test passed 2026-11-18 after the deploy (3e76b04): Gmail to and from all three, replies threaded
+  both ways, a new mailbox and a new alias received and sent, then removed.
+
+**5b design (2026-11-18, not yet approved):** delete everything that talks to Stalwart or the virus scanner, and
+their settings. No change customers can see. The columns that still name Stalwart (`stalwart_id`, `backend`,
+`mail_path`, `store_mode`, `files.stalwart_blob_id`) and the code that reads them stay until 5c's table rebuild, so
+5b touches no data.
+
+1. **Stalwart client, `apps/api/src/mailserver/stalwart/` (deleted).** Only types are still imported from it:
+   - The calendar types move to `mailserver/calendar-types.ts` and lose the JMAP prefix: `JmapEvent` →
+     `CalendarEvent`, `JmapParticipant` → `EventParticipant`, `JmapRecurrenceRule` → `RecurrenceRule`,
+     `JmapCalendar` → `CalendarInfo`, `ParsedInvite` stays. The store keeps the same JSCalendar shape, so nothing
+     stored changes; 15 files change their import.
+   - `TriggerEmail` moves to `mailbox/trigger-email.ts` (which already builds it).
+   - `migration/mail-rules.ts` uses the store's `StoreFolderRole` instead of `FolderRole`.
+   - `timeout.ts` (MailServerTimeout) and `batch.ts` go with the folder, with their tests.
+2. **Virus scanner.** SES already scans received mail and drops anything with a virus (`receive.ts`, kept). So:
+   - Delete `apps/scanner/`, `security/scan.ts` (+test), `security/refuse.ts`, and the scan step for received
+     attachments in `mailbox/events.ts` (`scanAttachments`, the `scan` event kind and its hourly catch-up).
+   - Received attachments are stored with no scan state (`null`, not `'scanning'`), so nothing waits on a scanner.
+   - Kept: the `scan`/`virus` columns and the read-side gates (`scanAllows`, `scanSafety`), so attachments already
+     marked `infected` (the EICAR tests) stay blocked. `scanning` stops blocking, since nothing would ever finish it.
+   - Storage and composer uploads no longer call the scanner (it was already off). The file-type rules
+     (`security/attachments.ts`) stay.
+3. **Queues.** Remove the `MAIL_SYNC` (xstate-mail-sync) and `STORE_COPY` (xstate-mailbox-store) producers and
+   consumers from `wrangler.jsonc`, their branches in `index.ts`, `consume` in `jobs/mail-sync.ts` (the file keeps
+   `hourly`, renamed to `jobs/hourly.ts`) and `mailbox/jobs.ts`. After the deploy, delete both queues in
+   Cloudflare.
+4. **Settings and secrets.** Remove `STALWART_URL`, `SCAN_MODE`, `SCAN_URL` and `NEW_DOMAINS_ON_STORE` (no code reads it now),
+   plus `STALWART_API_KEY` and `STALWART_WEBHOOK_SECRET` from the required secrets, and
+   update the comments. After the deploy, the user deletes the `STALWART_API_KEY`, `STALWART_WEBHOOK_SECRET` and
+   `SCAN_SECRET` secrets (`wrangler secret delete`).
+5. **Local development.** Delete `scripts/mail-dev.sh`, `stalwart-limits.mjs` and `stalwart-scan-hook.mjs`, the
+   `mail:dev` and `mail:reset` scripts and the turbo `dev` → `mail:dev` link. `.dev.vars.example` loses the
+   Stalwart and scan lines. Local mail is then `pnpm dev` alone: `SES_MODE=fake` for sending, and
+   `scripts/mail-in-fake.mjs` for receiving (kept). The git-ignored `apps/api/.stalwart/` folder can be deleted.
+6. **Unused database helpers.** `accountsToBlock`, `stalwartIdsForMember`, `listAliases`.
+7. **Comments and docs.** Comments that describe Stalwart as current (for example `mailserver/ses.ts`,
+   `db/domains.ts`, `mailbox/events.ts`, `sending-rules.ts`) are reworded. `docs/stalwart-api.md` moves to
+   `docs/archive/`. `security.md` and `privacy.md` already say no uploads are scanned; I'll check them again.
+8. **Workspace.** Removing `apps/scanner` changes `pnpm-lock.yaml` (`pnpm install`), which CI's frozen install needs.
+
+**Order and checks:** one change. API and app typecheck, the API tests (minus the deleted ones), and locally with no
+Stalwart: `pnpm dev`, then receive with `mail-in-fake.mjs` (including `--virus`, which must still be dropped), send
+with fake SES, upload to Storage, and open a calendar invite. After the push, a production smoke test like 5a's.
+Then the clean-up in Cloudflare (queues, secrets).
 
 ## What changes for customers
 

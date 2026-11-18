@@ -7,22 +7,56 @@
 //           customer's server; without it the userId is ignored and only the visitor's own lead is updated.
 // Server:   Authorization: Bearer sk_live_…, same body without "key". Each event names its "domain" (or a "url"),
 //           and may use "userId" or "email" without a hash.
+//           A server has no browser, so it may describe the visitor in "context" (Segment-style): ip, userAgent,
+//           locale, campaign, referrer, page, sessionId. Nothing is geolocated from a context ip.
+//
+// Every event also gets a context (types.ts EventContext): for browsers the IP, location and network from
+// Cloudflare (request.cf), the browser, system and device from the User-Agent, and the snippet's visit, campaign,
+// screen and locale. Requests from bots are dropped. Whether the IP itself is kept is up to the organization
+// (AudienceStore settings); location is always kept.
 
 import type { Context } from 'hono'
 import { z } from 'zod'
 import { ApiError } from '../errors'
 import type { AppEnv } from '../http/types'
+import { CLICK_IDS, channelOf, hostOf, sameSite } from './channel'
+import { isBot, parseUserAgent } from './device'
 import * as keys from './keys'
-import type { CollectBatch, CollectItem } from './types'
+import type { CollectBatch, CollectItem, EventContext } from './types'
 
 const MAX_BODY = 64 * 1024
 const MAX_JSON = 4 * 1024
+/** Names xstate records itself: page views, identify calls and email activity. */
+const RESERVED = /^\$(pageview|identify|email_)/
 
 const id = z.string().trim().min(1).max(128)
 const json = z.record(z.string().max(64), z.unknown()).default({})
 
+const text = (max: number) => z.string().trim().max(max).optional()
+
+// Whatever is malformed in a context is dropped (.catch), never the event.
+const context = z
+  .object({
+    session: z.object({ id: z.string().trim().min(1).max(64), start: z.boolean().optional() }).optional(),
+    sessionId: text(64),
+    campaign: z.object({ source: text(200), medium: text(200), name: text(200), term: text(200), content: text(200) }).optional(),
+    clickId: z.object({ kind: z.enum(CLICK_IDS), value: text(500) }).optional(),
+    referrer: text(2000),
+    page: z.object({ path: text(1000), url: text(2000), referrer: text(2000), title: text(300) }).optional(),
+    screen: text(20),
+    viewport: text(20),
+    locale: text(35),
+    timezone: text(64),
+    library: z.object({ name: text(40), version: text(20) }).optional(),
+    ip: text(45),
+    userAgent: text(500),
+  })
+  .optional()
+  .catch(undefined)
+type RawContext = z.output<typeof context>
+
 const event = z.object({
-  type: z.enum(['identify', 'track', 'page']),
+  type: z.enum(['identify', 'track', 'page', 'page_leave']),
   event: z.string().trim().min(1).max(100).optional(),
   anonymousId: id.optional(),
   userId: id.optional(),
@@ -33,6 +67,7 @@ const event = z.object({
   url: z.string().max(2000).optional(),
   domain: z.string().trim().toLowerCase().max(253).optional(),
   timestamp: z.string().max(40).optional(),
+  context,
 })
 
 const body = z.object({
@@ -62,6 +97,11 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
   if (!auth) throw new ApiError('invalid_key', bearer ? 'Unknown secret key' : 'Send a valid publishable key as "key"', 401)
   const trusted = !!bearer
 
+  // What the request itself says about a browser visitor. A server's request says nothing about its visitors.
+  const userAgent = c.req.header('User-Agent') ?? ''
+  if (!trusted && isBot(userAgent)) return c.json({ accepted: 0 }, 202)
+  const visitor = trusted ? null : fromRequest(c.req.raw, userAgent)
+
   if (!trusted) {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const { success } = await c.env.COLLECT_RATE.limit({ key: `${auth.organizationId}:${ip}` })
@@ -77,6 +117,7 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
       if (trusted) throw new ApiError('invalid_input', 'Each event needs a "domain" (or a "url") when sent with the secret key')
       continue
     }
+    if (e.type === 'track' && e.event && RESERVED.test(e.event)) throw new ApiError('invalid_input', `"${e.event}" is recorded by xstate itself`)
     if (e.type === 'track' && !e.event) throw new ApiError('invalid_input', 'track events need an "event" name')
     let userId: string | null = null
     if (e.userId) {
@@ -95,6 +136,7 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
       event: e.event ?? null,
       properties: capJson(e.properties),
       url: e.url ?? null,
+      context: contextOf(e.type, e.url ?? null, normalizeHost(domain), e.context, visitor, trusted),
       at: timestampOf(e.timestamp, now),
     })
   }
@@ -108,17 +150,106 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
   return c.json({ accepted: items.length }, 202)
 }
 
-function hostOf(url: string | undefined | null): string | null {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.hostname.toLowerCase() : null
-  } catch {
-    return null
+const normalizeHost = (host: string) => host.toLowerCase().replace(/^www\./, '').replace(/\.$/, '')
+
+/** The browser visitor's IP, location, network and device. */
+function fromRequest(req: Request, userAgent: string): EventContext {
+  const cf = req.cf as IncomingRequestCfProperties | undefined
+  const num = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() && Number.isFinite(Number(v)) ? Number(v) : undefined)
+  // Roughly the city, not the street: one decimal is about 10 km.
+  const coarse = (v: unknown) => {
+    const n = num(v)
+    return n === undefined ? undefined : Math.round(n * 10) / 10
+  }
+  const device = parseUserAgent(userAgent)
+  return clean({
+    ip: req.headers.get('CF-Connecting-IP') ?? undefined,
+    country: cf?.country ?? undefined,
+    region: cf?.region || undefined,
+    regionCode: cf?.regionCode || undefined,
+    city: cf?.city || undefined,
+    postalCode: cf?.postalCode || undefined,
+    timezone: cf?.timezone || undefined,
+    latitude: coarse(cf?.latitude),
+    longitude: coarse(cf?.longitude),
+    continent: cf?.continent || undefined,
+    isEu: cf?.isEUCountry === '1' ? true : undefined,
+    asn: num(cf?.asn),
+    asOrganization: cf?.asOrganization || undefined,
+    ...deviceContext(device),
+  })
+}
+
+function deviceContext(d: ReturnType<typeof parseUserAgent>): EventContext {
+  return {
+    browser: d.browser ?? undefined,
+    browserVersion: d.browserVersion ?? undefined,
+    os: d.os ?? undefined,
+    osVersion: d.osVersion ?? undefined,
+    deviceType: d.deviceType ?? undefined,
   }
 }
 
-const normalizeHost = (host: string) => host.replace(/^www\./, '').replace(/\.$/, '')
+/** The event's full context: the request's (browsers), what the snippet or server sent, and the visit's channel. */
+function contextOf(
+  type: CollectItem['type'],
+  url: string | null,
+  domain: string,
+  raw: RawContext,
+  visitor: EventContext | null,
+  trusted: boolean,
+): EventContext {
+  const ctx: EventContext = { ...visitor }
+  if (raw) {
+    const sessionId = raw.session?.id ?? (trusted ? raw.sessionId : undefined)
+    if (sessionId) ctx.sessionId = sessionId
+    if (raw.session?.start) ctx.sessionStart = true
+    if (raw.screen) ctx.screen = raw.screen
+    if (raw.viewport) ctx.viewport = raw.viewport
+    if (raw.locale) ctx.locale = raw.locale
+    if (raw.library?.name) ctx.library = [raw.library.name, raw.library.version].filter(Boolean).join(' ')
+    if (raw.timezone && !ctx.timezone) ctx.timezone = raw.timezone
+    if (trusted) {
+      if (raw.ip) ctx.ip = raw.ip
+      if (raw.userAgent) Object.assign(ctx, deviceContext(parseUserAgent(raw.userAgent)))
+    }
+  }
+
+  const pageUrl = raw?.page?.url ?? url
+  const path = raw?.page?.path ?? pathOf(pageUrl)
+  if (path) ctx.path = path
+
+  // Attribution: the snippet sends it on a visit's first page; a server whenever it knows it.
+  const campaign = raw?.campaign && Object.values(raw.campaign).some(Boolean) ? clean(raw.campaign) : undefined
+  const clickId = raw?.clickId?.kind
+  const referrer = raw?.referrer ?? raw?.page?.referrer
+  const refHost = hostOf(referrer)
+  const external = refHost && !sameSite(refHost, domain) ? refHost : undefined
+  if (campaign) ctx.campaign = campaign
+  if (clickId) ctx.clickId = clickId
+  if (external && referrer) {
+    ctx.referrer = referrer
+    ctx.referringDomain = external
+  }
+  if (ctx.sessionStart || campaign || clickId || external) {
+    ctx.channel = channelOf({ campaign, clickId, referringDomain: external })
+  }
+  return ctx
+}
+
+function pathOf(url: string | null): string | undefined {
+  if (!url) return undefined
+  try {
+    return new URL(url).pathname.slice(0, 1000)
+  } catch {
+    return undefined
+  }
+}
+
+/** Drops undefined and empty values, so contexts stay small. */
+function clean<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '')) as T
+}
 
 /** Client clocks drift: accept times up to a week back and five minutes ahead, else use now. */
 function timestampOf(value: string | undefined, now: number): string {

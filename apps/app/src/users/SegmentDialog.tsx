@@ -7,6 +7,7 @@ import { Icon } from '../components/Icon'
 import { errorMessage } from '../lib/core'
 import { Modal } from '../storage/dialogs'
 import { type AttrOp, type Condition, type Filter, type Schema, type Segment, audienceApi, audienceKeys } from './api'
+import { METRIC_GROUPS, METRICS } from './metrics'
 
 const DATE_FIELDS = { last_seen: 'Last seen', first_seen: 'First seen', created: 'Created' } as const
 const TEXT_FIELDS = { name: 'Name', email: 'Email', phone: 'Phone', source: 'Source', domain: 'Domain' } as const
@@ -16,17 +17,38 @@ const ATTR_OPS: Record<string, Partial<Record<AttrOp, string>>> = {
   number: { is: 'is', gt: 'more than', lt: 'less than', is_set: 'is set', not_set: 'is not set' },
   boolean: { is_true: 'is true', is_false: 'is false', is_set: 'is set', not_set: 'is not set' },
 }
+/** What a metric's value looks like, as the input's placeholder. */
+const METRIC_HINT: Record<string, string> = {
+  country: 'Two-letter code, like US',
+  last_device_type: 'desktop, mobile or tablet',
+  initial_landing_page: '/pricing',
+  last_page: '/pricing',
+  initial_referring_domain: 'google.com',
+}
+const CHANNELS = ['Direct', 'Organic search', 'Paid search', 'Social', 'Paid social', 'Email', 'Referral', 'Affiliate', 'Display', 'AI assistant', 'Other']
 const NO_VALUE = new Set(['is_set', 'not_set', 'is_true', 'is_false'])
 
 /** The first select of a row: which kind of thing the condition looks at. */
 const fieldOf = (c: Condition): string =>
-  c.kind === 'date' ? `date:${c.field}` : c.kind === 'text' ? `text:${c.field}` : c.kind === 'attribute' ? `attr:${c.key}` : c.kind
+  c.kind === 'date'
+    ? `date:${c.field}`
+    : c.kind === 'text'
+      ? `text:${c.field}`
+      : c.kind === 'attribute'
+        ? `attr:${c.key}`
+        : c.kind === 'metric'
+          ? `metric:${c.key}`
+          : c.kind
 
 function fresh(field: string, schema: Schema | undefined): Condition {
   const [kind, name = ''] = field.split(':') as [string, string?]
   if (kind === 'date') return { kind: 'date', field: name as keyof typeof DATE_FIELDS, op: 'within', days: 7 }
   if (kind === 'type') return { kind: 'type', op: 'is', value: 'user' }
   if (kind === 'text') return { kind: 'text', field: name as keyof typeof TEXT_FIELDS, op: 'is', value: '' }
+  if (kind === 'metric') {
+    const type = METRICS[name]?.type ?? 'string'
+    return { kind: 'metric', key: name, op: type === 'boolean' ? 'is_true' : type === 'number' ? 'gt' : 'is', value: '' }
+  }
   if (kind === 'event') return { kind: 'event', name: schema?.events.find((e) => !e.name.startsWith('$'))?.name ?? '', op: 'at_least', count: 1, days: 30 }
   const type = schema?.attributes.find((a) => a.key === name)?.type ?? 'string'
   return { kind: 'attribute', key: name, op: type === 'boolean' ? 'is_true' : 'is', value: '' }
@@ -35,7 +57,7 @@ function fresh(field: string, schema: Schema | undefined): Condition {
 /** Rows that can't be sent yet (an empty value) are left out of the count and block Save. */
 function complete(c: Condition): boolean {
   if (c.kind === 'text') return NO_VALUE.has(c.op) || c.value.trim() !== ''
-  if (c.kind === 'attribute') return !!c.key && (NO_VALUE.has(c.op) || String(c.value).trim() !== '')
+  if (c.kind === 'attribute' || c.kind === 'metric') return !!c.key && (NO_VALUE.has(c.op) || String(c.value).trim() !== '')
   if (c.kind === 'event') return c.name.trim() !== '' && c.days >= 1 && c.days <= 90 && c.count >= 1
   if (c.kind === 'date') return c.days >= 1
   return true
@@ -139,9 +161,14 @@ export function SegmentDialog({
                     {c.kind === 'attribute' && c.key && !attrs.some((a) => a.key === c.key) && newAttr !== i && <option value={`attr:${c.key}`}>{c.key}</option>}
                     <option value="attr:__new">Other attribute…</option>
                   </optgroup>
-                  <optgroup label="Activity">
-                    <option value="event">did event</option>
-                  </optgroup>
+                  {METRIC_GROUPS.map((g) => (
+                    <optgroup key={g} label={g}>
+                      {g === 'Activity' && <option value="event">did event</option>}
+                      {Object.entries(METRICS)
+                        .filter(([, m]) => m.group === g)
+                        .map(([k, m]) => <option key={k} value={`metric:${k}`}>{m.label}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
                 <ConditionInputs
                   c={c}
@@ -234,6 +261,29 @@ function ConditionInputs({ c, schema, naming, onChange }: { c: Condition; schema
               onChange={(e) => onChange({ ...c, value: type === 'number' && e.target.value !== '' ? Number(e.target.value) : e.target.value })}
             />
           ) : <span className="grow" />}
+        </>
+      )
+    }
+    case 'metric': {
+      const type = METRICS[c.key]?.type ?? 'string'
+      const ops = ATTR_OPS[type] ?? ATTR_OPS.string!
+      return (
+        <>
+          <select className="select sm" aria-label="Operator" value={c.op} onChange={(e) => onChange({ ...c, op: e.target.value as AttrOp })}>
+            {Object.entries(ops).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {!NO_VALUE.has(c.op) ? (
+            <input
+              className="text-input sm grow"
+              aria-label="Value"
+              type={type === 'number' ? 'number' : 'text'}
+              placeholder={METRIC_HINT[c.key] ?? ''}
+              list={c.key.endsWith('channel') ? 'seg-channels' : undefined}
+              value={c.value}
+              onChange={(e) => onChange({ ...c, value: type === 'number' && e.target.value !== '' ? Number(e.target.value) : e.target.value })}
+            />
+          ) : <span className="grow" />}
+          <datalist id="seg-channels">{CHANNELS.map((ch) => <option key={ch} value={ch} />)}</datalist>
         </>
       )
     }

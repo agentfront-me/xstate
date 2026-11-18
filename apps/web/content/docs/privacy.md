@@ -46,7 +46,12 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
   recipients, dates, IP addresses in headers).
 - **Storage:** files, folders, file versions, sharing settings and public links.
 - **Contacts and audience:** contacts your members add or import, and people, leads, events and attributes
-  your organization collects about its website visitors and customers through our snippet or API.
+  your organization collects about its website visitors and customers through our snippet or API. For each visit
+  this includes the visitor's IP address and the approximate location derived from it (country, region, city),
+  their network provider, browser, operating system, device and screen size, language, the pages viewed and time
+  spent on them, and where the visit came from (referring site, campaign tags and ad click ids). It also includes
+  when they emailed, were emailed by, bounced from or complained about the organization's mailboxes (the mailbox
+  and address, not the message).
 - **Agents:** agent instructions, triggers, run history, inputs and outputs, approvals, memory, connector
   settings, and encrypted AI provider keys and secrets.
 - **Imports:** data copied from another provider you import from (for example, Google Workspace): users,
@@ -161,8 +166,9 @@ personal data from the EU, UK or Switzerland, we rely on the European Commission
   previous versions of a file are kept, each for 30 days after it was replaced. Email in Trash is deleted for good 30
   days after it was moved there, together with its stored copy.
 - **Search indexes:** removed after the source item is deleted, usually within an hour.
-- **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events
-  after about 90 days; other audience records until the organization deletes them.
+- **Audience data:** anonymous visitors with no email address are deleted after 30 days; raw tracking events and
+  visit records (including IP addresses) after about 90 days; other audience records until the organization
+  deletes them.
 - **Import records:** see section 5.
 - **Logs and delivery records:** typically up to 90 days, longer when needed to investigate abuse or security
   incidents.

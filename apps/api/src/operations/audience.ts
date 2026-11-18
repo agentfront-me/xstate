@@ -3,6 +3,7 @@
 
 import { z } from 'zod'
 import * as audience from '../audience/service'
+import { FUNNEL_RANGES, funnelInput } from '../audience/funnels'
 import { filter, personFields, SEGMENT_ICONS } from '../audience/types'
 import { defineOperation } from './define'
 
@@ -147,7 +148,12 @@ export const audienceCountFilter = defineOperation({
     'conditions: [...] }; conditions are { kind: "date", field: last_seen|first_seen|created, op: within|not_within, days }, ' +
     '{ kind: "type", op: is|is_not, value: user|lead }, { kind: "text", field: name|email|phone|source|domain, ' +
     'op: is|is_not|contains|is_set|not_set, value }, { kind: "attribute", key, op: is|is_not|contains|gt|lt|is_set|' +
-    'not_set|is_true|is_false, value }, or { kind: "event", name, op: at_least|did_not, count, days (max 90) }.',
+    'not_set|is_true|is_false, value }, { kind: "metric", key, op (as attribute), value } for what xstate works out ' +
+    '(key: initial_channel, initial_utm_source|medium|campaign, initial_referring_domain, initial_landing_page, last_channel, ' +
+    'last_utm_source|campaign, country (two-letter code), region, city, last_browser, last_os, last_device_type, last_page, ' +
+    'last_event, sessions, pageviews, events, active_days, engaged_seconds, revenue_total, orders, emails_received, ' +
+    'emails_sent, emails_replied, days_to_identify, email_bounced, email_complained), or { kind: "event", name, op: ' +
+    'at_least|did_not, count, days (max 90) }.',
   input: z.object({ organizationId: id, filter, domain: domain.optional() }),
   http: { method: 'POST', path: '/audience/orgs/:organizationId/count' },
   mcp: { scope: 'contacts.read', readOnly: true },
@@ -181,6 +187,130 @@ export const audienceDeleteSegment = defineOperation({
   http: { method: 'DELETE', path: '/audience/orgs/:organizationId/segments/:segmentId' },
   mcp: { scope: 'contacts.write', destructive: true },
   run: ({ env, actor }, input) => audience.deleteSegment(env, actor, input.organizationId, input.segmentId),
+})
+
+// Analytics: the event feed behind the Analytics section. Connected AI apps can read events and funnels
+// (contacts.read); install, settings and funnel changes stay in the dashboard.
+
+const eventType = z.enum(['page', 'track', 'identify', 'email'])
+const eventId = z.coerce.number().int().min(1)
+
+export const analyticsStatus = defineOperation({
+  name: 'analytics_status',
+  description: 'Whether any website events have arrived, the publishable key for the snippet, and analytics settings.',
+  input: z.object({ organizationId: id, domain: domain.optional() }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/status' },
+  mcp: false,
+  run: ({ env, actor }, input) => audience.analyticsStatus(env, actor, input.organizationId, input.domain),
+})
+
+export const analyticsEvents = defineOperation({
+  name: 'analytics_events',
+  description:
+    'Website and email events, newest first, with who did them: page views (type page), your own events (track), ' +
+    'identify calls and email activity ($email_received, $email_sent, $email_replied, $email_bounced, $email_complained; ' +
+    'only for mailboxes you can read). Filter by type, domain or q (event name, path or person). after=<id> returns only ' +
+    'newer events; before=<id> the next page. Use analytics_event for one event with its visit (source, device, location).',
+  input: z.object({
+    organizationId: id,
+    domain: domain.optional(),
+    type: eventType.optional(),
+    q: z.string().trim().max(200).optional(),
+    before: eventId.optional(),
+    after: z.coerce.number().int().min(0).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(100),
+  }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/events' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, { organizationId, ...query }) => audience.listEvents(env, actor, organizationId, query),
+})
+
+export const analyticsEvent = defineOperation({
+  name: 'analytics_event',
+  description: 'One event in full, with the visit it belongs to (source, device, location).',
+  input: z.object({ organizationId: id, eventId }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/events/:eventId' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, input) => audience.getEvent(env, actor, input.organizationId, input.eventId),
+})
+
+export const analyticsTestEvent = defineOperation({
+  name: 'analytics_test_event',
+  description: 'Send a "Test Event" from a test visitor on one of your sites, to check the feed works.',
+  input: z.object({ organizationId: id, domain }),
+  http: { method: 'POST', path: '/analytics/orgs/:organizationId/test-event' },
+  mcp: false,
+  run: ({ env, actor }, input) => audience.sendTestEvent(env, actor, input.organizationId, input.domain),
+})
+
+export const analyticsUpdateSettings = defineOperation({
+  name: 'analytics_update_settings',
+  description: "Change analytics settings: storeIp false stops keeping visitors' IP addresses and removes the ones kept.",
+  input: z.object({ organizationId: id, storeIp: z.boolean().optional() }),
+  http: { method: 'PATCH', path: '/analytics/orgs/:organizationId/settings' },
+  mcp: false,
+  run: ({ env, actor }, { organizationId, ...patch }) => audience.updateAnalyticsSettings(env, actor, organizationId, patch),
+})
+
+// Funnels (audience/funnels.ts)
+
+const funnelRange = z.coerce
+  .number()
+  .int()
+  .refine((n): n is (typeof FUNNEL_RANGES)[number] => (FUNNEL_RANGES as readonly number[]).includes(n), 'range is 7, 30 or 90 (days)')
+
+export const analyticsFunnels = defineOperation({
+  name: 'analytics_funnels',
+  description: 'Saved funnels (ordered steps people take), each with its steps, conversion window and conversion over the last 30 days.',
+  input: z.object({ organizationId: id, domain: domain.optional() }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/funnels' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, input) => audience.listFunnels(env, actor, input.organizationId, input.domain),
+})
+
+export const analyticsFunnelResult = defineOperation({
+  name: 'analytics_funnel_result',
+  description: 'How many people reached each step of a funnel over the last 7, 30 or 90 days, with drop-off and median time between steps.',
+  input: z.object({ organizationId: id, funnelId: id, range: funnelRange.default(30), domain: domain.optional() }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/funnels/:funnelId/result' },
+  mcp: { scope: 'contacts.read', readOnly: true },
+  run: ({ env, actor }, input) => audience.funnelResult(env, actor, input.organizationId, input.funnelId, input.range as 7 | 30 | 90, input.domain),
+})
+
+export const analyticsFunnelOptions = defineOperation({
+  name: 'analytics_funnel_options',
+  description: 'Event names and page paths seen recently, for picking funnel steps.',
+  input: z.object({ organizationId: id }),
+  http: { method: 'GET', path: '/analytics/orgs/:organizationId/funnel-options' },
+  mcp: false,
+  run: ({ env, actor }, input) => audience.funnelOptions(env, actor, input.organizationId),
+})
+
+export const analyticsCreateFunnel = defineOperation({
+  name: 'analytics_create_funnel',
+  description: 'Save a funnel: a name, 2 to 10 ordered steps ({ type: page, match: "/path/*" } | { type: track, match: event name } | { type: email, match: $email_… }) and a conversion window in days.',
+  input: funnelInput.extend({ organizationId: id }),
+  http: { method: 'POST', path: '/analytics/orgs/:organizationId/funnels', status: 201 },
+  mcp: false,
+  run: ({ env, actor }, { organizationId, ...input }) => audience.saveFunnel(env, actor, organizationId, input),
+})
+
+export const analyticsUpdateFunnel = defineOperation({
+  name: 'analytics_update_funnel',
+  description: 'Replace a funnel’s name, steps and window.',
+  input: funnelInput.extend({ organizationId: id, funnelId: id }),
+  http: { method: 'PUT', path: '/analytics/orgs/:organizationId/funnels/:funnelId' },
+  mcp: false,
+  run: ({ env, actor }, { organizationId, funnelId, ...input }) => audience.saveFunnel(env, actor, organizationId, { ...input, id: funnelId }),
+})
+
+export const analyticsDeleteFunnel = defineOperation({
+  name: 'analytics_delete_funnel',
+  description: 'Delete a saved funnel. Events are not affected.',
+  input: z.object({ organizationId: id, funnelId: id }),
+  http: { method: 'DELETE', path: '/analytics/orgs/:organizationId/funnels/:funnelId' },
+  mcp: false,
+  run: ({ env, actor }, input) => audience.deleteFunnel(env, actor, input.organizationId, input.funnelId),
 })
 
 // API keys: kept off MCP, so an agent can't read or replace the organization's secret key.
@@ -227,6 +357,17 @@ export const audienceOperations = [
   audienceCreateSegment,
   audienceUpdateSegment,
   audienceDeleteSegment,
+  analyticsStatus,
+  analyticsEvents,
+  analyticsEvent,
+  analyticsTestEvent,
+  analyticsUpdateSettings,
+  analyticsFunnels,
+  analyticsFunnelResult,
+  analyticsFunnelOptions,
+  analyticsCreateFunnel,
+  analyticsUpdateFunnel,
+  analyticsDeleteFunnel,
   apiKeysGet,
   apiKeysReveal,
   apiKeysRoll,

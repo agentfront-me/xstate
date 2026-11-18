@@ -56,10 +56,35 @@ export type Person = {
   attributes: Record<string, string | number | boolean>
   firstSeenAt: string
   lastSeenAt: string
+  /** Worked out by xstate from activity (lib/metrics.ts): first channel, location, device, visits, revenue… */
+  metrics?: Record<string, string | number | boolean>
 }
 export type Segment = { id: string; name: string; icon: string; count: number }
 export type Overview = { total: number; otherContacts?: number; segments: Segment[] }
 export type PersonDetail = { person: Person; segments: { id: string; name: string }[]; emails: MessageSummary[] | null }
+
+// Analytics (the analytics_* API)
+export type EventType = 'page' | 'track' | 'identify' | 'email'
+export type FeedEvent = {
+  id: number
+  type: EventType
+  name: string
+  properties: Record<string, unknown>
+  url: string | null
+  path: string | null
+  domain: string | null
+  sessionId: string | null
+  occurredAt: string
+  person: { id: string; kind: PersonKind; name: string | null; email: string | null; externalId: string | null; anonymousId: string | null }
+}
+export type EventsPage = { events: FeedEvent[]; recent: number; nextBefore: number | null }
+export type FunnelStep = { type: 'page' | 'track' | 'email'; match: string }
+export type Funnel = { id: string; name: string; steps: FunnelStep[]; windowDays: number; conversion?: number }
+export type FunnelResult = {
+  steps: { people: number; fromPrevious: number | null; dropped: number | null; medianSeconds: number | null }[]
+  conversion: number
+  range: 7 | 30 | 90
+}
 
 // Storage
 export type StorageItem = {

@@ -12,6 +12,8 @@
 // of it. Access checks happen in the Worker (audience/service.ts); this class trusts its callers.
 
 import { DurableObject } from 'cloudflare:workers'
+import { type Funnel, type FunnelInput, type FunnelRange, type FunnelResult, funnelQuery, summarize } from './funnels'
+import { addEngagement, applyEmail, applyEvent, identified, type Metrics, mergeMetrics } from './metrics'
 import {
   ANONYMOUS_RETENTION_DAYS,
   type AudienceEvent,
@@ -19,13 +21,18 @@ import {
   type CollectBatch,
   type CollectItem,
   type Condition,
+  type EmailActivity,
   EVENT_RETENTION_DAYS,
+  type EventType,
+  type FeedEvent,
   type Filter,
+  IDENTIFY,
   PAGEVIEW,
   type Person,
   type PersonFields,
   type Segment,
   type SegmentIcon,
+  type VisitContext,
 } from './types'
 
 const SCHEMA = `
@@ -74,6 +81,71 @@ CREATE INDEX IF NOT EXISTS events_time ON events (occurred_at);
 CREATE TABLE IF NOT EXISTS event_names (name TEXT PRIMARY KEY, total INTEGER NOT NULL, last_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS attribute_defs (key TEXT PRIMARY KEY, type TEXT NOT NULL, created_at TEXT NOT NULL);
 
+-- Visits: one row per session id from the snippet (or a server call's context.sessionId), with what is the same for
+-- the whole visit: where it came from, the device and the location. Events point here, so they stay small.
+CREATE TABLE IF NOT EXISTS sessions (
+  id                TEXT PRIMARY KEY,
+  person_id         TEXT NOT NULL,
+  domain            TEXT NOT NULL,
+  started_at        TEXT NOT NULL,
+  ended_at          TEXT NOT NULL,
+  pageviews         INTEGER NOT NULL DEFAULT 0,
+  events            INTEGER NOT NULL DEFAULT 0,
+  engaged_ms        INTEGER NOT NULL DEFAULT 0,
+  landing_path      TEXT,
+  exit_path         TEXT,
+  channel           TEXT,
+  referrer          TEXT,
+  referring_domain  TEXT,
+  utm_source        TEXT,
+  utm_medium        TEXT,
+  utm_campaign      TEXT,
+  utm_term          TEXT,
+  utm_content       TEXT,
+  click_id          TEXT,
+  ip                TEXT,                          -- NULL when the organization doesn't keep IP addresses
+  country           TEXT,
+  region            TEXT,
+  city              TEXT,
+  postal_code       TEXT,
+  timezone          TEXT,
+  latitude          REAL,                          -- rounded to about 10 km
+  longitude         REAL,
+  continent         TEXT,
+  asn               INTEGER,
+  as_org            TEXT,
+  browser           TEXT,
+  browser_version   TEXT,
+  os                TEXT,
+  os_version        TEXT,
+  device_type       TEXT,
+  screen            TEXT,
+  viewport          TEXT,
+  locale            TEXT,
+  library           TEXT
+);
+CREATE INDEX IF NOT EXISTS sessions_time ON sessions (domain, started_at);
+CREATE INDEX IF NOT EXISTS sessions_person ON sessions (person_id, started_at);
+CREATE INDEX IF NOT EXISTS sessions_ended ON sessions (ended_at);
+
+-- Funnels (funnels.ts): ordered steps within a conversion window. Results are cached for a few minutes.
+CREATE TABLE IF NOT EXISTS funnels (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  steps        TEXT NOT NULL,
+  window_days  INTEGER NOT NULL,
+  position     INTEGER NOT NULL,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS funnel_cache (
+  funnel_id    TEXT NOT NULL,
+  key          TEXT NOT NULL,                 -- range and domain
+  result       TEXT NOT NULL,
+  computed_at  TEXT NOT NULL,
+  PRIMARY KEY (funnel_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS segments (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -101,7 +173,30 @@ const UPGRADES: ((sql: SqlStorage) => void)[] = [
     )
     sql.exec("CREATE INDEX IF NOT EXISTS people_contact_owner ON people (owner_member_id) WHERE kind = 'contact'")
   },
+  // 2: analytics. Events get their type, site, visit and path; people get metrics (metrics.ts).
+  (sql) => {
+    const cols = (table: string) => sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray().map((c) => c.name)
+    const events = cols('events')
+    if (!events.includes('type')) sql.exec("ALTER TABLE events ADD COLUMN type TEXT NOT NULL DEFAULT 'track'")
+    if (!events.includes('domain')) sql.exec('ALTER TABLE events ADD COLUMN domain TEXT')
+    if (!events.includes('session_id')) sql.exec('ALTER TABLE events ADD COLUMN session_id TEXT')
+    if (!events.includes('path')) sql.exec('ALTER TABLE events ADD COLUMN path TEXT')
+    if (!cols('people').includes('metrics')) sql.exec("ALTER TABLE people ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'")
+    sql.exec("UPDATE events SET type = 'page' WHERE name = '$pageview'")
+    sql.exec('UPDATE events SET domain = (SELECT domain FROM people WHERE people.id = events.person_id) WHERE domain IS NULL')
+    sql.exec('CREATE INDEX IF NOT EXISTS events_name_time ON events (name, occurred_at)')
+    sql.exec('CREATE INDEX IF NOT EXISTS events_domain_time ON events (domain, occurred_at DESC, id DESC)')
+    sql.exec('CREATE INDEX IF NOT EXISTS events_session ON events (session_id) WHERE session_id IS NOT NULL')
+  },
+  // 3: email events find people by address on any of the organization's sites.
+  (sql) => {
+    sql.exec("CREATE INDEX IF NOT EXISTS people_email_any ON people (email) WHERE email IS NOT NULL AND kind <> 'contact'")
+  },
 ]
+
+/** Organization-wide analytics settings, kept in the store's own storage. */
+export type AnalyticsSettings = { storeIp: boolean }
+const DEFAULT_SETTINGS: AnalyticsSettings = { storeIp: true }
 
 /** Who is looking: their member id, and whether they may change website people, segments and shared contacts. */
 export type Viewer = { memberId: string; manage: boolean }
@@ -114,6 +209,19 @@ const STARTER_SEGMENTS: { name: string; icon: SegmentIcon; filter: Filter }[] = 
 ]
 
 const MAX_ATTRIBUTES = 100
+const MAX_FUNNELS = 50
+/** How long a funnel's result is reused before it's worked out again. */
+const FUNNEL_CACHE_MS = 5 * 60_000
+
+type FunnelRow = { id: string; name: string; steps: string; window_days: number; created_at: string; updated_at: string }
+const toFunnel = (r: FunnelRow): Funnel => ({
+  id: r.id,
+  name: r.name,
+  steps: JSON.parse(r.steps) as Funnel['steps'],
+  windowDays: r.window_days,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+})
 const DAY = 86_400_000
 
 type PersonRow = {
@@ -132,6 +240,37 @@ type PersonRow = {
   created_at: string
   updated_at: string
   owner_member_id: string | null
+  metrics: string
+}
+type EventRow = {
+  id: number
+  type: EventType
+  name: string
+  properties: string
+  url: string | null
+  session_id: string | null
+  occurred_at: string
+}
+type SessionRow = { id: string; person_id: string }
+type FeedRow = EventRow & {
+  path: string | null
+  domain: string | null
+  person_id: string
+  kind: 'user' | 'lead' | 'contact'
+  person_name: string | null
+  email: string | null
+  external_id: string | null
+  anonymous_id: string | null
+}
+
+/** `mailboxIds`: the mailboxes whose email events the viewer may see (they can read the mail); 'all' for none hidden. */
+export type EventQuery = { domain?: string; type?: EventType; q?: string; before?: number; after?: number; limit: number; mailboxIds: string[] | 'all' }
+
+/** Email events of mailboxes the viewer can't read stay hidden, like the mail itself. */
+function emailScope(mailboxIds: string[] | 'all'): { sql: string; args: Binding[] } | null {
+  if (mailboxIds === 'all') return null
+  if (!mailboxIds.length) return { sql: "e.type <> 'email'", args: [] }
+  return { sql: `(e.type <> 'email' OR json_extract(e.properties, '$.mailbox_id') IN (${mailboxIds.map(() => '?').join(', ')}))`, args: mailboxIds }
 }
 type SegmentRow = { id: string; name: string; icon: SegmentIcon; filter: string; created_at: string; updated_at: string }
 type Binding = string | number | null
@@ -154,7 +293,28 @@ const toPerson = (r: PersonRow): Person => ({
   lastSeenAt: r.last_seen_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  metrics: JSON.parse(r.metrics || '{}') as Attributes,
   ...(r.kind === 'contact' && { owner: r.owner_member_id }),
+})
+
+const toFeedEvent = (r: FeedRow): FeedEvent => ({
+  ...toEvent(r),
+  path: r.path,
+  domain: r.domain,
+  person: { id: r.person_id, kind: r.kind, name: r.person_name, email: r.email, externalId: r.external_id, anonymousId: r.anonymous_id },
+})
+
+/** The dashboard scopes by the organization's mail domain (acme.com), which covers its sites (www.acme.com). */
+const domainMatch = (col: string) => `(${col} = ? OR substr(${col}, -length(?) - 1) = '.' || ?)`
+
+const toEvent = (e: EventRow): AudienceEvent => ({
+  id: e.id,
+  type: e.type,
+  name: e.name,
+  properties: JSON.parse(e.properties) as Record<string, unknown>,
+  url: e.url,
+  sessionId: e.session_id,
+  occurredAt: e.occurred_at,
 })
 
 const toSegment = (r: SegmentRow): Segment => ({
@@ -171,6 +331,7 @@ const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g,
 
 export class AudienceStore extends DurableObject<Env> {
   private sql: SqlStorage
+  private settings: AnalyticsSettings = DEFAULT_SETTINGS
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -189,6 +350,7 @@ export class AudienceStore extends DurableObject<Env> {
         )
         await ctx.storage.put('seeded', true)
       }
+      this.settings = { ...DEFAULT_SETTINGS, ...(await ctx.storage.get<Partial<AnalyticsSettings>>('analytics_settings')) }
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + DAY)
     })
   }
@@ -208,6 +370,7 @@ export class AudienceStore extends DurableObject<Env> {
     const now = Date.now()
     this.ctx.storage.transactionSync(() => {
       this.sql.exec('DELETE FROM events WHERE occurred_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
+      this.sql.exec('DELETE FROM sessions WHERE ended_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
       const stale = this.all<{ id: string }>(
         "SELECT id FROM people WHERE kind = 'lead' AND email IS NULL AND phone IS NULL AND last_seen_at < ?",
         daysAgo(ANONYMOUS_RETENTION_DAYS, now),
@@ -220,7 +383,23 @@ export class AudienceStore extends DurableObject<Env> {
   private removePerson(id: string) {
     this.sql.exec('DELETE FROM events WHERE person_id = ?', id)
     this.sql.exec('DELETE FROM aliases WHERE person_id = ?', id)
+    this.sql.exec('DELETE FROM sessions WHERE person_id = ?', id)
     this.sql.exec('DELETE FROM people WHERE id = ?', id)
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Settings
+
+  async getSettings(): Promise<AnalyticsSettings> {
+    return this.settings
+  }
+
+  /** Turning IP addresses off also removes the ones already kept. */
+  async setSettings(patch: Partial<AnalyticsSettings>): Promise<AnalyticsSettings> {
+    this.settings = { ...this.settings, ...patch }
+    await this.ctx.storage.put('analytics_settings', this.settings)
+    if (!this.settings.storeIp) this.sql.exec('UPDATE sessions SET ip = NULL WHERE ip IS NOT NULL')
+    return this.settings
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -239,24 +418,141 @@ export class AudienceStore extends DurableObject<Env> {
   private collectOne(item: CollectItem, batch: CollectBatch): boolean {
     const person = item.type === 'identify' ? this.identify(item, batch) : this.resolve(item, batch)
     if (!person) return false
-    if (item.type !== 'identify') {
-      const name = item.type === 'page' ? PAGEVIEW : item.event!
-      this.sql.exec(
-        'INSERT INTO events (person_id, name, properties, url, occurred_at) VALUES (?, ?, ?, ?, ?)',
-        person.id,
-        name,
-        JSON.stringify(item.properties),
-        item.url,
-        item.at,
-      )
-      this.sql.exec(
-        'INSERT INTO event_names VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET total = total + 1, last_at = max(last_at, excluded.last_at)',
-        name,
-        item.at,
-      )
+    if (item.type === 'page_leave') {
+      this.pageLeave(person.id, item)
+      this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?) WHERE id = ?', item.at, person.id)
+      return true
     }
-    this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?) WHERE id = ?', item.at, person.id)
+    const visit = this.visit(person.id, item)
+    const name = item.type === 'page' ? PAGEVIEW : item.type === 'identify' ? IDENTIFY : item.event!
+    // identify() keeps what it was told (traits) as the event's properties.
+    const properties = item.type === 'identify' ? item.traits : item.properties
+    this.sql.exec(
+      'INSERT INTO events (person_id, type, name, properties, url, domain, session_id, path, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      person.id,
+      item.type,
+      name,
+      JSON.stringify(properties),
+      item.url,
+      item.domain,
+      visit.id,
+      item.context.path ?? null,
+      item.at,
+    )
+    this.sql.exec(
+      'INSERT INTO event_names VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET total = total + 1, last_at = max(last_at, excluded.last_at)',
+      name,
+      item.at,
+    )
+    const current = this.one<{ metrics: string }>('SELECT metrics FROM people WHERE id = ?', person.id)!
+    const metrics = applyEvent(JSON.parse(current.metrics) as Metrics, item, { newSession: visit.created })
+    this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?), metrics = ? WHERE id = ?', item.at, JSON.stringify(metrics), person.id)
     return true
+  }
+
+  /**
+   * The visit an event belongs to, opened on first sight. A session id that already belongs to someone else (a
+   * forged or reused id) is ignored rather than mixing two people's visits.
+   */
+  private visit(personId: string, item: CollectItem): { id: string | null; created: boolean } {
+    const ctx = item.context
+    if (!ctx.sessionId) return { id: null, created: false }
+    const existing = this.one<SessionRow>('SELECT id, person_id FROM sessions WHERE id = ?', ctx.sessionId)
+    const page = item.type === 'page' ? 1 : 0
+    if (existing) {
+      if (existing.person_id !== personId) return { id: null, created: false }
+      this.sql.exec(
+        `UPDATE sessions SET ended_at = max(ended_at, ?), started_at = min(started_at, ?), pageviews = pageviews + ?, events = events + 1,
+         exit_path = CASE WHEN ? = 1 AND ? >= ended_at THEN ? ELSE exit_path END WHERE id = ?`,
+        item.at,
+        item.at,
+        page,
+        page,
+        item.at,
+        ctx.path ?? null,
+        ctx.sessionId,
+      )
+      return { id: ctx.sessionId, created: false }
+    }
+    const c = ctx.campaign
+    this.sql.exec(
+      `INSERT INTO sessions (id, person_id, domain, started_at, ended_at, pageviews, events, landing_path, exit_path, channel, referrer,
+         referring_domain, utm_source, utm_medium, utm_campaign, utm_term, utm_content, click_id, ip, country, region, city, postal_code,
+         timezone, latitude, longitude, continent, asn, as_org, browser, browser_version, os, os_version, device_type, screen, viewport,
+         locale, library)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ctx.sessionId,
+      personId,
+      item.domain,
+      item.at,
+      item.at,
+      page,
+      page ? (ctx.path ?? null) : null,
+      page ? (ctx.path ?? null) : null,
+      ctx.channel ?? 'Direct',
+      ctx.referrer ?? null,
+      ctx.referringDomain ?? null,
+      c?.source ?? null,
+      c?.medium ?? null,
+      c?.name ?? null,
+      c?.term ?? null,
+      c?.content ?? null,
+      ctx.clickId ?? null,
+      this.settings.storeIp ? (ctx.ip ?? null) : null,
+      ctx.country ?? null,
+      ctx.region ?? null,
+      ctx.city ?? null,
+      ctx.postalCode ?? null,
+      ctx.timezone ?? null,
+      ctx.latitude ?? null,
+      ctx.longitude ?? null,
+      ctx.continent ?? null,
+      ctx.asn ?? null,
+      ctx.asOrganization ?? null,
+      ctx.browser ?? null,
+      ctx.browserVersion ?? null,
+      ctx.os ?? null,
+      ctx.osVersion ?? null,
+      ctx.deviceType ?? null,
+      ctx.screen ?? null,
+      ctx.viewport ?? null,
+      ctx.locale ?? null,
+      ctx.library ?? null,
+    )
+    return { id: ctx.sessionId, created: true }
+  }
+
+  /**
+   * Time on a page and scroll depth, from the snippet when the visitor leaves it. Updates the latest view of that
+   * page in the visit; the snippet may send it more than once (tab hidden, then closed), so only growth counts.
+   */
+  private pageLeave(personId: string, item: CollectItem) {
+    const ctx = item.context
+    const ms = Math.min(Math.max(0, Math.round(Number(item.properties.duration_ms) || 0)), 6 * 3_600_000)
+    const scroll = Math.min(100, Math.max(0, Math.round(Number(item.properties.scroll_depth) || 0)))
+    if (!ctx.sessionId || !ctx.path) return
+    const view = this.one<{ id: number; ms: number | null; scroll: number | null }>(
+      `SELECT id, json_extract(properties, '$.duration_ms') AS ms, json_extract(properties, '$.scroll_depth') AS scroll FROM events
+       WHERE session_id = ? AND person_id = ? AND name = ? AND path = ? ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+      ctx.sessionId,
+      personId,
+      PAGEVIEW,
+      ctx.path,
+    )
+    if (!view) return
+    const added = ms - (view.ms ?? 0)
+    if (added <= 0 && scroll <= (view.scroll ?? 0)) return
+    this.sql.exec(
+      "UPDATE events SET properties = json_set(properties, '$.duration_ms', CAST(? AS INTEGER), '$.scroll_depth', CAST(? AS INTEGER)) WHERE id = ?",
+      Math.max(ms, view.ms ?? 0),
+      Math.max(scroll, view.scroll ?? 0),
+      view.id,
+    )
+    if (added > 0) {
+      this.sql.exec('UPDATE sessions SET engaged_ms = engaged_ms + ?, ended_at = max(ended_at, ?) WHERE id = ?', added, item.at, ctx.sessionId)
+      const current = this.one<{ metrics: string }>('SELECT metrics FROM people WHERE id = ?', personId)!
+      this.sql.exec('UPDATE people SET metrics = ? WHERE id = ?', JSON.stringify(addEngagement(JSON.parse(current.metrics) as Metrics, added)), personId)
+    }
   }
 
   private byExternal(domain: string, externalId: string) {
@@ -346,8 +642,9 @@ export class AudienceStore extends DurableObject<Env> {
       } else if (user) {
         person = user
       } else if (lead && lead.kind === 'lead') {
-        this.sql.exec("UPDATE people SET kind = 'user', external_id = ?, updated_at = ? WHERE id = ?", userId, new Date().toISOString(), lead.id)
-        person = { ...lead, kind: 'user', external_id: userId }
+        const metrics = JSON.stringify(identified(JSON.parse(lead.metrics) as Metrics, at, lead.first_seen_at))
+        this.sql.exec("UPDATE people SET kind = 'user', external_id = ?, metrics = ?, updated_at = ? WHERE id = ?", userId, metrics, new Date().toISOString(), lead.id)
+        person = { ...lead, kind: 'user', external_id: userId, metrics }
       } else {
         person = this.create({ kind: 'user', domain, externalId: userId, anonymousId, source: this.sourceOf(item, batch), at })
       }
@@ -370,16 +667,19 @@ export class AudienceStore extends DurableObject<Env> {
   private merge(from: PersonRow, into: PersonRow) {
     this.sql.exec('UPDATE events SET person_id = ? WHERE person_id = ?', into.id, from.id)
     this.sql.exec('UPDATE aliases SET person_id = ? WHERE person_id = ?', into.id, from.id)
+    this.sql.exec('UPDATE sessions SET person_id = ? WHERE person_id = ?', into.id, from.id)
+    const metrics = mergeMetrics(JSON.parse(from.metrics) as Metrics, JSON.parse(into.metrics) as Metrics, from.first_seen_at < into.first_seen_at)
     const attrs = { ...(JSON.parse(from.attributes) as Attributes), ...(JSON.parse(into.attributes) as Attributes) }
     this.sql.exec('DELETE FROM people WHERE id = ?', from.id)
     this.sql.exec(
       `UPDATE people SET name = coalesce(name, ?), phone = coalesce(phone, ?), attributes = ?, first_seen_at = min(first_seen_at, ?),
-       last_seen_at = max(last_seen_at, ?), updated_at = ? WHERE id = ?`,
+       last_seen_at = max(last_seen_at, ?), metrics = ?, updated_at = ? WHERE id = ?`,
       from.name,
       from.phone,
       JSON.stringify(attrs),
       from.first_seen_at,
       from.last_seen_at,
+      JSON.stringify(metrics),
       new Date().toISOString(),
       into.id,
     )
@@ -433,6 +733,215 @@ export class AudienceStore extends DurableObject<Env> {
       new Date().toISOString(),
       person.id,
     )
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Email: mail between the organization's mailboxes and people already in the audience (audience/email.ts).
+
+  /**
+   * Records `$email_<kind>` on every website person with one of these addresses (on any of the organization's
+   * sites). Addresses nobody has are ignored: mail alone never adds anyone. Properties name the mailbox, never
+   * the subject or body. Returns how many events were recorded.
+   */
+  async recordEmail(input: EmailActivity): Promise<number> {
+    const name = `$email_${input.kind}`
+    const addresses = [...new Set(input.addresses.map((a) => a.trim().toLowerCase()).filter(Boolean))].slice(0, 50)
+    if (!addresses.length) return 0
+    const properties: Record<string, unknown> = { mailbox: input.mailbox, mailbox_id: input.mailboxId }
+    if (input.emailId) properties.email_id = input.emailId
+    if (input.detail) properties.detail = input.detail.slice(0, 200)
+    // Mail from the person is them being active; mail to them isn't.
+    const active = input.kind === 'received' || input.kind === 'replied'
+    let n = 0
+    this.ctx.storage.transactionSync(() => {
+      const people = this.all<PersonRow>(
+        `SELECT * FROM people WHERE kind <> 'contact' AND email IN (${addresses.map(() => '?').join(', ')})`,
+        ...addresses,
+      )
+      for (const p of people) {
+        if (
+          input.emailId &&
+          this.one("SELECT 1 FROM events WHERE person_id = ? AND name = ? AND json_extract(properties, '$.email_id') = ?", p.id, name, input.emailId)
+        ) continue
+        this.sql.exec(
+          "INSERT INTO events (person_id, type, name, properties, url, domain, session_id, path, occurred_at) VALUES (?, 'email', ?, ?, NULL, ?, NULL, NULL, ?)",
+          p.id,
+          name,
+          JSON.stringify({ ...properties, address: p.email }),
+          p.domain,
+          input.at,
+        )
+        this.sql.exec(
+          'INSERT INTO event_names VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET total = total + 1, last_at = max(last_at, excluded.last_at)',
+          name,
+          input.at,
+        )
+        const metrics = JSON.stringify(applyEmail(JSON.parse(p.metrics) as Metrics, input.kind, input.at))
+        if (active) this.sql.exec('UPDATE people SET metrics = ?, last_seen_at = max(last_seen_at, ?) WHERE id = ?', metrics, input.at, p.id)
+        else this.sql.exec('UPDATE people SET metrics = ? WHERE id = ?', metrics, p.id)
+        n++
+      }
+    })
+    return n
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Funnels
+
+  /** Every funnel, with its conversion over the last 30 days (from the cache when fresh) for the side list. */
+  async listFunnels(domain?: string): Promise<(Funnel & { conversion: number })[]> {
+    return this.all<FunnelRow>('SELECT * FROM funnels ORDER BY position, created_at')
+      .map(toFunnel)
+      .map((f) => ({ ...f, conversion: this.funnelResult(f, 30, domain).conversion }))
+  }
+
+  async getFunnel(id: string): Promise<Funnel | null> {
+    const row = this.one<FunnelRow>('SELECT * FROM funnels WHERE id = ?', id)
+    return row ? toFunnel(row) : null
+  }
+
+  /** Creates a funnel, or replaces one (`id`). Null when that funnel doesn't exist; 'full' at the limit. */
+  async saveFunnel(input: FunnelInput & { id?: string }): Promise<Funnel | null | 'full'> {
+    const now = new Date().toISOString()
+    if (input.id) {
+      if (!this.one('SELECT 1 FROM funnels WHERE id = ?', input.id)) return null
+      this.sql.exec('UPDATE funnels SET name = ?, steps = ?, window_days = ?, updated_at = ? WHERE id = ?', input.name, JSON.stringify(input.steps), input.windowDays, now, input.id)
+      this.sql.exec('DELETE FROM funnel_cache WHERE funnel_id = ?', input.id)
+      return this.getFunnel(input.id)
+    }
+    if (this.one<{ n: number }>('SELECT count(*) AS n FROM funnels')!.n >= MAX_FUNNELS) return 'full'
+    const id = newId('fun')
+    const position = this.one<{ n: number }>('SELECT coalesce(max(position), -1) + 1 AS n FROM funnels')!.n
+    this.sql.exec('INSERT INTO funnels VALUES (?, ?, ?, ?, ?, ?, ?)', id, input.name, JSON.stringify(input.steps), input.windowDays, position, now, now)
+    return this.getFunnel(id)
+  }
+
+  async deleteFunnel(id: string): Promise<boolean> {
+    const found = !!this.one('SELECT 1 FROM funnels WHERE id = ?', id)
+    this.sql.exec('DELETE FROM funnels WHERE id = ?', id)
+    this.sql.exec('DELETE FROM funnel_cache WHERE funnel_id = ?', id)
+    return found
+  }
+
+  async computeFunnel(id: string, range: FunnelRange, domain?: string): Promise<{ funnel: Funnel; result: FunnelResult } | null> {
+    const funnel = await this.getFunnel(id)
+    return funnel ? { funnel, result: this.funnelResult(funnel, range, domain) } : null
+  }
+
+  private funnelResult(funnel: Funnel, range: FunnelRange, domain?: string): FunnelResult {
+    const key = `${range}|${domain ?? ''}`
+    const hit = this.one<{ result: string; computed_at: string }>('SELECT result, computed_at FROM funnel_cache WHERE funnel_id = ? AND key = ?', funnel.id, key)
+    if (hit && Date.now() - Date.parse(hit.computed_at) < FUNNEL_CACHE_MS) return JSON.parse(hit.result) as FunnelResult
+    const q = funnelQuery(funnel, daysAgo(range), domain)
+    const result = summarize(this.all<Record<string, string | null>>(q.sql, ...q.args), funnel.steps.length, range)
+    this.sql.exec(
+      'INSERT INTO funnel_cache VALUES (?, ?, ?, ?) ON CONFLICT (funnel_id, key) DO UPDATE SET result = excluded.result, computed_at = excluded.computed_at',
+      funnel.id,
+      key,
+      JSON.stringify(result),
+      result.computedAt,
+    )
+    return result
+  }
+
+  /** What the funnel editor offers: event names seen (yours, not xstate's own), and the most viewed paths. */
+  async funnelOptions(): Promise<{ events: string[]; paths: string[] }> {
+    const events = this.all<{ name: string }>("SELECT name FROM event_names WHERE name NOT LIKE '$%' ORDER BY total DESC LIMIT 200").map((r) => r.name)
+    const paths = this.all<{ path: string }>(
+      "SELECT path, count(*) AS n FROM events WHERE name = '$pageview' AND path IS NOT NULL AND occurred_at >= ? GROUP BY path ORDER BY n DESC LIMIT 100",
+      daysAgo(30),
+    ).map((r) => r.path)
+    return { events, paths }
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Analytics: the event feed. Website events only (contacts never have events), so no viewer is needed.
+
+  /** Whether any event has arrived yet (the install screen), and when the latest did. */
+  async analyticsStatus(domain?: string): Promise<{ lastEventAt: string | null }> {
+    const scope = domain ? `WHERE ${domainMatch('domain')}` : ''
+    const row = this.one<{ at: string }>(`SELECT occurred_at AS at FROM events ${scope} ORDER BY id DESC LIMIT 1`, ...(domain ? [domain, domain, domain] : []))
+    return { lastEventAt: row?.at ?? null }
+  }
+
+  /**
+   * Events, newest first. `after`: only those that arrived after that id (the live feed's polling); `before`: the
+   * page after that id. `recent` is how many events happened in the last five minutes.
+   */
+  async listEvents(query: EventQuery): Promise<{ events: FeedEvent[]; recent: number; nextBefore: number | null }> {
+    const parts: string[] = []
+    const args: Binding[] = []
+    const scope = emailScope(query.mailboxIds)
+    if (scope) {
+      parts.push(scope.sql)
+      args.push(...scope.args)
+    }
+    if (query.domain) {
+      parts.push(domainMatch('e.domain'))
+      args.push(query.domain, query.domain, query.domain)
+    }
+    if (query.type) {
+      parts.push('e.type = ?')
+      args.push(query.type)
+    }
+    const term = query.q?.trim().toLowerCase()
+    if (term) {
+      parts.push(
+        `(instr(lower(e.name), ?) > 0 OR instr(lower(coalesce(e.path, '')), ?) > 0 OR instr(lower(coalesce(p.name, '')), ?) > 0
+          OR instr(coalesce(p.email, ''), ?) > 0 OR instr(lower(coalesce(p.external_id, '')), ?) > 0 OR instr(lower(coalesce(p.anonymous_id, '')), ?) > 0)`,
+      )
+      args.push(term, term, term, term, term, term)
+    }
+    const filters = [...parts]
+    const filterArgs = [...args]
+    if (query.after !== undefined) {
+      parts.push('e.id > ?')
+      args.push(query.after)
+    }
+    if (query.before !== undefined) {
+      parts.push('e.id < ?')
+      args.push(query.before)
+    }
+    const where = parts.length ? `WHERE ${parts.join(' AND ')}` : ''
+    const rows = this.all<FeedRow>(
+      `SELECT e.id, e.type, e.name, e.properties, e.url, e.session_id, e.occurred_at, e.path, e.domain, e.person_id,
+         p.kind, p.name AS person_name, p.email, p.external_id, p.anonymous_id
+       FROM events e JOIN people p ON p.id = e.person_id ${where} ORDER BY e.id DESC LIMIT ?`,
+      ...args,
+      query.limit + 1,
+    )
+    const more = rows.length > query.limit
+    const events = rows.slice(0, query.limit).map(toFeedEvent)
+    const since = new Date(Date.now() - 5 * 60_000).toISOString()
+    const recentWhere = [...filters, 'e.occurred_at >= ?'].join(' AND ')
+    const recent = this.one<{ n: number }>(
+      `SELECT count(*) AS n FROM events e ${term ? 'JOIN people p ON p.id = e.person_id' : ''} WHERE ${recentWhere}`,
+      ...filterArgs,
+      since,
+    )!.n
+    return { events, recent, nextBefore: more && query.after === undefined ? (events.at(-1)?.id ?? null) : null }
+  }
+
+  /** One event with the visit it belongs to (where it came from, device, location). */
+  async getEvent(id: number, mailboxIds: string[] | 'all'): Promise<{ event: FeedEvent; visit: VisitContext | null } | null> {
+    const row = this.one<FeedRow>(
+      `SELECT e.id, e.type, e.name, e.properties, e.url, e.session_id, e.occurred_at, e.path, e.domain, e.person_id,
+         p.kind, p.name AS person_name, p.email, p.external_id, p.anonymous_id
+       FROM events e JOIN people p ON p.id = e.person_id WHERE e.id = ?`,
+      id,
+    )
+    if (!row) return null
+    if (row.type === 'email' && mailboxIds !== 'all') {
+      const mailboxId = (JSON.parse(row.properties) as { mailbox_id?: string }).mailbox_id
+      if (!mailboxId || !mailboxIds.includes(mailboxId)) return null
+    }
+    const session = row.session_id ? this.one<Record<string, string | number | null>>('SELECT * FROM sessions WHERE id = ?', row.session_id) : null
+    let visit: VisitContext | null = null
+    if (session) {
+      visit = {}
+      for (const [k, v] of Object.entries(session)) if (v !== null && v !== '' && k !== 'person_id') visit[k] = v
+    }
+    return { event: toFeedEvent(row), visit }
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -512,17 +1021,21 @@ export class AudienceStore extends DurableObject<Env> {
   async getPerson(id: string, viewer: Viewer) {
     const row = this.visible(id, viewer)
     if (!row) return null
-    const events = this.all<{ id: number; name: string; properties: string; url: string | null; occurred_at: string }>(
-      'SELECT * FROM events WHERE person_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 100',
+    const events = this.all<EventRow>(
+      "SELECT id, type, name, properties, url, session_id, occurred_at FROM events WHERE person_id = ? AND type <> 'email' ORDER BY occurred_at DESC, id DESC LIMIT 100",
       id,
-    ).map((e): AudienceEvent => ({ id: e.id, name: e.name, properties: JSON.parse(e.properties) as Record<string, unknown>, url: e.url, occurredAt: e.occurred_at }))
+    ).map(toEvent)
     const segments = this.listSegments()
       .filter((s) => {
         const where = this.where(s.filter, viewer)
         return !!this.one(`SELECT 1 FROM people p WHERE p.id = ? AND (${where.sql})`, id, ...where.args)
       })
       .map((s) => ({ id: s.id, name: s.name }))
-    return { person: toPerson(row), events, segments }
+    const person = toPerson(row)
+    // Browsers (visitor ids) the person has used; worked out here rather than kept up to date on every event.
+    const devices = this.one<{ n: number }>('SELECT count(*) AS n FROM aliases WHERE person_id = ?', id)!.n
+    if (devices) person.metrics.devices_used = devices
+    return { person, events, segments }
   }
 
   async addPerson(
@@ -724,9 +1237,11 @@ export class AudienceStore extends DurableObject<Env> {
         const col = `p.${c.field}`
         return textOp(`coalesce(${col}, '')`, c.op, c.value)
       }
-      case 'attribute': {
+      case 'attribute':
+      case 'metric': {
+        // Metrics (metrics.ts) are worked out by xstate and kept apart from the customer's attributes.
         const path = `$."${c.key}"`
-        const val = 'json_extract(p.attributes, ?)'
+        const val = c.kind === 'metric' ? 'json_extract(p.metrics, ?)' : 'json_extract(p.attributes, ?)'
         switch (c.op) {
           case 'is_set':
             return { sql: `${val} IS NOT NULL`, args: [path] }
