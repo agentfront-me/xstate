@@ -28,6 +28,7 @@ import { deleteInbound, getInbound, quarantineInbound, type InboundEnv } from '.
 import { rawKey } from './shadow'
 import { decideSpam } from './spam'
 import type { StoreDelivery } from './store'
+import type { StoreFolderRole } from './query'
 import { store } from './stub'
 
 /** SES accepts messages up to 40 MB; anything larger in the bucket isn't from SES. */
@@ -233,6 +234,84 @@ async function handToStalwart(
   return { mailboxId: mailbox.id, stalwartId: imported.id, folder: spam.folder, duplicate: false }
 }
 
+/** What a raw message gives the store, whatever brought it: headers, text, size and where its files sit. */
+function deliveryOf(
+  mailbox: MailboxRow,
+  id: string,
+  key: string,
+  sesId: string,
+  raw: Uint8Array,
+  parsed: ParsedMessage,
+  receivedAt: string,
+): Omit<StoreDelivery, 'junk' | 'verdicts'> {
+  const files = fileParts(parsed.parts)
+  const text = stripFooter(parsed.text)
+  return {
+    id,
+    sesId,
+    messageId: parsed.messageId,
+    inReplyTo: messageIds(parsed.inReplyTo)[0] ?? null,
+    references: messageIds(parsed.references),
+    subject: parsed.subject,
+    from: parsed.from,
+    to: parsed.to,
+    cc: parsed.cc,
+    own: [mailbox.address, ...(JSON.parse(mailbox.aliases || '[]') as string[])],
+    preview: previewOf(text),
+    text,
+    receivedAt,
+    size: raw.length,
+    // As mail apps show it: a file that isn't an image shown inside the message.
+    hasAttachment: files.some((p) => p.disposition !== 'inline' || !p.contentId),
+    rawKey: key,
+    attachments: files.map((p) => ({
+      name: partName(p),
+      type: p.type,
+      size: decodePart(raw.subarray(p.start, p.start + p.length), p.encoding).length,
+      start: p.start,
+      length: p.length,
+      encoding: p.encoding,
+    })),
+  }
+}
+
+/**
+ * Stores a message copied in from another provider (the Google Workspace import, docs/mailbox-store-plan.md phase
+ * 4f) in a store-held mailbox: its raw copy in R2, then the store with the folders, read and starred state and
+ * received time it had there. `sourceKey` (e.g. the Gmail id) makes a repeat a duplicate. No spam decision, no
+ * pushes; the new-mail event files its attachments and indexes it but doesn't offer it to agents, apply calendar
+ * rules or scan it (mail copied from Stalwart isn't scanned either).
+ */
+export async function deliverMigrated(
+  env: ReceiveEnv,
+  mailbox: MailboxRow,
+  raw: Uint8Array,
+  meta: { sourceKey: string; receivedAt: string; folderIds: string[]; role: StoreFolderRole | null; seen: boolean; pinned: boolean },
+): Promise<{ id: string; duplicate: boolean }> {
+  const stub = await store(env, mailbox.id)
+  const sesId = `migrated.${meta.sourceKey}`
+  const already = await stub.findBySes(sesId)
+  if (already) return { id: already.id, duplicate: true }
+  const parsed = await parseRaw(raw)
+  const id = ulid()
+  const key = rawKey(mailbox.id, id)
+  const bucket = await organizationBucket(env, mailbox.organization_id)
+  await putObject(env, bucket, key, raw, { contentType: 'message/rfc822', metadata: { 'email-id': id, migrated: meta.sourceKey } })
+  const stored = await stub.deliver({
+    ...deliveryOf(mailbox, id, key, sesId, raw, parsed, meta.receivedAt.replace(/\.\d{3}Z$/, 'Z')),
+    junk: false,
+    seen: meta.seen,
+    verdicts: {},
+    placement: { folderIds: meta.folderIds, role: meta.role, pinned: meta.pinned },
+  })
+  if (stored.duplicate) {
+    await deleteObject(env, bucket, key).catch((err) => console.error(`migration: deleting spare copy ${key} failed`, err))
+    return { id: stored.id, duplicate: true }
+  }
+  await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: meta.role === 'sent' ? 'out' : 'in', offer: false, scan: false })
+  return { id, duplicate: false }
+}
+
 async function deliverTo(
   env: ReceiveEnv,
   mailbox: MailboxRow,
@@ -264,34 +343,8 @@ async function deliverTo(
   const bucket = await organizationBucket(env, mailbox.organization_id)
   await putObject(env, bucket, key, raw, { contentType: 'message/rfc822', metadata: { 'email-id': id, 'ses-id': job.sesId } })
 
-  const files = fileParts(parsed.parts)
-  const text = stripFooter(parsed.text)
   const delivery: StoreDelivery = {
-    id,
-    sesId: job.sesId,
-    messageId: parsed.messageId,
-    inReplyTo: messageIds(parsed.inReplyTo)[0] ?? null,
-    references: messageIds(parsed.references),
-    subject: parsed.subject,
-    from: parsed.from,
-    to: parsed.to,
-    cc: parsed.cc,
-    own: [mailbox.address, ...(JSON.parse(mailbox.aliases || '[]') as string[])],
-    preview: previewOf(text),
-    text,
-    receivedAt: job.receivedAt,
-    size: raw.length,
-    // As mail apps show it: a file that isn't an image shown inside the message.
-    hasAttachment: files.some((p) => p.disposition !== 'inline' || !p.contentId),
-    rawKey: key,
-    attachments: files.map((p) => ({
-      name: partName(p),
-      type: p.type,
-      size: decodePart(raw.subarray(p.start, p.start + p.length), p.encoding).length,
-      start: p.start,
-      length: p.length,
-      encoding: p.encoding,
-    })),
+    ...deliveryOf(mailbox, id, key, job.sesId, raw, parsed, job.receivedAt),
     junk: spam.folder === 'junk',
     verdicts: { ...job.verdicts, spamScore: String(spam.score), spamReasons: spam.reasons.join('; ') },
   }

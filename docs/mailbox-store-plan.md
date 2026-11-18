@@ -2066,8 +2066,10 @@ switching several domains at once.
   the flip (all steps recorded; a reply to an old copied message lands in its old conversation, through the 4c
   headers; mail from another Stalwart mailbox is queued for relay; the hourly catch-up queues nothing; the old account
   can't send); then rollback (a message received after the flip is back in Stalwart) and cancel.
-- On production: first a throwaway subdomain of ours (its own SES identity and MX in Cloudflare, one shared mailbox):
-  the whole sequence including rollback. Then xstate.com.
+- On production: decided 2026-11-18 to skip a throwaway subdomain (the logic ran end to end locally; SES receiving,
+  the routing rule, the sweep and the store DNS records are already proven on 99events.com). xstate.com goes first, at
+  a quiet time, with rollback ready; its first flip is where the hand-over to Stalwart and `takeOwnership` meet
+  production.
 
 **Decided:** rollback copies messages only (moves, flags and calendar changes reported); the flip is started by a
 person.
@@ -2098,6 +2100,27 @@ with a fresh shadow copy, routing rule removed; a second rollback refused → `c
 local Stalwart's strategy as before. 4 new unit tests; 444 tests pass.
 
 **Deploy:** migration 0039 runs in CI. Nothing changes until someone starts a switch.
+
+#### Steps 4f and 4g: Workspace mail into the store, new domains on the store (approved and built 2026-11-18, uncommitted)
+
+- **4f:** `migration/mail.ts` has a `MailTarget` (Stalwart account or store-held mailbox, from `mailboxes.backend`).
+  For the store: `folders` makes the role folders (the store takes over its mail if empty) and one folder per Gmail
+  label named by its whole path ("Clients/Acme"; the store's folders aren't nested), via the store's
+  `importFolders`; each message goes straight into the store inside its byte budget with `deliverMigrated`
+  (`receive.ts`: raw copy in R2, `deliver` with an explicit `placement` of several folders and starred, read state,
+  original received time, `sesId` `migrated.<googleId>.<gmailId>` so a repeat is a duplicate; attachments not held
+  for scanning, as for Stalwart copies; then a `new` event with `offer: false, scan: false`). The final pass re-files
+  label changes with the store's `setPlacements`. Gmail paging, claims, retries and the label rules are unchanged.
+  `receive.ts` now builds a delivery's message fields in one place (`deliveryOf`) for SES mail and migrated mail.
+- **4g:** `NEW_DOMAINS_ON_STORE` (wrangler var, `off`): when `on`, `addDomain` creates the domain with
+  `mail_path = 'store'`, so its records page is SES's and its mailboxes start on the store (4b). Turned on once our own
+  domains have moved.
+
+**Local test:** fake Google, dev@acme.test on the store, mail-only import: 49 listed, 46 copied, 3 skipped (the fake's
+chat and similar); in the store: label folders "Clients" and "Clients/Acme" (5 each), the 5 starred messages pinned,
+unread kept unread, archived mail in Archive, trashed in Trash, drafts in Drafts. With `NEW_DOMAINS_ON_STORE=on`: a new
+domain started on `store`, its first mailbox on the store, its records page the six SES records. Test data removed.
+444 tests pass.
 
 #### Mail apps (IMAP, SMTP, CalDAV)
 

@@ -49,14 +49,14 @@ export async function listSesUnverified(db: D1Database, limit: number): Promise<
 
 export function insert(
   db: D1Database,
-  domain: { id: string; organizationId: string; name: string; stalwartId: string; createdBy: string; now: string },
+  domain: { id: string; organizationId: string; name: string; stalwartId: string; createdBy: string; now: string; mailPath?: 'stalwart' | 'store' },
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO domains (id, organization_id, name, stalwart_id, created_by, created_at, updated_at, ownership_token)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO domains (id, organization_id, name, stalwart_id, created_by, created_at, updated_at, ownership_token, mail_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(domain.id, domain.organizationId, domain.name, domain.stalwartId, domain.createdBy, domain.now, domain.now, crypto.randomUUID().replaceAll('-', ''))
+    .bind(domain.id, domain.organizationId, domain.name, domain.stalwartId, domain.createdBy, domain.now, domain.now, crypto.randomUUID().replaceAll('-', ''), domain.mailPath ?? 'stalwart')
 }
 
 export function setEnabled(db: D1Database, id: string, enabled: boolean, now: string): D1PreparedStatement {

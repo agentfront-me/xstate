@@ -14,6 +14,10 @@
 // and one that was alone when a job died is skipped and reported.
 
 import * as mailboxesDb from '../db/mailboxes'
+import type { MailboxRow } from '../db/mailboxes'
+import { deliverMigrated, type ReceiveEnv } from '../mailbox/receive'
+import type { StoreFolderRole } from '../mailbox/query'
+import { store as mailboxStore } from '../mailbox/stub'
 import * as migrationsDb from '../db/migrations'
 import type { MigrationUserRow } from '../db/migrations'
 import { enqueue as enqueueMailSync } from '../jobs/mail-sync'
@@ -60,11 +64,40 @@ const SKIP_AT_ATTEMPTS = 2
 export type Folders = { roles: Map<FolderRole, string>; labels: Map<string, string> }
 
 /**
+ * Where a person's Gmail goes: their Stalwart account, or, for a mailbox whose mail the store holds (a domain on the
+ * new mail system, docs/mailbox-store-plan.md phase 4f), the mailbox's own store.
+ */
+export type MailTarget = { kind: 'stalwart'; accountId: string } | { kind: 'store'; mailbox: MailboxRow }
+
+export function targetOf(mailbox: MailboxRow): MailTarget {
+  return mailbox.backend === 'store' ? { kind: 'store', mailbox } : { kind: 'stalwart', accountId: mailbox.stalwart_id }
+}
+
+/** The role a store message is listed under: the first of its folders that has one, in this order; null for labels only. */
+export function roleOf(place: Folders, folderIds: string[]): StoreFolderRole | null {
+  for (const role of ['trash', 'junk', 'drafts', 'sent', 'inbox', 'archive'] as const) {
+    const id = place.roles.get(role)
+    if (id && folderIds.includes(id)) return role
+  }
+  return null
+}
+
+/**
  * The account's role folders (creating Archive if it has none), and a folder for each Gmail user label: nested
  * labels ("Clients/Acme") become nested folders. Label → folder is remembered in the MigrationStore, so later pages
  * don't look again.
  */
-export async function folders(env: Env, organizationId: string, googleId: string, accountId: string, labels: GLabel[]): Promise<Folders> {
+export async function folders(env: Env, organizationId: string, googleId: string, target: MailTarget, labels: GLabel[]): Promise<Folders> {
+  if (target.kind === 'store') {
+    // One folder per label, named by its whole path ("Clients/Acme"): the store's folders aren't nested.
+    const user = labels.filter((l) => l.type === 'user')
+    const made = await (await mailboxStore(env, target.mailbox.id)).importFolders(user.map((l) => l.name))
+    return {
+      roles: new Map(Object.entries(made.roles) as [FolderRole, string][]),
+      labels: new Map(user.flatMap((l) => (made.named[l.name] ? [[l.id, made.named[l.name]!] as [string, string]] : []))),
+    }
+  }
+  const accountId = target.accountId
   const store = migrationStore(env, organizationId)
   let list: JmapFolder[] = (await jmap.getFolders(env, [accountId])).get(accountId) ?? []
   const roles = new Map<FolderRole, string>()
@@ -128,9 +161,10 @@ export async function copyMailPage(env: Env, job: MailJob): Promise<void> {
   if (!mailbox) return setIssue(env, u, 'error', 'The xstate mailbox for this person was deleted')
 
   try {
-    await copyPage(env, job, m.organization_id, m.mail_range, u, mailbox.stalwart_id)
-    // Attachments of what was just imported go to Storage, like any new mail.
-    await enqueueMailSync(env, [{ mailboxId: mailbox.id, reason: 'import' }])
+    const target = targetOf(mailbox)
+    await copyPage(env, job, m.organization_id, m.mail_range, u, target)
+    // Attachments of what was just imported go to Storage, like any new mail (the store's own events do that for it).
+    if (target.kind === 'stalwart') await enqueueMailSync(env, [{ mailboxId: mailbox.id, reason: 'import' }])
   } catch (err) {
     if (err instanceof UserIssue) return setIssue(env, u, err.issue, err.message)
     if (err instanceof GoogleError && err.code === 'not_authorized') {
@@ -153,7 +187,7 @@ export async function copyMailPage(env: Env, job: MailJob): Promise<void> {
   }
 }
 
-async function copyPage(env: Env, job: MailJob, organizationId: string, range: 'all' | '5y' | '3y' | '1y', u: MigrationUserRow, accountId: string) {
+async function copyPage(env: Env, job: MailJob, organizationId: string, range: 'all' | '5y' | '3y' | '1y', u: MigrationUserRow, target: MailTarget) {
   const ws = workspace(env)
   const store = migrationStore(env, organizationId)
   const q = rangeQuery(range)
@@ -173,7 +207,7 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
   }
 
   // Folders and limits once per job, not per page.
-  const place = await folders(env, organizationId, u.google_id, accountId, await ws.gmailLabels(u.email))
+  const place = await folders(env, organizationId, u.google_id, target, await ws.gmailLabels(u.email))
   const max = (await mailLimits(env)).maxSizeUpload
   const next = () => enqueueMigrationJobs(env, [{ kind: 'mail', migrationId: job.migrationId, googleId: u.google_id, chain: job.chain }])
 
@@ -186,7 +220,7 @@ async function copyPage(env: Env, job: MailJob, organizationId: string, range: '
 
     const claim = `${job.migrationId}:${u.google_id}:${job.chain}:${cursor ?? 'first'}`
     const { mine: ids, held } = await store.claim('message', u.google_id, page.ids, claim)
-    const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, accountId, place, max }, ids, claim)
+    const imported = await importIds(env, { store, email: u.email, googleId: u.google_id, target, place, max }, ids, claim)
     const ms = Date.now() - began
     // Messages and bytes a second for one mailbox: Gmail's per-user limit or Stalwart's import speed, whichever binds.
     console.log(JSON.stringify({ event: 'migration_mail_page', migrationId: job.migrationId, messages: imported.copied, skipped: imported.skipped, bytes: imported.bytes, ms }))
@@ -239,7 +273,7 @@ export type ImportContext = {
   store: ReturnType<typeof migrationStore>
   email: string
   googleId: string
-  accountId: string
+  target: MailTarget
   place: Folders
   max: number
 }
@@ -304,7 +338,8 @@ export async function importIds(
       ready = ready.slice(IMPORT_BATCH)
       writes = writes.then(async () => {
         if (full) return
-        const results = await jmap.importEmails(env, c.accountId, batch.map((r) => r.item)).catch((err) => {
+        if (c.target.kind !== 'stalwart') return
+        const results = await jmap.importEmails(env, c.target.accountId, batch.map((r) => r.item)).catch((err) => {
           broken = true
           throw err
         })
@@ -364,7 +399,26 @@ export async function importIds(
       const where = placement(msg.labelIds, userLabels)
       if ('skip' in where) return void skipped.push({ sourceId: id, reason: where.skip })
       if (msg.raw.byteLength > c.max) return void skipped.push({ sourceId: id, reason: 'too_large', detail: tooLarge(msg.raw.byteLength) })
-      const blob = await jmap.uploadBlob(env, c.accountId, msg.raw, 'message/rfc822', msg.raw.byteLength)
+      if (c.target.kind === 'store') {
+        // Straight into the store, inside this message's byte budget; recorded with the rest.
+        const folderIds = folderIdsFor(c.place, where.folders)
+        const stored = await deliverMigrated(env as ReceiveEnv, c.target.mailbox, msg.raw, {
+          sourceKey: `${c.googleId}.${id}`,
+          receivedAt: new Date(msg.internalDate).toISOString(),
+          folderIds,
+          role: roleOf(c.place, folderIds),
+          seen: where.keywords.includes('$seen'),
+          pinned: where.keywords.includes('$flagged'),
+        })
+        bytes += msg.raw.byteLength
+        writes = writes.then(async () => {
+          await c.store.record('message', c.googleId, [{ sourceId: id, targetId: stored.id }])
+          finished.add(id)
+          copied++
+        })
+        return
+      }
+      const blob = await jmap.uploadBlob(env, c.target.accountId, msg.raw, 'message/rfc822', msg.raw.byteLength)
       bytes += msg.raw.byteLength
       ready.push({ sourceId: id, item: { blobId: blob.blobId, folderIds: folderIdsFor(c.place, where.folders), keywords: where.keywords, receivedAt: new Date(msg.internalDate).toISOString() } })
     } finally {

@@ -67,6 +67,8 @@
     // and logs but refuses nothing (the first week); "fake" flags only the EICAR test file (local dev); "off" skips
     // scanning. Needs the SCAN_SECRET secret. Mail arriving over SMTP is scanned on the mail server either way.
     "SCAN_MODE": "log",
+    // "on": domains added from now on start on the mailbox store (docs/mailbox-store-plan.md, phase 4g). Off until our own domains have moved.
+    "NEW_DOMAINS_ON_STORE": "off",
     "SCAN_URL": "https://mx.xstate.io/_scan",
     // Receiving through SES (mailbox/receive.ts, docs/mailbox-store-plan.md phase 2): the SNS topic whose notifications
     // /webhooks/ses-inbound accepts. Empty: receiving is off and the endpoint answers 404. Needs the

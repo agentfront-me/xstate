@@ -28,7 +28,7 @@ import { scanSafety, scanState, type ScanOutcome, type ScanState } from './scan-
  * `offer: false` keeps received mail from agents (old mail caught up, which agents shouldn't answer now).
  */
 export type MailEvent =
-  | { kind: 'new'; mailboxId: string; ids: string[]; direction: 'in' | 'out'; offer?: boolean }
+  | { kind: 'new'; mailboxId: string; ids: string[]; direction: 'in' | 'out'; offer?: boolean; scan?: boolean }
   | { kind: 'moved' | 'removed'; mailboxId: string; ids: string[] }
   /** Scan received attachments that never were (mail from before scanning existed): no filing, no agents. */
   | { kind: 'scan'; mailboxId: string; ids: string[] }
@@ -89,7 +89,8 @@ async function handle(env: Env, event: MailEvent, attempts: number) {
     const parsed = await parseRaw(raw)
     result.messages++
     // Received attachments are scanned for viruses before anything else (step 4c); sent ones were, when uploaded.
-    const scans = !fresh || fresh.direction === 'in' ? await scanAttachments(env, stub, row, raw, parsed, attempts) : new Map<number, Scanned>()
+    // Not for mail copied in from another provider (`scan: false`): it isn't held back, as Stalwart copies aren't.
+    const scans = !fresh || (fresh.direction === 'in' && fresh.scan !== false) ? await scanAttachments(env, stub, row, raw, parsed, attempts) : new Map<number, Scanned>()
     const infected = [...scans.values()].some((s) => s.state === 'infected')
     if (infected) result.infected++
     if (!fresh) continue

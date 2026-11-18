@@ -22,7 +22,10 @@ export async function addDomain(env: EmailEnv, actor: Actor, organizationId: str
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  const writes = [domainsDb.insert(env.DB, { id, organizationId, name, stalwartId, createdBy: actor.userId, now })]
+  // New domains start on the new mail system once NEW_DOMAINS_ON_STORE is "on" (phase 4g): SES records only, and
+  // every mailbox made on it is held by the store (4b). Stalwart still gets the domain, for stalwart_id (phase 5).
+  const mailPath = (env as { NEW_DOMAINS_ON_STORE?: string }).NEW_DOMAINS_ON_STORE === 'on' ? 'store' : 'stalwart'
+  const writes = [domainsDb.insert(env.DB, { id, organizationId, name, stalwartId, createdBy: actor.userId, now, mailPath })]
   if (!isAdmin(member) && domainAccess(member, id) !== 'manage') {
     const permissions = { ...member.permissions, domains: { ...member.permissions.domains, [id]: 'manage' as const } }
     writes.push(membersDb.setPermissions(env.DB, member.id, permissions, now))

@@ -98,6 +98,11 @@ export type StoreDelivery = {
   /** Read already: true for the mailbox's own mail. */
   seen?: boolean
   verdicts: Record<string, string>
+  /**
+   * Mail copied in from another provider (the Google Workspace import, phase 4f): its folders as given (several, custom
+   * ones included), starred or not, and attachments not held back for scanning, as for mail copied from Stalwart.
+   */
+  placement?: { folderIds: string[]; role: StoreFolderRole | null; pinned: boolean }
 }
 
 /** A message as the new-mail events read it (`rows`). */
@@ -657,19 +662,20 @@ export class MailboxStore extends Agent<Env> {
    */
   deliver(d: StoreDelivery): { id: string; threadId: string; folder: StoreFolderRole; duplicate: boolean } {
     return this.ctx.storage.transactionSync(() => {
-      const role: StoreFolderRole = d.folder ?? (d.junk ? 'junk' : 'inbox')
+      const role: StoreFolderRole = (d.placement ? d.placement.role : d.folder) ?? (d.placement ? 'archive' : d.junk ? 'junk' : 'inbox')
       const existing = d.sesId ? this.findBySes(d.sesId) : null
       if (existing) return { ...existing, folder: role, duplicate: true }
       const folders = this.ensureOwned()
       const folderId = folders.get(role)!
+      const folderIds = d.placement?.folderIds.length ? d.placement.folderIds : [folderId]
       const threadId = this.threadFor(d) ?? ulid()
       this.upsertOne({
         id: d.id,
         threadId,
-        folderIds: [folderId],
-        folder: role,
+        folderIds,
+        folder: d.placement ? d.placement.role : role,
         seen: !!d.seen,
-        pinned: false,
+        pinned: d.placement?.pinned ?? false,
         from: d.from,
         to: d.to,
         subject: d.subject,
@@ -685,16 +691,19 @@ export class MailboxStore extends Agent<Env> {
         `UPDATE messages SET message_id = ?, in_reply_to = ?, refs = ?, subject_key = ?, ses_id = ?, verdicts = ?, modseq = ?,
           raw_key = ?, raw_size = ?, parse_diff = '', is_draft = ? WHERE n = ?`,
         d.messageId, d.inReplyTo, d.references.join(' ') || null, subjectKey(d.subject), d.sesId, JSON.stringify(d.verdicts), modseq,
-        d.rawKey, d.size, d.folder === 'drafts' ? 1 : 0, n,
+        d.rawKey, d.size, role === 'drafts' ? 1 : 0, n,
       )
-      const folder = [...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, folderId)][0] as { uid_next: number }
-      this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, folder.uid_next, folderId, n)
-      this.db.exec(`UPDATE folders SET uid_next = uid_next + 1, highest_modseq = ? WHERE id = ?`, modseq, folderId)
-      if (d.folder === 'sent') this.wroteTo([...d.to, ...d.cc, ...(d.bcc ?? [])].map((a) => a.email), Math.floor(Date.parse(d.receivedAt) / 1000))
+      for (const id of new Set(folderIds)) {
+        const folder = [...this.db.exec(`SELECT uid_next FROM folders WHERE id = ?`, id)][0] as { uid_next: number } | undefined
+        if (!folder) continue
+        this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, folder.uid_next, id, n)
+        this.db.exec(`UPDATE folders SET uid_next = uid_next + 1, highest_modseq = ? WHERE id = ?`, modseq, id)
+      }
+      if (role === 'sent') this.wroteTo([...d.to, ...d.cc, ...(d.bcc ?? [])].map((a) => a.email), Math.floor(Date.parse(d.receivedAt) / 1000))
       d.attachments.forEach((a, seq) => {
         this.db.exec(
           `INSERT INTO attachments (n, seq, file_id, name, type, size, start, length, encoding, verified, scan) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding, d.folder ? null : 'scanning',
+          n, seq, a.name, a.type, a.size, a.start, a.length, a.encoding, d.folder || d.placement ? null : 'scanning',
         )
       })
       return { id: d.id, threadId, folder: role, duplicate: false }
@@ -1091,6 +1100,29 @@ export class MailboxStore extends Agent<Env> {
       messageId: (r.message_id as string | null) ?? null,
       receivedAt: new Date((r.received_s as number) * 1000).toISOString(),
     }))
+  }
+
+  /**
+   * Folders for mail copied in from another provider (phase 4f): the role folders (the store takes over its mail if
+   * it is empty), and one folder per name given (a Gmail label such as "Clients/Acme"), made when missing.
+   */
+  importFolders(names: string[]): { roles: Record<string, string>; named: Record<string, string> } {
+    return this.ctx.storage.transactionSync(() => {
+      const roles = Object.fromEntries(this.ensureOwned())
+      const named: Record<string, string> = {}
+      for (const name of new Set(names)) {
+        const found = [...this.db.exec(`SELECT id FROM folders WHERE role IS NULL AND name = ?`, name)][0]?.id as string | undefined
+        if (found) {
+          named[name] = found
+          continue
+        }
+        const id = ulid()
+        const validity = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff || 1
+        this.db.exec(`INSERT INTO folders (id, role, name, uid_validity, uid_next, highest_modseq) VALUES (?, NULL, ?, ?, 1, 0)`, id, name, validity)
+        named[name] = id
+      }
+      return { roles, named }
+    })
   }
 
   /** Who holds the mail: the store itself, or Stalwart (a copy). */
