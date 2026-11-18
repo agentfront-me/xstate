@@ -1563,8 +1563,116 @@ server within two seconds (`ses_delivered`):
   named the series' first date** (23 Nov). Fixed after the test (`cancelledOccurrence` in `calendar-expand.ts`,
   used by both the file and the text; test added; 416 tests pass), uncommitted;
 - series deleted: "Cancelled", grouped by Gmail with the occurrence's cancellation.
-Not tried yet: answering from Gmail (sends a reply from the user's account, so it needs their go-ahead), Outlook
-(needs a test address), and an invitation from Gmail answered from `hello@`.
+
+**Second pilot round (2026-11-18, after "Fixed subject name"):** a new weekly × 2 invitation to Gmail, answered
+**Yes in Gmail** (with the user's go-ahead). Gmail's "Accepted: xstate answer test @ Weekly from 3pm to 3:30pm on
+Tuesday 2 times (GMT+5)" reached `hello@`'s inbox within a minute (delivery log `delivered`, both calendar parts
+scanned), and `calendar_get_invite` read it as `method: reply`, answer accepted from aasif.khan@gmail.com, matched to
+our event by UID. Our copy still showed the guest as needs-action, as expected until 3c. Cancelling the 1 Dec
+occurrence now reads "Cancelled: xstate answer test @ Tue 1 Dec 2026 3pm – 3:30pm (GMT+5)"; deleting the series sent
+the full cancellation.
+
+Still not tried: Outlook (needs a test address), and an invitation from Gmail answered from `hello@` (needs an
+invitation sent from the user's own Google Calendar).
+
+#### Step 3c: invitations in (approved and built 2026-11-18, uncommitted)
+
+Calendar emails that reach a store-held mailbox update its calendar, the way Stalwart does for its own mailboxes.
+Today they arrive as plain mail with an invite card (read by Stalwart's parser), and guests' answers change nothing.
+
+**1. Reading invitation files ourselves** (`mailbox/ical-in.ts`, pure, with ical.js): iCalendar → the JSCalendar
+event the store keeps, plus the method.
+- `SUMMARY`, `DESCRIPTION`, `LOCATION`, `STATUS`, `SEQUENCE`, `UID`, all-day dates, `DTEND` or `DURATION`.
+- `ORGANIZER` and `ATTENDEE` → participants (owner, optional, `PARTSTAT` → participationStatus, `CN` → name).
+- Repeats: `RRULE` through the converter the Google import already has (`parseRrule`), `EXDATE` through
+  `exdateKeys`, and each extra `VEVENT` with a `RECURRENCE-ID` as an override.
+- **Time zones:** an IANA `TZID` (Google, Apple) is kept. A Windows name ("Pakistan Standard Time", Outlook) is
+  mapped with a table (the ~140 names in CLDR's windowsZones). Anything else (Outlook's
+  "(UTC+05:00) Islamabad, Karachi", custom ids) is matched to an IANA zone whose offsets agree with the file's
+  `VTIMEZONE` for the event's year; failing that, times are taken as UTC.
+- For store-held mailboxes this replaces Stalwart's `CalendarEvent/parse` in `calendar_get_invite` and
+  `calendar_apply_invite`, so the invite card no longer needs Stalwart.
+
+**2. Applying them on arrival.** The mail-events queue (`mailbox/events.ts`, after delivery, so receiving stays fast)
+looks at each received message with a `text/calendar` part and its `method`, and applies it when it is safe:
+
+| Method | Applied when | What changes |
+|---|---|---|
+| `REPLY` | we organize the event (same `UID`), the attendee is on our guest list, and the email is from that attendee | that guest's answer (for the whole series, or one occurrence with `RECURRENCE-ID`) |
+| `REQUEST`, event already in the calendar | it comes from the event's organizer and its `SEQUENCE` is not older | the event, keeping our own answer, unless the time moved: then it goes back to "needs action" (as Google does) |
+| `REQUEST`, new event | the sender would reach the Inbox under spam layer 3 (in the organization, written to, or a contact) | added to the default calendar, answer "needs action"; from anyone else it stays an email with **Add to calendar** |
+| `CANCEL` | it comes from the event's organizer | the event (or that occurrence) marked cancelled, still shown, as now |
+| anything else (`COUNTER`, `REFRESH`, `ADD`, `PUBLISH`) | — | nothing; the email is shown as it is |
+
+**"Comes from" is checked, not assumed.** The address in `From` must be the attendee (for a reply) or the organizer
+(for an update or cancellation), and that `From` must be authenticated. SES stamps every received message with
+`Authentication-Results: amazonses.com; …`, for example on Gmail's "Accepted" reply on the pilot:
+`spf=pass … envelope-from=aasif.khan@gmail.com; dkim=pass header.i=@google.com; dkim=pass header.i=@gmail.com;
+dmarc=pass header.from=gmail.com`. Trusted when `dmarc=pass` for the `From` domain, or a `dkim=pass` whose
+`header.i`/`header.d` domain is the `From` domain. SPF alone isn't enough (it checks the envelope, not `From`).
+Google sends answers with `Sender: calendar-notification@google.com` but `From` is the guest, signed by gmail.com,
+so they pass. The header is read from our raw copy; a message without SES's stamp is never trusted.
+
+Nothing in **Junk** is applied, and no email is sent automatically (answering is still the person's choice).
+Each change is a `calendar` line in the delivery log (`detail`: `uid`, `method`, `action`:
+added/updated/cancelled/answer, `from`), and anything skipped says why (`not_authenticated`, `not_organizer`,
+`unknown_event`, `older_sequence`, `unknown_sender`), so "why didn't it update" can be answered.
+
+**3. Invitations between two xstate mailboxes** travel through SES both ways (3b), so they are handled by the same
+rules: a colleague is "in the organization", so their invitations are added on arrival. One thing to check while
+building: Stalwart may still list a store-held domain (99events.com) as local and file a Stalwart user's invitation
+into the Stalwart calendar instead of emailing it. If so, store-held domains are removed from Stalwart's local
+domains (they no longer receive mail there anyway).
+
+**Tests:**
+- Pure: real files as fixtures: Google's REPLY from the pilot (already saved), a Google REQUEST with a moved and a
+  deleted occurrence, Outlook's REQUEST with a Windows zone and Outlook's own `TZID`, Apple Calendar's REQUEST, and
+  our own (round trip with `ical-out.ts`). The `Authentication-Results` rule: aligned DMARC, aligned DKIM, DKIM for
+  another domain only, SPF only, missing header.
+- Locally (fake SES): reply → guest answer updated; forged reply (From another address, or not authenticated) →
+  skipped with its reason; update moving the time → answer reset; cancel → cancelled; new invitation from a known
+  sender → added, from an unknown one → not added; one in Junk → nothing.
+- On the pilot: the 3b test again, with your Gmail "Yes" now updating the guest list in `hello@`; an invitation from
+  your Google Calendar to `hello@` (you've written to it, so it is added on arrival), accepted through the API, and
+  Google showing the answer.
+
+**Needs from you for the pilot:** sending one invitation from your Google Calendar to `hello@99events.com`, and an
+Outlook address if you can.
+
+**Decided:** new invitations from known senders are added on arrival (the proposal).
+
+**Built:**
+- `mailbox/ical-in.ts` (pure): `parseIcs` → method, UID, the event (overrides from `EXDATE` and `RECURRENCE-ID`
+  VEVENTs) and occurrence-only entries. A UTC `UNTIL` is read in the event's zone. An exception that leaves out the
+  location, status or guests (Outlook does) keeps the series' values instead of clearing them. Zones: IANA kept,
+  `WINDOWS_ZONES` (CLDR's 001 mappings), else the first common zone matching the file's January and July offsets.
+- `mailbox/sender-auth.ts` (pure): `headerLines`, `proveSender`. Only the first `Authentication-Results` is read, and
+  only if it is SES's (`amazonses.com`); DMARC pass for the From domain first, then an aligned DKIM pass.
+- `mailbox/calendar-in.ts` (pure): `decide` (the table, with a reason for every skip) and `timeMoved`.
+- `mailbox/calendar-apply.ts`: runs from the mail-events queue for new received mail not carrying a virus (not for
+  old mail being caught up, which would replay stale invitations); applies through the store calendar without
+  emailing anyone; logs a `calendar` line (`uid`, `method`, `action`, `reason`, `status`, `eventId`, `proof`).
+  Failures are logged, not retried.
+- Store `updateEvent` keeps a `sequence` given in the patch (an organizer's), instead of raising its own.
+- `calendar_get_invite` / `calendar_apply_invite` read store-held mailboxes' files with `parseIcs`, so the card no
+  longer needs Stalwart.
+
+**Local test** (fake SES; test messages carried an `Authentication-Results` written as SES writes it, or none), on
+dev@acme.test held by the store:
+- as organizer, inviting sam@example.org: a reply from someone not on the list → skipped (`not_a_guest`); Sam's
+  reply without SES's header → skipped (`not_authenticated`); Sam's proven reply → guest list shows Sam accepted.
+- as guest: a stranger's invitation → not added (`unknown_sender`), but the card reads it (our parser) and **Add to
+  calendar** adds it; a colleague's (acme.test) → added as needs action; accepted through the API; renamed by the
+  organizer (sequence 1) → updated, still accepted; moved (sequence 2) → updated, back to needs action; a stale
+  update (sequence 1) → `older_sequence`; a cancellation from another colleague → `not_organizer`; the organizer's
+  cancellation → shown as cancelled.
+- 16 new unit tests: Google's real reply (anonymised), an Outlook request with a Windows zone, a deleted and a moved
+  occurrence, Outlook's own zone id matched to America/New_York, an Apple all-day event, our own files read back,
+  one-occurrence cancellation; sender proof (DMARC, DKIM, subdomain, SPF only, another domain, a forged second
+  header, a non-SES header, none); every decision. 432 tests pass.
+
+**Not checked yet:** whether Stalwart files a Stalwart user's invitation to a store-held address into the Stalwart
+calendar (point 3); that is part of the pilot test.
 
 #### Open questions
 

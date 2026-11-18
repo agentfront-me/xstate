@@ -63,6 +63,12 @@ change how something works. Recent changes are listed [at the end](#changes).
   deleted when the message or the mailbox is deleted. We are turning this on mailbox by mailbox.
   For mailboxes on the new mail path, the calendars are kept the same way, in that mailbox's own store, with the
   same access as the mailbox.
+- **Calendar emails.** On the new mail path, an invitation, update, cancellation or answer that arrives by email
+  changes the calendar only when its sender is proven: the message must come from the organizer (or, for an answer,
+  from that guest), and Amazon SES must have confirmed the sender's domain with DMARC or a matching DKIM signature.
+  New invitations are added on their own only from people in your organization, people you've written to, or your
+  contacts; others stay an email you can add from. Nothing in Junk changes the calendar, and nothing is sent back
+  automatically.
 - **Stopping abuse.** Each mailbox and organization has hourly and daily limits on mail to outside addresses.
   Sending is suspended automatically when bounces or spam complaints pass a safe rate. Addresses that bounced or
   complained aren't sent to again.
@@ -193,6 +199,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 18, 2026:** On the new mail path, calendar emails update the calendar only when the sender is proven
+  by DMARC or DKIM, and new invitations are added on their own only from people you know.
 - **November 18, 2026:** Calendars of mailboxes on the new mail path are kept in that mailbox's own store, with the
   same access checks as its mail.
 - **November 18, 2026:** A delivery log for mailboxes on the new mail path: where each message went, without its

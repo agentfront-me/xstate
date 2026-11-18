@@ -23,7 +23,8 @@ import {
   type EventInput,
   type GuestStatus,
 } from './calendar-events'
-import { serverBlobId } from '../mailbox/read'
+import { parseIcs } from '../mailbox/ical-in'
+import { serverBlobId, storeBlob } from '../mailbox/read'
 import { EmailError, forbidden, notFound as missing } from './errors'
 import { outsideAddresses, reserveCalendarSends, reserveSend } from './sending'
 import { calendarsOf, type CalendarBackend } from './calendar-backend'
@@ -340,14 +341,24 @@ export async function applyInvite(
 }
 
 async function loadInvite(env: EmailEnv, mailbox: MailboxRow, cal: CalendarBackend, blobId: string) {
-  // An invitation in a message read from the mailbox's store is handed to the mail server to parse (until 3c).
-  const all = await jmap.parseInvite(env, mailbox.stalwart_id, await serverBlobId(env, mailbox, blobId, 'text/calendar'))
+  // A store-held mailbox reads the file itself (mailbox/ical-in.ts); a Stalwart one has Stalwart parse it.
+  const all = cal.kind === 'store' ? await readInvite(env, mailbox, blobId) : await jmap.parseInvite(env, mailbox.stalwart_id, await serverBlobId(env, mailbox, blobId, 'text/calendar'))
   // A repeating event's changed occurrences can come as extra entries; the first is the event itself.
   const parsed = all.find((e) => !e.recurrenceId) ?? all[0]
   if (!parsed) throw new EmailError('not_an_invite', "This attachment isn't a calendar invitation", 400)
   const existingId = parsed.uid ? await cal.findByUid(parsed.uid) : null
   const existing = existingId ? await cal.getEvent(existingId) : null
   return { parsed, existing }
+}
+
+/** An invitation file from the store, in the shape Stalwart's parse gives: the event (with its overrides), or its occurrences. */
+async function readInvite(env: EmailEnv, mailbox: MailboxRow, blobId: string): Promise<jmap.ParsedInvite[]> {
+  const blob = await storeBlob(env, mailbox, blobId)
+  if (!blob) throw new EmailError('attachment_not_found', 'That attachment no longer exists', 404)
+  const file = parseIcs(new TextDecoder().decode(blob.bytes))
+  if (!file) return []
+  if (file.event) return [{ ...file.event, method: file.method }]
+  return Object.entries(file.occurrences).map(([key, o]) => ({ ...o, recurrenceId: key, method: file.method }))
 }
 
 function inviteMethod(method: string | null | undefined): InviteMethod {

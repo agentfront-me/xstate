@@ -117,7 +117,7 @@ export type StoreCalendar = { id: string; name: string; color: string | null; is
 export type StoreEventJson = { id: string; json: string }
 export type StoreEventPut = { id: string; calendarId: string; uid: string | null; json: string; startUtc: string; endUtc: string | null; recurring: boolean }
 
-export type DeliveryStep = 'delivered' | 'refused' | 'scanned' | 'sent' | 'ses_delivered' | 'bounced' | 'complained'
+export type DeliveryStep = 'delivered' | 'refused' | 'scanned' | 'sent' | 'ses_delivered' | 'bounced' | 'complained' | 'calendar'
 export type DeliveryLine = {
   step: DeliveryStep
   emailId?: string | null

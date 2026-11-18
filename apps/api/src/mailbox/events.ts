@@ -8,6 +8,7 @@ import * as filesDb from '../db/files'
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
 import { offerStoredEmail } from '../agents/email-trigger'
+import { applyCalendarMail } from './calendar-apply'
 import { refreshEmailFolders, removeEmails } from '../search/indexer'
 import { enqueueEmails, enqueueIndex } from '../search/jobs'
 import { SAFE, encodeSafety, inspectStream, worst } from '../security/attachments'
@@ -74,7 +75,7 @@ async function handle(env: Env, event: MailEvent, attempts: number) {
   }
 
   const fresh = event.kind === 'new' ? event : null
-  const result = { kind: event.kind, mailboxId: mailbox.id, messages: 0, filed: 0, blocked: 0, infected: 0, fired: 0, skipped: 0 }
+  const result: { kind: string; mailboxId: string; messages: number; filed: number; blocked: number; infected: number; fired: number; skipped: number; calendar?: string } = { kind: event.kind, mailboxId: mailbox.id, messages: 0, filed: 0, blocked: 0, infected: 0, fired: 0, skipped: 0 }
   const stub = await store(env, mailbox.id)
   const rows = await stub.rows(event.ids)
   const bucket = await organizationBucket(env, mailbox.organization_id)
@@ -92,6 +93,14 @@ async function handle(env: Env, event: MailEvent, attempts: number) {
     const infected = [...scans.values()].some((s) => s.state === 'infected')
     if (infected) result.infected++
     if (!fresh) continue
+    // Calendar emails update the calendar (phase 3c): guests' answers, organizers' updates and cancellations, new
+    // invitations from known senders. Never one carrying a virus, and not old mail being caught up (offer: false),
+    // which would replay stale invitations. A failure is logged, not retried: the email is still there, with its
+    // invite card.
+    if (fresh.direction === 'in' && fresh.offer !== false && !infected) {
+      const applied = await applyCalendarMail(env, mailbox, row, raw, parsed).catch((err) => (console.error(`mail-events: calendar for ${row.id} failed`, err), null))
+      if (applied) result.calendar = applied.action === 'skip' ? `skip:${applied.reason}` : applied.action
+    }
     const filed = await fileAttachments(env, mailbox, bucket, row, raw, parsed, fresh.direction, scans)
     result.filed += filed.filed
     result.blocked += filed.blocked

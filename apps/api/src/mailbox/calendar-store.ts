@@ -96,7 +96,8 @@ export async function storeCalendars(env: EmailEnv, mailbox: MailboxRow): Promis
       const current = await series(parseOccurrenceId(id)?.seriesId ?? id)
       if (!current) throw new EmailError('event_not_found', 'That event no longer exists', 404)
       const next = applyPatch(current as unknown as Record<string, unknown>, patch) as unknown as JmapEvent
-      if (changesSchedule(patch)) next.sequence = (current.sequence ?? 0) + 1
+      // An organizer's own sequence (an update received by email) is kept as it is; our own changes raise it.
+      if (changesSchedule(patch) && !('sequence' in patch)) next.sequence = (current.sequence ?? 0) + 1
       next.updated = new Date().toISOString()
       await put(next)
       if (notify) await notifyGuests(current, next)
@@ -136,7 +137,7 @@ function toRow(e: JmapEvent): StoreEventPut {
 }
 
 /** The mailbox's own addresses, lowercase: its address and aliases. */
-function ownAddresses(mailbox: MailboxRow): string[] {
+export function ownAddresses(mailbox: MailboxRow): string[] {
   let aliases: string[] = []
   try {
     aliases = JSON.parse(mailbox.aliases ?? '[]') as string[]
