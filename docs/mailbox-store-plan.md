@@ -2173,7 +2173,16 @@ that is only you; for customers it is announced, and `security.md` and the domai
      `20261118T1`.
    - When switching hireninja.com and the others: delete their old mail-app records and `mta-sts` CNAME, add the
      route, then bump the id.
-   - Customer domains would need a CNAME to a host of ours instead; not built.
+   - Customer domains would need a CNAME to a host of ours instead (Cloudflare for SaaS custom hostnames, no deploy
+     per domain); not built. Deferred by the user (2026-11-18) until it's needed.
+1b. **upfold.me: switched 2026-11-18** (no quiet week; the user is retiring Stalwart, so the remaining domains move as
+    soon as they're ready). Start 11:40, MX to SES 11:41, flip 11:47 UTC: every step ok (25 messages, 2 calendars,
+    routing now 99events.com, upfold.me, xstate.com). Its two SPF records (a permerror for every sender) were merged
+    into one: `v=spf1 include:amazonses.com include:_spf.google.com include:_spf.mx.cloudflare.net ~all`.
+    `envelope.mail.upfold.me` (the Upfold app's SES us-east-1 MAIL FROM) and its existing `_dmarc` (p=reject) were
+    left as they were. No old mail-app records existed. MTA-STS route deployed (580c37d), `_mta-sts`
+    `id=20261118T1` added. Tests: mail from asif@xstate.com (store) and asif@hireninja.com (Stalwart, relayed)
+    both landed in the store.
 2. **hireninja.com:** already copied; needs the threading backfill. The biggest mailbox, so it moves after
    xstate.com has had a quiet week.
 3. **asif.pk and upfold.me:** copy, then move.
