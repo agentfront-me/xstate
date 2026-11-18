@@ -1,7 +1,7 @@
 # Plan: managing members
 
 Status: **approved 2026-11-18** with the recommendations in §4. **Phase 1 built and tested locally 2026-11-18**
-(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18**, and phases 1–3 deployed the same day. **Phases 4 and 5 built, tested and deployed 2026-11-18.** Phase 6 not started.
+(see "Phase 1 as built" below). **Phases 2 and 3 built and tested locally 2026-11-18**, and phases 1–3 deployed the same day. **Phases 4 and 5 built, tested and deployed 2026-11-18.** **Phase 6 (mobile) built and tested in the iOS Simulator 2026-11-18**; not yet sent as an EAS update.
 
 This plan builds the Members screens in the Claude Design file "xstate App" (Settings → Members). It
 lists what the design asks for, three changes to the design, and the work in the API and the app in the
@@ -297,3 +297,17 @@ suspend and sign out everywhere for admins. Adding members stays on the web.
 - Storage limits per member (blocked on pricing limits).
 - Mail forwarding to outside addresses (blocked by the SES forwarding rules in `ses-todo-later`).
 - Seat billing prompts in Add member ("Adds a seat: $12 a month"). Add these once per-seat limits are built.
+
+#### Phase 6 as built (2026-11-18)
+
+- **Settings → Members (mobile):** shows Invite pending, Suspended or Being deleted, and "· N domains". Tapping
+  someone opens `settings/member/[id]` with their role, status, addresses (primary marked) and shared mailboxes.
+- **Owners and admins:** Sign out everywhere, Suspend access / Restore access, and Restore member while a
+  deletion is pending. Each asks for confirmation first, with the same permission rules as the API.
+- **Anyone:** can sign themselves out everywhere, which goes straight to sign-in.
+- **Sign-in:** after a temporary password, the app shows "Choose your password" (`/auth/password/change`), like
+  the web. The mobile `ApiError` now carries `details`.
+- **Stays on the web:** adding people, addresses, passwords, shared mailbox access and deleting.
+- **Shipping:** JavaScript only, so it ships with `eas update --channel preview`, without a new build.
+- **Local testing:** the `mobile-local` launch config points the dev build at the local API.
+

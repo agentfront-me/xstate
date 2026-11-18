@@ -12,6 +12,8 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly status: number,
+    /** Structured data the client can act on, e.g. the changeToken with password_change_required. */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message)
   }
@@ -35,12 +37,12 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   }
   if (res.status === 204) return undefined as T
   if (res.ok) return (await res.json().catch(() => ({}))) as T
-  const data = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } }
+  const data = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
   if (res.status === 401 && token) {
     await clearSession()
     throw new ApiError('signed_out', 'Your session ended. Log in again.', 401)
   }
-  throw new ApiError(data.error?.code ?? 'error', data.error?.message ?? 'Something went wrong. Try again.', res.status)
+  throw new ApiError(data.error?.code ?? 'error', data.error?.message ?? 'Something went wrong. Try again.', res.status, data.error?.details)
 }
 
 export const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'Something went wrong. Try again.')

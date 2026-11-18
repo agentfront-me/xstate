@@ -258,6 +258,23 @@
         "--strictPort"
       ],
       "port": 8823
+    },
+    {
+      "name": "mobile-local",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "EXPO_PUBLIC_API_URL=http://localhost:8788/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/mobile",
+        "exec",
+        "expo",
+        "start",
+        "--dev-client",
+        "--port",
+        "8081"
+      ],
+      "port": 8081
     }
   ]
 }

@@ -8,6 +8,30 @@ import type { OrgMember, Provider } from '@/lib/types'
 import { BackButton, Card, Empty, Failed, Header, Loading, Row, Screen } from '@/ui/kit'
 import { c, pad } from '@/ui/theme'
 
+export const ROLE = { owner: 'Owner', admin: 'Admin', member: 'Member' } as const
+
+/** Invite pending, Suspended or Being deleted, with its colour; null for someone active. */
+export function memberState(m: OrgMember): { label: string; color: string } | null {
+  if (m.status === 'invited') return { label: 'Invite pending', color: c.warn }
+  if (m.deleteAfter) return { label: 'Being deleted', color: c.danger }
+  if (m.suspendedAt) return { label: 'Suspended', color: c.danger }
+  return null
+}
+
+/** Their sign-in address, and how many domains they have addresses on when it's more than one. */
+export function memberLine(m: OrgMember): string {
+  const domains = new Set(m.mailbox?.addresses.map((a) => a.domainId)).size
+  return domains > 1 ? `${m.email} · ${domains} domains` : m.email
+}
+
+export const initialsOf = (m: OrgMember) =>
+  (m.name || m.email)
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('')
+
 export const membersQuery = (orgId: string) => ({
   queryKey: ['members', orgId] as const,
   queryFn: async () => (await api<{ members: OrgMember[] }>('GET', `/members/orgs/${orgId}`)).members,

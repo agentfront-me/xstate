@@ -121,6 +121,21 @@ export type Approval = {
 
 // Settings
 export type Domain = { id: string; name: string; status: 'pending' | 'verified'; enabled: boolean }
-export type OrgMember = { id: string; name: string | null; email: string; role: 'owner' | 'admin' | 'member'; status: 'invited' | 'active'; you: boolean }
+export type OrgMember = {
+  id: string
+  name: string | null
+  email: string
+  role: 'owner' | 'admin' | 'member'
+  status: 'invited' | 'active'
+  you: boolean
+  /** Their own mailbox: every address, the primary one (their sign-in) first. */
+  mailbox: { id: string; addresses: { id: string; address: string; domainId: string; primary: boolean }[] } | null
+  /** Set while they're suspended. */
+  suspendedAt: string | null
+  /** Set while their deletion is pending: when it finishes. */
+  deleteAfter: string | null
+  /** The shared mailboxes they can open (shown to themselves and to admins). */
+  sharedAccess: { mailboxId: string; access: 'full' | 'read' }[]
+}
 export type ProviderId = 'anthropic' | 'openai'
 export type Provider = { provider: ProviderId; status: 'valid' | 'invalid' | 'no_credit' | 'rate_limited'; usedBy: number }

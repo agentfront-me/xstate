@@ -6,7 +6,7 @@ import { ChevronLeft, Eye, EyeOff } from 'lucide-react-native'
 import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { queryClient } from '@/lib/account'
-import { api, errorMessage } from '@/lib/api'
+import { api, ApiError, errorMessage } from '@/lib/api'
 import { isEmail } from '@/lib/format'
 import { saveSession, type Session, useSession } from '@/lib/session'
 import { Button, IconButton, Screen } from '@/ui/kit'
@@ -14,7 +14,10 @@ import { c } from '@/ui/theme'
 
 export default function Login() {
   const { session } = useSession()
-  const [step, setStep] = useState<'email' | 'password'>('email')
+  const [step, setStep] = useState<'email' | 'password' | 'new'>('email')
+  // After signing in with a temporary password an admin set: a short token that only lets them choose their own.
+  const [changeToken, setChangeToken] = useState('')
+  const [repeat, setRepeat] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
@@ -40,6 +43,35 @@ export default function Login() {
       queryClient.clear()
       await saveSession(result)
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'password_change_required' && typeof err.details?.changeToken === 'string') {
+        setChangeToken(err.details.changeToken)
+        setPassword('')
+        setRepeat('')
+        setShow(false)
+        setStep('new')
+      } else {
+        setError(errorMessage(err))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function choose() {
+    if (password.length < 8) return setError('Use at least 8 characters.')
+    if (password !== repeat) return setError("The two passwords don't match.")
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<Session>('POST', '/auth/password/change', { changeToken, password }, { anonymous: true })
+      queryClient.clear()
+      await saveSession(result)
+    } catch (err) {
+      // The 15-minute token ran out: start again from the temporary password.
+      if (err instanceof ApiError && err.code === 'invalid_token') {
+        setStep('password')
+        setPassword('')
+      }
       setError(errorMessage(err))
     } finally {
       setBusy(false)
@@ -50,7 +82,7 @@ export default function Login() {
     <Screen>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={s.top}>
-          {step === 'password' ? (
+          {step !== 'email' ? (
             <IconButton
               icon={ChevronLeft}
               label="Back"
@@ -86,6 +118,41 @@ export default function Login() {
               />
               {error ? <Text style={s.error}>{error}</Text> : null}
               <Button title="Continue" onPress={next} style={{ marginTop: 18 }} />
+            </>
+          ) : step === 'new' ? (
+            <>
+              <Text style={s.title}>Choose your password</Text>
+              <Text style={s.sub}>You signed in to {email} with a temporary password. Choose your own to continue.</Text>
+              <TextInput
+                autoFocus
+                value={password}
+                onChangeText={setPassword}
+                placeholder="New password (at least 8 characters)"
+                placeholderTextColor={c.dim}
+                style={s.input}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                textContentType="newPassword"
+                autoComplete="new-password"
+                returnKeyType="next"
+              />
+              <TextInput
+                value={repeat}
+                onChangeText={setRepeat}
+                placeholder="Repeat it"
+                placeholderTextColor={c.dim}
+                style={[s.input, { marginTop: 12 }]}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                textContentType="newPassword"
+                autoComplete="new-password"
+                returnKeyType="go"
+                onSubmitEditing={choose}
+              />
+              {error ? <Text style={s.error}>{error}</Text> : null}
+              <Button title="Continue" onPress={choose} busy={busy} style={{ marginTop: 18 }} />
             </>
           ) : (
             <>
