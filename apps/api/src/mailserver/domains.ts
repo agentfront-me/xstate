@@ -1,4 +1,5 @@
 import * as addressesDb from '../db/addresses'
+import { requireRoom } from '../limits'
 import * as domainsDb from '../db/domains'
 import * as membersDb from '../db/members'
 import { domainAccess, domainContext, isAdmin, loadMember, requireOrgPermission } from './access'
@@ -17,6 +18,7 @@ export async function addDomain(env: EmailEnv, actor: Actor, organizationId: str
 
   name = normalizeDomain(name)
   if (await domainsDb.nameTaken(env.DB, name)) throw new EmailError('domain_taken', `${name} is already added to xstate`, 409)
+  await requireRoom(env, organizationId, 'domains')
 
   const id = crypto.randomUUID()
   const now = new Date().toISOString()

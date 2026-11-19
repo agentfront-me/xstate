@@ -49,6 +49,7 @@ export async function sendSystemEmail(env: SystemMailEnv, message: SystemMessage
       },
     },
     { recipients: [message.to], fromEmail: from, fromName: FROM_NAME },
+    { system: true },
   )
   return { sent: true }
 }

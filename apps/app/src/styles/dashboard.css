@@ -437,6 +437,7 @@ button.sender { width: 100%; text-align: left; }
 .usage-bar.near > span { background: var(--text-hi); }
 .usage-bar.full > span, .usage-bar.over > span { background: var(--danger, #dc2626); }
 @media (max-width: 560px) { .usage-value { min-width: 120px; } .usage-bar { width: 120px; } }
+.usage-paused { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--danger, #b91c1c); color: var(--text-hi); }
 
 /* Settings → Members dialogs (settings/MemberDialogs.tsx) */
 .member-form { gap: 16px; }

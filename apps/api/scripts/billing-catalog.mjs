@@ -42,7 +42,8 @@ async function stripe(method, path, params) {
   const body = params ? form(params).toString() : ''
   const res = await fetch(`https://api.stripe.com/v1${path}${method === 'GET' && body ? `?${body}` : ''}`, {
     method,
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    // Same pinned version as src/billing/stripe-events.ts STRIPE_VERSION.
+    headers: { Authorization: `Bearer ${key}`, 'Stripe-Version': '2025-08-27.basil', 'Content-Type': 'application/x-www-form-urlencoded' },
     body: method === 'POST' ? body : undefined,
   })
   const json = await res.json()

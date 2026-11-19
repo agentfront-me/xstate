@@ -11,6 +11,7 @@
 // Each job is safe to run twice: rows are upserted, apply skips users and groups it already handled, and the
 // MigrationStore's claims keep a message, contact or file from being copied twice.
 
+import { requireRoom } from '../limits'
 import type { Actor } from '../auth/types'
 import * as addressesDb from '../db/addresses'
 import * as domainsDb from '../db/domains'
@@ -419,7 +420,9 @@ async function applyUser(env: Env, actor: Actor, m: MigrationRow, u: MigrationUs
     return { memberId: null, mailboxId }
   }
 
-  // create: an invited member (the invite is sent at the end of the migration) with a personal mailbox.
+  // create: an invited member (the invite is sent at the end of the migration) with a personal mailbox. The plan's
+  // mailbox limit is checked first, so a person over it isn't invited without a mailbox.
+  if (!(await mailboxAt(env, m.organization_id, u.email))) await requireRoom(env, m.organization_id, 'mailboxes')
   const memberId = await memberFor(env, actor, m.organization_id, u)
   const mailboxId =
     (await mailboxAt(env, m.organization_id, u.email)) ??

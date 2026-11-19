@@ -11,6 +11,7 @@ import { loadMember } from '../mailserver/access'
 import { store } from '../mailbox/stub'
 import { limitsFor, type Limits, type Plan } from '../billing/plans'
 import { monthOf } from './record'
+import { pausedIn } from '../limits/rules'
 
 export type UsageView = {
   month: string
@@ -25,10 +26,12 @@ export type UsageView = {
   mailboxes: number
   domains: number
   agents: number
+  /** Free over 110% of its audience this month: email API sends, agent runs and new website sign-ups are paused. */
+  paused: boolean
 }
 
 type OrgRow = { plan: Plan; extra_hundreds: number | null; limits_override: string | null }
-type UsageRow = { mail_bytes: number; mail_checked_at: string | null; emails_month: string | null; emails_count: number }
+type UsageRow = { mail_bytes: number; mail_checked_at: string | null; emails_month: string | null; emails_count: number; over_since: string | null }
 
 /** Recount mail bytes when the last count is older than this, on reads of the usage page. */
 const STALE_MS = 6 * 60 * 60 * 1000
@@ -38,12 +41,12 @@ export async function getUsage(env: Env, actor: Actor, organizationId: string): 
   const org = await env.DB.prepare('SELECT plan, extra_hundreds, limits_override FROM organizations WHERE id = ?').bind(organizationId).first<OrgRow>()
   if (!org) throw new ApiError('organization_not_found', 'Organization not found', 404)
   const month = monthOf()
-  let usage = await env.DB.prepare('SELECT mail_bytes, mail_checked_at, emails_month, emails_count FROM org_usage WHERE organization_id = ?')
+  let usage = await env.DB.prepare('SELECT mail_bytes, mail_checked_at, emails_month, emails_count, over_since FROM org_usage WHERE organization_id = ?')
     .bind(organizationId)
     .first<UsageRow>()
   if (!usage?.mail_checked_at || Date.now() - Date.parse(usage.mail_checked_at) > STALE_MS) {
     await recountMail(env, organizationId).catch((err) => console.error('usage: recount failed', organizationId, err))
-    usage = await env.DB.prepare('SELECT mail_bytes, mail_checked_at, emails_month, emails_count FROM org_usage WHERE organization_id = ?')
+    usage = await env.DB.prepare('SELECT mail_bytes, mail_checked_at, emails_month, emails_count, over_since FROM org_usage WHERE organization_id = ?')
       .bind(organizationId)
       .first<UsageRow>()
   }
@@ -82,6 +85,7 @@ export async function getUsage(env: Env, actor: Actor, organizationId: string): 
     mailboxes: counts?.mailboxes ?? 0,
     domains: counts?.domains ?? 0,
     agents: counts?.agents ?? 0,
+    paused: org.plan === 'free' && pausedIn(usage?.over_since ?? null, month),
   }
 }
 

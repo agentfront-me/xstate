@@ -3,7 +3,7 @@ title: Security
 description: How xstate protects your accounts, email, files and agents, and what it does with risky attachments.
 ---
 
-**Last updated:** November 18, 2026
+**Last updated:** November 19, 2026
 
 This page describes what xstate actually does to keep your organization's data safe. We update it whenever we
 change how something works. Recent changes are listed [at the end](#changes).
@@ -215,10 +215,10 @@ A personal token lets your own server send email from mailboxes you can send fro
   roll them. They are for audience tracking and can't send email.
 - **Webhooks** xstate receives are checked before they're trusted. Mail-server events must carry a valid
   HMAC-SHA256 signature, Amazon SES notifications (bounces, complaints and received mail) must have a valid
-  signature from AWS and come from xstate's own notification topics, and billing events from the payment
-  provider must carry the provider's valid, recent signature.
-- **Payments** happen on the payment provider's hosted checkout page, never on xstate's servers: xstate doesn't
-  see or store card numbers.
+  signature from AWS and come from xstate's own notification topics, and billing events from Stripe must
+  carry a valid, recent signature.
+- **Payments** happen on Stripe's hosted checkout page, never on xstate's servers: xstate doesn't see or store
+  card numbers. Stripe webhooks must carry a valid Stripe-Signature from the last five minutes.
   Only owners and admins can buy, change or cancel a plan, and connected AI apps and agents can't touch billing.
 - **Agent webhook triggers** check a secret or an HMAC signature in constant time, and are rate limited.
 

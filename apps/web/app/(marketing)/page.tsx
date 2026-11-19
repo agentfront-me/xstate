@@ -25,7 +25,7 @@ const faqs = [
   ['What does the website snippet track?', 'Page views on its own, and any events you send with one line of code. Visitors stay anonymous until they give an email, for example in a form. Anonymous visitors are removed 30 days after their last visit, and events after 90 days.'],
   ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['Do you use my mail to train AI?', 'No. We do not use your content to train AI models, for advertising or for profiling, and our staff do not read it unless you ask us to. Agents use the AI provider and key your organization chooses.'],
-  ['Can I take my data with me?', 'Yes. Your mail stays reachable over IMAP, so any mail app can copy it out, and files in Storage download as they are. Contacts export as CSV.'],
+  ['Can I take my data with me?', 'Yes. Your mail can be read through the xstate API and from your connected AI apps, files in Storage download as they are, and contacts export as CSV.'],
 ]
 
 const structuredData = {

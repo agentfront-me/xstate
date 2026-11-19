@@ -41,6 +41,17 @@ function statusOf(status: string): SubscriptionStatus {
   }
 }
 
+/**
+ * The Stripe API version xstate's calls and webhook endpoint use, so payload shapes don't follow the account's
+ * default (the shared HireNinja account defaults to 2018-11-08). Change it together with the endpoint's version.
+ */
+export const STRIPE_VERSION = '2025-08-27.basil'
+
+/** A subscription to xstate Growth (the account also bills other products, whose events are ignored). */
+export function isXstate(sub: StripeSubscription): boolean {
+  return !!sub.items?.data.some((i) => i.price?.lookup_key === LOOKUP.base || i.price?.lookup_key === LOOKUP.extra)
+}
+
 /** The "Extra 100 people" item of a subscription, if it has one. */
 export function extraItem(sub: StripeSubscription): StripeItem | null {
   return sub.items?.data.find((i) => i.price?.lookup_key === LOOKUP.extra) ?? null
@@ -125,8 +136,10 @@ export function toEvents(event: StripeEvent): BillingEvent[] {
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
     case 'customer.subscription.paused':
-    case 'customer.subscription.resumed':
-      return [{ kind: 'subscription', id: event.id, subscription: toSubscription(event.data.object as StripeSubscription, updatedAt) }]
+    case 'customer.subscription.resumed': {
+      const sub = event.data.object as StripeSubscription
+      return isXstate(sub) ? [{ kind: 'subscription', id: event.id, subscription: toSubscription(sub, updatedAt) }] : []
+    }
     case 'invoice.paid':
       return [invoicePayment(event, 'paid')]
     case 'invoice.payment_failed':

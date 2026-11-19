@@ -187,7 +187,7 @@ export const sampleSecrets: Secret[] = [
 ]
 
 export const sampleBilling: Billing = {
-  plan: 'Pro plan',
+  plan: 'Growth',
   price: '$99 / month',
   renews: 'December 1, 2026',
   renewsShort: 'Dec 1',

@@ -1,6 +1,38 @@
 # Plan: billing on Stripe and plan limits
 
-Status: **approved 2026-11-19. Phases 1–3 built 2026-11-19 (uncommitted, see below); phases 4–6 not started.**
+Status: **approved 2026-11-19. Phases 1–3 pushed (7c5c3fa; that deploy failed on the missing Stripe secrets). Phase 5
+built 2026-11-19, uncommitted. Phase 4 (measuring) skipped at the user's request (not live yet). Phase 6 (docs) built 2026-11-19, uncommitted.**
+
+**Phase 6, as built:** Terms §4 rewritten (priced by people reached, limits and the 10% grace, monthly billing in
+advance, HireNinja LLC sells, Stripe processes, taxes added where the law requires); Refund Policy (no Paddle,
+monthly renewals, size changes, ask by email, invoices in Manage billing); Privacy (Stripe as processor, plan usage
+counts and their retention, a lawful-basis row); `security.md` (Stripe checkout and signature check); site pricing
+footnote; the data-export FAQ no longer mentions IMAP; changelog `2026-11-19.md`. Not legal advice: have the Terms,
+Privacy and Refund changes reviewed, especially tax wording now that there is no merchant of record.
+
+**Phase 5, as built:**
+- `limits/index.ts`: `planOf`, `requireRoom` (mailboxes, domains, agents), `requireStorageRoom`, `requireEmailRoom`,
+  `audiencePaused`; errors are 402 `plan_limit` (429 `send_limit_reached` for emails). `limits/rules.ts` holds the
+  pure parts (grace, pause flag, ISO week, `decide`; tested). Counted limits allow 10% rounded down, so 5 mailboxes,
+  3 domains and 1 agent stop exactly there; storage stops over 110%; emails a month stop at 100%.
+- Checked in: `createMailbox` (personal + shared), `addMember` and the Google import (before anyone is invited),
+  `addDomain`, `agents.create` (and duplicate), `reserveSend` (system mail from SYSTEM_MAIL_FROM is exempt),
+  Storage `uploadFile`, `writeContent`/`writeText`, `restoreVersion`, `saveAttachment`. Mail always keeps arriving.
+- `limits/hourly.ts` (hourly cron): Free notices at 100% and 110% (audience, storage, emails), once a month each;
+  over 110% of the audience sets `org_usage.over_since.audiencePaused` for the month, which pauses the email API
+  (`emails/service.ts`), agent runs (`AgentStore.startRun`, recorded as skipped) and identify calls on `/v1/collect`.
+  Only Free pauses; an upgrade lifts it at once. Growth at or over its size: an email to owners and admins every ISO
+  week; nothing stops. Notices come from the system mailbox; `org_usage.notified` keeps them to once per period.
+- `limits/search-cap.ts`: Growth's internal cap of 100 searchable emails per person of its paid size; over it, the
+  emails indexed longest ago leave AI search (up to 2,000 an hour per organization). By `indexed_at`, since
+  search_docs has no email date.
+- Settings → Billing shows a banner while paused. Still not decided: automatic size increases for Growth (only the
+  weekly email is built).
+- Custom by hand: `UPDATE organizations SET plan = 'custom', limits_override = '{"audience":2000000,"storageBytes":5000000000000}' WHERE id = '…'`
+  (unset keys are unlimited).
+- Tested locally on a Free org: 6th mailbox, 4th domain, 2nd agent, a send past 4,000 and an upload over 5 GB were
+  refused with their messages; the hourly pass sent the storage and email notices once. Not tested: an agent run while
+  paused (the local agent has no model), the email API while paused, the search cap on real data.
 
 **Phase 3, as built (counting only, nothing refused):**
 - Active audience: AudienceStore upgrade 7, tables `active_people(month, email, source)` and `usage_months(month,

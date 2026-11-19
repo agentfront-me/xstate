@@ -11,6 +11,7 @@
 //
 // D1 (sending_suspensions) is the only record. To lift a suspension, set its lifted_at.
 
+import { requireEmailRoom } from '../limits'
 import * as sendingDb from '../db/sending'
 import type { MailboxRow } from '../db/mailboxes'
 import { isAdmin, loadMember } from './access'
@@ -29,6 +30,8 @@ export async function reserveSend(
   env: EmailEnv,
   mailbox: Pick<MailboxRow, 'id' | 'organization_id'>,
   recipients: string[],
+  /** system: xstate's own notices (mailserver/system-mail.ts), which no plan limit stops. */
+  options: { system?: boolean } = {},
 ): Promise<{ release: () => Promise<void> }> {
   const db = env.DB
   const outside = await countOutside(db, recipients)
@@ -37,6 +40,8 @@ export async function reserveSend(
   // Plan usage: this month's emails, every recipient counted (usage/record.ts). Counted only; limits come in phase 5.
   const month = monthOf(now)
   const all = new Set(recipients.map((r) => r.trim().toLowerCase()).filter(Boolean)).size
+  // Plan limit: Free's emails a month, hard like every sending cap (limits/).
+  if (!options.system) await requireEmailRoom(env, mailbox.organization_id, all, month)
   const hourAgo = new Date(now - 60 * 60 * 1000).toISOString()
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString()
 

@@ -66,6 +66,10 @@ describe('toEvents', () => {
     assert.equal(e?.kind, 'subscription')
     if (e?.kind === 'subscription') assert.equal(e.subscription.updatedAt, new Date(1_800_000_000_000).toISOString())
   })
+  it('ignores subscriptions to the account’s other products', () => {
+    const other = { ...sub, items: { data: [{ id: 'si_x', quantity: 1, price: { id: 'price_x', lookup_key: 'upfold_pro' } }] } }
+    assert.deepEqual(toEvents(ev('customer.subscription.updated', other)), [])
+  })
   it('turns a paid invoice into revenue less tax, both API shapes', () => {
     const [older] = toEvents(ev('invoice.paid', { id: 'in_1', customer: 'cus_1', currency: 'usd', amount_paid: 5390, tax: 490, billing_reason: 'subscription_create', subscription: 'sub_1' }))
     assert.deepEqual(older && older.kind === 'payment' && [older.amount, older.reason, older.subscriptionId], [4900, 'new', 'sub_1'])

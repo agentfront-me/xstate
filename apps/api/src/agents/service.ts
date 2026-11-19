@@ -5,6 +5,7 @@
 // person who published that version (their access is checked again on every tool call, so removing them from the
 // organization stops the agent's tools).
 
+import { requireRoom } from '../limits'
 import { getAgentByName } from 'agents'
 import type { Actor } from '../auth/types'
 import * as db from '../db/agents'
@@ -220,6 +221,7 @@ const name = (s: string) => {
 
 export async function create(env: Env, actor: Actor, organizationId: string, input: { name: string; description?: string; config?: unknown }) {
   await requireManager(env, actor, organizationId)
+  await requireRoom(env, organizationId, 'agents')
   const id = crypto.randomUUID()
   const config = input.config === undefined ? defaultConfig() : await scopedConfig(env, organizationId, agentConfig.parse(input.config))
   await db

@@ -1,4 +1,5 @@
 import * as addressesDb from '../db/addresses'
+import { requireRoom } from '../limits'
 import * as mailboxAccessDb from '../db/mailbox-access'
 import * as mailboxesDb from '../db/mailboxes'
 import { domainContext, isAdmin, loadMember, mailboxContext, requireAddressFree, requireMemberInOrg } from './access'
@@ -28,6 +29,8 @@ export async function createMailbox(env: EmailEnv, actor: Actor, input: CreateMa
   const localPart = normalizeLocalPart(input.localPart)
   const address = `${localPart}@${domain.name}`
   await requireAddressFree(env, address)
+  // Plan limit (limits/): Free counts personal and shared mailboxes together. Agent mailboxes are free.
+  if (input.kind === 'personal' || input.kind === 'shared') await requireRoom(env, domain.organization_id, 'mailboxes')
 
   if (input.kind === 'shared' && input.ownerMemberId) throw new EmailError('invalid_owner', 'Shared mailboxes have no owner; grant access instead')
   if (input.ownerMemberId) {

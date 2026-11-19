@@ -13,6 +13,7 @@ import { handleSesInbound } from './jobs/ses-inbound'
 import { handleBillingWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
 import { usageDaily } from './usage/service'
+import { limitsHourly } from './limits/hourly'
 import { consumePush, type PushJob } from './push/send'
 import type { InboundJob } from './mailbox/inbound'
 import { consumeInbound } from './mailbox/receive'
@@ -145,6 +146,11 @@ export default {
         billingHourly(env).catch((err) => console.error('billing-hourly failed', err)),
         // Plan usage: the daily recount of every organization's stored mail (03:00 UTC).
         usageDaily(env).catch((err) => console.error('usage-daily failed', err)),
+        // Plan limits: notices, the Free audience pause and Growth's weekly "you're full" email (limits/hourly.ts).
+        limitsHourly(env).then(
+          (r) => (r.notices || r.paused) && console.log('limits-hourly', JSON.stringify(r)),
+          (err) => console.error('limits-hourly failed', err),
+        ),
         // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.
         sesHourly(env).then(
           (r) => r.changed && console.log('ses-hourly', JSON.stringify(r)),

@@ -177,7 +177,7 @@ export function Pricing() {
       </div>
       <div className="small muted price-notes">
         <p>People count once a month: everyone you email or who emails you, including Cc and teammates, plus known website visitors. Anonymous visitors and mail in Junk never count.</p>
-        <p className="faint">Prices in USD. No charge per seat. Go up to 10% over a limit before anything stops; nothing is ever deleted. Tax added at checkout where required. Payments are handled by Paddle, our reseller.</p>
+        <p className="faint">Prices in USD. No charge per seat. Go up to 10% over a limit before anything stops; nothing is ever deleted. Payments are processed by Stripe; cancel any time, with a full refund within 14 days of any payment.</p>
       </div>
     </section>
   )

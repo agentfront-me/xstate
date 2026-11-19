@@ -39,6 +39,7 @@ type Usage = {
   mailboxes: number
   domains: number
   agents: number
+  paused: boolean
 }
 
 const gb = (bytes: number) => {
@@ -85,6 +86,12 @@ function UsageSection({ orgId }: { orgId: string }) {
           <p>People count once a month: everyone you email or who emails you, plus known website visitors.</p>
         </div>
       </div>
+      {u.paused && (
+        <p className="small usage-paused" role="status">
+          You reached more than 1,100 people this month, so email API sends, agent runs and new website sign-ups are paused until next month. Personal email keeps
+          working. Upgrade to Growth to keep going.
+        </p>
+      )}
       <div className="card">
         <Meter
           label="People reached"

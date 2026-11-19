@@ -34,9 +34,13 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
 - **Account data:** name, email address, password (stored only as a hash), profile photo, organization name,
   role and membership.
 - **Domain data:** domains you connect, DNS records and verification status.
-- **Billing data (paid plans):** plan, number of people billed and subscription status. Paid plans are sold by our
-  reseller Paddle (Paddle.com Market Ltd), the merchant of record: Paddle collects your payment details, billing
-  name, address and tax details under its own privacy policy, and we never see full card numbers.
+- **Billing data (paid plans):** plan, plan size, subscription status, and invoices and payments. Payments are
+  processed by Stripe, Inc.: Stripe collects your card or other payment details, billing name, email and address
+  on its own checkout page, and we never see full card numbers. We keep the Stripe customer and subscription ids.
+- **Plan usage:** to apply plan limits we count, each month, the distinct email addresses your organization sent
+  mail to or received mail from (Cc included, Junk excluded) and identified website visitors, plus storage,
+  emails sent and website events. These counts are kept for 3 months (event totals for 2 years) and are used only
+  for billing and limits.
 - **Support:** messages you send us and the details you include.
 
 ### Your Content
@@ -91,6 +95,7 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
 | Send service messages: invitations, security alerts, import status, billing notices | Account data | Contract |
 | Send push notifications you enable | Push token, notification content | Consent (you can turn it off at any time) |
 | Bill for paid plans | Billing data | Contract; legal obligation |
+| Apply plan limits and show usage | Plan usage | Contract |
 | Support and troubleshooting | Account data, support messages, and Your Content only when you ask us to look | Contract; legitimate interests |
 | Improve the Service using aggregated, de-identified usage data | Usage data | Legitimate interests |
 | Comply with the law and respond to valid legal requests | Any, as required | Legal obligation |
@@ -144,7 +149,7 @@ We share personal data only as described here:
   | Cloudflare, Inc. | Hosting, databases, file storage, queues, search indexing, AI embeddings, DNS and network security |
   | Amazon Web Services, Inc. | Delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days) |
   | Expo (650 Industries, Inc.), Apple, Google | Delivering push notifications to the mobile apps |
-  | Paddle.com Market Ltd | Reseller and merchant of record for paid plans: checkout, payments, invoices and sales tax |
+  | Stripe, Inc. | Payments for paid plans: checkout, card processing, invoices, receipts and the billing portal |
 
 - **Providers your organization chooses**, such as AI providers and connected services, when your organization
   configures them.

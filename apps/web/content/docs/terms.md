@@ -3,7 +3,7 @@ title: Terms of Service
 description: The agreement between you and xstate for using xstate.
 ---
 
-**Last updated:** November 16, 2026
+**Last updated:** November 19, 2026
 
 These Terms of Service ("Terms") are an agreement between you and **HireNinja LLC** ("xstate", "we", "us"),
 the operator of xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related
@@ -45,17 +45,27 @@ If you do not agree, do not use the Service.
 
 ## 4. Free and paid features
 
-- Business email on your own domain is offered free of charge, subject to the limits in section 6.
-- Some features, including AI agents, are not part of a free plan and may require a paid plan. We will show
-  prices and limits before you are charged. Paid plans renew until cancelled; you can cancel any time and keep
-  the plan until the end of the period you've paid for. You can get a full refund of any payment within 14 days
+- Business email on your own domain is offered free of charge on the Free plan, within its limits.
+- **Plans are priced by the people your organization reaches each month**, not per seat: everyone you email or
+  who emails you (Cc and your own teammates included), and website visitors who have identified themselves.
+  Each person counts once a calendar month. Anonymous website visitors and mail in Junk don't count. Current
+  plans, prices and limits are on our [pricing page](/#pricing) and in **Settings → Billing**; we show the price
+  before you are charged.
+- **Limits.** Each plan has limits, such as people reached, storage, mailboxes, domains, agents and emails sent.
+  You can go up to 10% over most limits before anything stops. Past that, we stop handling more of that kind
+  of use (for example, new files can't be saved, or email API sends and agent runs pause until the next month)
+  until usage drops, the month resets or you upgrade. Sending limits stop at the limit. We never delete Your
+  Content because a limit was reached, and mail keeps arriving.
+- **Billing.** Paid plans are billed monthly in advance and renew until cancelled. You can cancel any time and
+  keep the plan until the end of the period you've paid for. When you change a plan's size, the difference for
+  the rest of the period is charged or credited at once. You can get a full refund of any payment within 14 days
   of it, as described in our [Refund Policy](/docs/refunds).
+- **Who sells it.** Paid plans are sold by HireNinja LLC. Payments are processed by Stripe, Inc.; we never see or
+  store your full card number.
 - We may introduce, change or remove plans, limits and prices. For changes that increase what you pay, we will
   give at least 30 days' notice, and you can cancel before the change takes effect.
-- **Our reseller.** Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant
-  of Record for all our orders. Paddle provides all customer service inquiries and handles returns.
-- Sales tax and VAT are added at checkout where they apply, and Paddle collects and remits them. Any other taxes
-  are your responsibility, except taxes on our income.
+- Prices are in US dollars. Where the law requires us to charge sales tax or VAT, we add it; any other taxes on
+  your purchase are your responsibility, except taxes on our income.
 
 ## 5. Your content
 

@@ -9,6 +9,7 @@
 // members.manage permission (owners and admins have it). Only owners and admins can invite admins, change roles or
 // remove an admin. Nobody can change or remove the owner. Anyone except the owner can leave.
 
+import { requireRoom } from '../limits'
 import { revokeTokensOfMember } from '../auth/api-tokens'
 import { hashPassword } from '../auth/password'
 import { issueToken } from '../auth/token'
@@ -255,6 +256,8 @@ export async function addMember(
   if (input.role === 'admin' && !isAdmin(me)) throw forbidden('Only owners and admins can add admins')
   const name = input.name.trim()
   if (!name) throw new ApiError('name_required', 'Enter their name')
+  // Their personal mailbox must fit the plan (limits/), checked before anything is written.
+  await requireRoom(env, organizationId, 'mailboxes')
 
   // Every address, primary first: on the organization's domains, all handled by the same mail system, not repeated,
   // and free.

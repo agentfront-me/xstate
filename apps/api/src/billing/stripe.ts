@@ -6,7 +6,7 @@
 // STRIPE_WEBHOOK_SECRET (whsec_…, the endpoint's signing secret).
 
 import { ProviderError, WebhookRejected, type BillingEvent, type BillingProvider, type OrgForBilling, type Subscription } from './provider'
-import { extraItem, formEncode, LOOKUP, toEvents, toSubscription, verifyStripeSignature, type StripeEvent, type StripeSubscription } from './stripe-events'
+import { extraItem, formEncode, isXstate, LOOKUP, STRIPE_VERSION, toEvents, toSubscription, verifyStripeSignature, type StripeEvent, type StripeSubscription } from './stripe-events'
 
 export type StripeEnv = { STRIPE_SECRET_KEY?: string; STRIPE_WEBHOOK_SECRET?: string }
 
@@ -26,7 +26,7 @@ export function stripeProvider(env: StripeEnv): BillingProvider | null {
     const url = method === 'POST' || !body ? `${API}${path}` : `${API}${path}?${body}`
     const res = await fetch(url, {
       method,
-      headers: { Authorization: `Bearer ${secret}`, ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
+      headers: { Authorization: `Bearer ${secret}`, 'Stripe-Version': STRIPE_VERSION, ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
       body: method === 'POST' ? body : undefined,
     })
     const json = (await res.json().catch(() => null)) as { error?: { message?: string } } | null
@@ -133,7 +133,10 @@ export function stripeProvider(env: StripeEnv): BillingProvider | null {
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object as { client_reference_id: string | null; subscription: string | null }
         if (!session.subscription) return []
-        const sub = toSubscription(await getSub(session.subscription), new Date(event.created * 1000).toISOString())
+        const raw = await getSub(session.subscription)
+        // The account also sells other products; only xstate Growth checkouts matter here.
+        if (!isXstate(raw)) return []
+        const sub = toSubscription(raw, new Date(event.created * 1000).toISOString())
         return [{ kind: 'subscription', id: event.id, subscription: { ...sub, organizationId: sub.organizationId ?? session.client_reference_id } }]
       }
       return toEvents(event)

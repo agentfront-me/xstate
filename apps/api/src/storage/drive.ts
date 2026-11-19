@@ -5,6 +5,7 @@
 // request against the current tree and grants. Bytes go through the Worker for viewers and editors (the desktop
 // app's app:// origin can't pass R2's CORS rules), and downloads use short-lived presigned URLs.
 
+import { requireStorageRoom } from '../limits'
 import * as filesDb from '../db/files'
 import type { FileRow } from '../db/files'
 import * as membersDb from '../db/members'
@@ -349,6 +350,7 @@ export async function uploadFile(
 ): Promise<StorageItem> {
   checkSize(upload.size, options.maxBytes)
   const target = await targetContext(env, actor, organizationId, where)
+  await requireStorageRoom(env, organizationId, upload.size)
   const name = await freeName(env, target, cleanName(upload.name))
   const contentType = contentTypeFor(name, upload.contentType)
   const itemId = crypto.randomUUID()
@@ -533,6 +535,7 @@ export async function writeContent(
   const ctx = await itemContext(env, actor, itemId, 'editor')
   if (ctx.item.kind !== 'file') throw new ApiError('not_a_file', 'Only files have contents')
   if (ctx.item.version !== expectedVersion) throw conflict()
+  await requireStorageRoom(env, ctx.item.organization_id, upload.size)
   const bucket = await organizationBucket(env, ctx.item.organization_id)
   const contentType = ctx.item.content_type ?? contentTypeFor(ctx.item.name, upload.contentType)
   const stored = await storeVersion(env, bucket, { itemId, name: ctx.item.name, contentType, size: upload.size, body: upload.body })
@@ -643,6 +646,7 @@ export async function restoreVersion(env: StorageEnv, actor: Actor, itemId: stri
   if (ctx.item.kind !== 'file') throw new ApiError('not_a_file', 'Folders have no versions')
   if (version === ctx.item.version) return toItem(ctx.item, ctx.role)
   const old = await versionFile(env, ctx, version)
+  await requireStorageRoom(env, ctx.item.organization_id, old.size_bytes)
   const bucket = await organizationBucket(env, ctx.item.organization_id)
   const fileId = crypto.randomUUID()
   const key = `drive/${ctx.item.id}/${fileId}/${ctx.item.name}`
@@ -1038,6 +1042,7 @@ export async function saveAttachment(
 ): Promise<StorageItem> {
   const file = await attachmentContext(env, actor, fileId)
   const target = await targetContext(env, actor, file.organization_id, where)
+  await requireStorageRoom(env, file.organization_id, file.size_bytes)
   const name = await freeName(env, target, file.name)
   const bucket = await organizationBucket(env, file.organization_id)
   const itemId = crypto.randomUUID()

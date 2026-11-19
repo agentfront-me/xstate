@@ -13,6 +13,7 @@
 //   (recordDeliveryEvent). Bodies and attachments are not kept.
 // - An Idempotency-Key makes a retry safe: the same key and body return the first answer instead of sending again.
 
+import { audiencePaused, audiencePausedError } from '../limits'
 import type { TokenAuth } from '../auth/api-tokens'
 import * as addressesDb from '../db/addresses'
 import * as db from '../db/api-emails'
@@ -104,6 +105,8 @@ async function replay(env: Env, tokenId: string, key: string, hash: string): Pro
 export async function sendEmail(env: Env, auth: TokenAuth, input: SendInput, idempotencyKey: string | null): Promise<{ email: ApiEmail; replayed: boolean }> {
   requireScope(auth)
   const mailboxId = await senderMailbox(env, auth, input.from.email)
+  // Free over 110% of its audience this month: API sends pause (limits/).
+  if (await audiencePaused(env, auth.token.organizationId)) throw audiencePausedError()
 
   const hash = idempotencyKey ? await requestHash(input) : null
   if (idempotencyKey) {

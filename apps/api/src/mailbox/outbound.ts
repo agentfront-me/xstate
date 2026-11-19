@@ -43,11 +43,17 @@ export async function uploadToStore(env: OutboundEnv, mailbox: MailboxRow, bytes
 }
 
 /** Sends a message from a store-held mailbox. Returns the Sent copy's id and conversation (empty when not kept). */
-export async function sendFromStore(env: OutboundEnv, mailbox: MailboxRow, input: SendInput, checked: Checked): Promise<{ id: string; threadId: string }> {
+export async function sendFromStore(
+  env: OutboundEnv,
+  mailbox: MailboxRow,
+  input: SendInput,
+  checked: Checked,
+  options: { system?: boolean } = {},
+): Promise<{ id: string; threadId: string }> {
   const prepared = await prepare(env, mailbox, input, checked)
   const { message, bucket } = prepared
   // Last check before anything leaves: suspension and the hourly and daily caps.
-  const reservation = await reserveSend(env, mailbox, checked.recipients.map((r) => r.email))
+  const reservation = await reserveSend(env, mailbox, checked.recipients.map((r) => r.email), options)
   let raw: Uint8Array | null = buildMessage(message, { includeBcc: false })
   prepared.size = raw.length
   // The files are inside the message now; drop them so a large send keeps one copy in memory.

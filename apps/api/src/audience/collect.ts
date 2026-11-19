@@ -15,6 +15,7 @@
 // screen and locale. Requests from bots are dropped. Whether the IP itself is kept is up to the organization
 // (AudienceStore settings); location is always kept.
 
+import { audiencePaused } from '../limits'
 import type { Context } from 'hono'
 import { z } from 'zod'
 import { ApiError } from '../errors'
@@ -144,6 +145,10 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
       at: timestampOf(e.timestamp, now),
     })
   }
+  // Free over 110% of its audience this month: no new identified visitors (limits/). Page views still count.
+  if (items.some((i) => i.type === 'identify') && (await pausedCached(c.env, auth.organizationId))) {
+    items.splice(0, items.length, ...items.filter((i) => i.type !== 'identify'))
+  }
   if (!items.length) return c.json({ accepted: 0 }, 202)
 
   const batch: CollectBatch = { trusted, source: trusted ? 'API' : 'Website', items, sites }
@@ -152,6 +157,17 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
   // Browsers don't wait for the write.
   c.executionCtx.waitUntil(store.collect(batch).catch((err: unknown) => console.error('audience collect failed', err)))
   return c.json({ accepted: items.length }, 202)
+}
+
+/** The pause is set hourly, so a few minutes' cache per isolate keeps collect from reading D1 on every call. */
+const pauseCache = new Map<string, { paused: boolean; at: number }>()
+async function pausedCached(env: Env, organizationId: string): Promise<boolean> {
+  const hit = pauseCache.get(organizationId)
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.paused
+  const paused = await audiencePaused(env, organizationId).catch(() => false)
+  if (pauseCache.size > 1000) pauseCache.clear()
+  pauseCache.set(organizationId, { paused, at: Date.now() })
+  return paused
 }
 
 const normalizeHost = (host: string) => host.toLowerCase().replace(/^www\./, '').replace(/\.$/, '')

@@ -2,6 +2,7 @@
 // memory facts, and the alarms behind its schedule triggers and memory retention. Starts each run as an AgentRun Workflow (agents/run.ts), which writes its
 // progress back here. Runs stay here, not in D1: they're many, private to one agent, and go away with it.
 
+import { audiencePaused } from '../limits'
 import { Agent } from 'agents'
 import type { AgentConfig } from './config'
 import { emailManagers } from './notices'
@@ -108,6 +109,10 @@ export class AgentStore extends Agent<Env> {
     const runId = crypto.randomUUID()
     const { limits, spend, memory } = params.config
     if (!params.dryRun) {
+      // Free over 110% of its audience this month: agent runs pause (limits/).
+      if (await audiencePaused(this.env, params.organizationId)) {
+        return { runId, skipped: this.recordSkip(runId, params, 'Paused: your organization is over its plan’s people this month') }
+      }
       if (this.runsToday() >= limits.maxRunsPerDay) {
         return { runId, skipped: this.recordSkip(runId, params, `Reached the limit of ${limits.maxRunsPerDay} runs today`) }
       }
