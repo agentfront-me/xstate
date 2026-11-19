@@ -482,7 +482,14 @@ function LiveEvents({ orgId, domain, search, go }: { orgId: string; domain?: str
     top.current = page.events[0]!.id
     setEvents((list) => {
       const seen = new Set(list.map((e) => e.id))
-      return [...page.events.filter((e) => !seen.has(e.id)), ...list].slice(0, MAX_ROWS)
+      // Rows already on screen keep the person as they were when they arrived. A visitor who has since signed in
+      // (identify) is now a user with a name and email: show that on their earlier rows too.
+      const people = new Map(page.events.map((e) => [e.person.id, e.person]))
+      const updated = list.map((e) => {
+        const person = people.get(e.person.id)
+        return person && person !== e.person ? { ...e, person } : e
+      })
+      return [...page.events.filter((e) => !seen.has(e.id)), ...updated].slice(0, MAX_ROWS)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, filterKey])
