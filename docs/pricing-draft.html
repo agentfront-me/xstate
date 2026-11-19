@@ -1,0 +1,219 @@
+<title>xstate Pricing Draft</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one centered column — heading, audience slider, three plan cards, who-counts strip, price ladder. Matches the xstate site: zinc neutrals, system type, small radii. */
+:root {
+  --bg: #ffffff;
+  --fg: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
+  --soft: #f4f4f5;
+  --ink: #18181b;
+  --ink-fg: #ffffff;
+  --draft: #a16207;
+  --draft-bg: #fef9c3;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --soft: #202023;
+  --ink: #fafafa; --ink-fg: #18181b; --draft: #fde047; --draft-bg: #3a3214; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --soft: #202023;
+  --ink: #fafafa; --ink-fg: #18181b; --draft: #fde047; --draft-bg: #3a3214; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 48px 64px }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 40px }
+h1, h2, h3 { margin: 0; text-wrap: balance; letter-spacing: -0.01em }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 650; line-height: 1.1 }
+h2 { font-size: 20px; font-weight: 600 }
+p { margin: 0 }
+.lede { color: var(--muted); max-width: 60ch; margin-top: 12px; font-size: 17px }
+.num { font-variant-numeric: tabular-nums }
+
+.draftnote { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 16px }
+.tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--draft); background: var(--draft-bg); padding: 3px 8px; border-radius: 4px; white-space: nowrap; line-height: 1.3 }
+
+/* Slider */
+.meter { border: 1px solid var(--line); border-radius: 6px; padding: 20px; display: grid; gap: 14px }
+.meter-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px }
+.meter label { font-weight: 600 }
+.meter output { font-size: 28px; font-weight: 650 }
+.meter output small { font-size: 14px; font-weight: 400; color: var(--muted) }
+input[type=range] { width: 100%; accent-color: var(--ink) }
+input[type=range]:focus-visible { outline: 2px solid var(--muted); outline-offset: 4px }
+.ticks { position: relative; height: 16px; margin-inline: 8px; font-size: 12px; color: var(--muted); font-family: var(--mono) }
+.ticks span { position: absolute; transform: translateX(-50%) }
+.ticks span:first-child { transform: none; margin-left: -8px }
+.ticks span:last-child { transform: translateX(-100%); margin-left: 8px }
+
+/* Plans */
+.plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start }
+@media (max-width: 860px) { .plans { grid-template-columns: 1fr } }
+.plan { border: 1px solid var(--line); border-radius: 6px; padding: 24px; display: grid; gap: 18px; min-width: 0 }
+.plan.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) }
+.plan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px }
+.plan h3 { font-size: 17px; font-weight: 600 }
+.pill { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--muted) }
+.plan.on .pill { background: var(--ink); color: var(--ink-fg); border-color: var(--ink) }
+.price { font-size: 40px; font-weight: 650; line-height: 1 }
+.price span { font-size: 14px; font-weight: 400; color: var(--muted) }
+.sub { color: var(--muted); font-size: 14px; min-height: 42px }
+.btn { display: block; text-align: center; padding: 10px; border-radius: 4px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--bg) }
+.plan.on .btn { background: var(--ink); color: var(--ink-fg); border-color: var(--ink) }
+ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 14px }
+li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; align-items: start }
+li::before { content: ""; width: 10px; height: 6px; margin-top: 6px; border-left: 2px solid var(--fg); border-bottom: 2px solid var(--fg); transform: rotate(-45deg) }
+li .tag { margin-left: 4px }
+.lead { font-weight: 600 }
+
+/* Who counts */
+.counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 6px }
+@media (max-width: 760px) { .counts { grid-template-columns: 1fr } }
+.counts > div { padding: 20px; display: grid; gap: 6px; min-width: 0 }
+.counts > div + div { border-left: 1px solid var(--line) }
+@media (max-width: 760px) { .counts > div + div { border-left: 0; border-top: 1px solid var(--line) } }
+.counts .k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600 }
+.counts p { font-size: 14px; color: var(--muted) }
+.counts strong { color: var(--fg); font-weight: 600 }
+
+/* Ladder */
+.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums }
+th, td { padding: 10px 16px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap }
+th:first-child, td:first-child { text-align: left }
+th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; background: var(--soft) }
+tr:last-child td { border-bottom: 0 }
+tr.here td { background: var(--soft); font-weight: 600 }
+.foot { color: var(--muted); font-size: 13px; display: grid; gap: 6px; max-width: 75ch }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Pay for the people you reach</h1>
+    <p class="lede">Email, contacts, website analytics, storage and agents for your whole team. The price follows your active audience each month. There's no charge per seat.</p>
+    <p class="draftnote"><span class="tag">Draft</span> Items marked like this are proposed and not decided yet.</p>
+  </header>
+
+  <section class="meter" aria-labelledby="aud-label">
+    <div class="meter-top">
+      <label id="aud-label" for="aud">Active audience a month</label>
+      <output id="aud-out" for="aud" class="num">5,000 <small>people</small></output>
+    </div>
+    <input id="aud" type="range" min="0" max="12" step="1" value="2" aria-describedby="aud-hint">
+    <div class="ticks" aria-hidden="true"><span style="left:0%">1k</span><span style="left:33.33%">10k</span><span style="left:58.33%">25k</span><span style="left:83.33%">50k</span><span style="left:100%">100k</span></div>
+    <p id="aud-hint" class="sub" style="min-height:0">Everyone you emailed or who emailed you, plus identified website visitors. Anonymous visitors are always free.</p>
+  </section>
+
+  <section class="plans" aria-label="Plans">
+    <article class="plan" id="p-free">
+      <div class="plan-head"><h3>Free</h3><span class="pill">Up to 1,000</span></div>
+      <p class="price num">$0<span> /month</span></p>
+      <p class="sub">For small teams getting started with business email.</p>
+      <a class="btn" href="https://go.xstate.com/app/">Start free</a>
+      <ul>
+        <li><span><span class="lead">1,000</span> active audience a month</span></li>
+        <li><span><span class="lead">5 GB</span> storage for mail and files</span></li>
+        <li><span>3 domains</span></li>
+        <li><span>1 agent on your own AI key</span></li>
+        <li><span>5 mailboxes, personal and shared</span></li>
+        <li><span>4,000 emails a month</span></li>
+        <li><span>10,000 website events a month <span class="tag">Draft</span></span></li>
+        <li><span>AI search over your mail</span></li>
+      </ul>
+    </article>
+
+    <article class="plan on" id="p-growth">
+      <div class="plan-head"><h3>Growth</h3><span class="pill" id="g-pill">5,000 people</span></div>
+      <p class="price num" id="g-price">$49<span> /month</span></p>
+      <p class="sub" id="g-sub">From $49 for 5,000, then $1 for every 100 more.</p>
+      <a class="btn" href="https://go.xstate.com/app/">Upgrade</a>
+      <ul>
+        <li><span><span class="lead num" id="g-aud">5,000</span> active audience a month</span></li>
+        <li><span><span class="lead num" id="g-gb">35 GB</span> storage for mail and files</span></li>
+        <li><span>1 GB more storage with every 100 people</span></li>
+        <li><span><span class="lead">Unlimited</span> mailboxes</span></li>
+        <li><span><span class="lead">Unlimited</span> domains</span></li>
+        <li><span><span class="lead">Unlimited</span> agents on your own AI key</span></li>
+        <li><span><span class="lead">Unlimited</span> emails</span></li>
+        <li><span><span class="num" id="g-events">500,000</span> website events a month <span class="tag">Draft</span></span></li>        <li><span>Extra storage at $5 per 100 GB</span></li>
+      </ul>
+    </article>
+
+    <article class="plan" id="p-ent">
+      <div class="plan-head"><h3>Enterprise</h3><span class="pill">100,000+</span></div>
+      <p class="price">Custom <span class="tag" style="vertical-align:middle">Draft</span></p>
+      <p class="sub">For large audiences, high sending volume and dedicated support.</p>
+      <a class="btn" href="https://xstate.com">Talk to us</a>
+      <ul>
+        <li><span>Everything in Growth</span></li>
+        <li><span>Custom audience, storage and sending</span></li>
+        <li><span>Priority support and migration help</span></li>
+        <li><span>SSO, 2FA and an audit log when they ship</span></li>
+      </ul>
+    </article>
+  </section>
+
+  <section aria-labelledby="who-h" style="display:grid;gap:14px">
+    <h2 id="who-h">Who counts as active</h2>
+    <div class="counts">
+      <div><span class="k">Counts</span><p><strong>Anyone you emailed, or who emailed you</strong> that month, including Cc and your own teammates, from any mailbox, agent or API call. Each person counts once a month.</p></div>
+      <div><span class="k">Counts</span><p><strong>Identified website visitors</strong>: people who signed up, filled a form or are already your contacts.</p></div>
+      <div><span class="k">Free</span><p><strong>Anonymous website visitors and mail in Junk</strong> never count.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="ladder-h" style="display:grid;gap:14px">
+    <h2 id="ladder-h">How the price grows</h2>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>Active audience</th><th>Price a month</th><th>Storage</th></tr></thead>
+        <tbody id="ladder"></tbody>
+      </table>
+    </div>
+    <div class="foot">
+      <p>Over a limit, you get 10% extra before anything stops. Nothing is ever deleted.</p>
+      <p>Unlimited emails still follow hourly and daily sending limits that protect delivery for every customer.</p>
+      <p>Still to decide: website event allowances, the Enterprise cutoff, and what happens to the per-person plans already in Paddle.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const STOPS = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 25000, 30000, 40000, 50000, 75000, 100000]
+const LADDER = [1000, 5000, 10000, 25000, 50000, 100000]
+const fmt = (n) => n.toLocaleString('en-US')
+const growthPrice = (a) => 49 + Math.max(0, Math.ceil((a - 5000) / 100))
+const growthGb = (a) => 35 + Math.max(0, Math.ceil((a - 5000) / 100))
+const $ = (id) => document.getElementById(id)
+
+function render() {
+  const a = STOPS[Number($('aud').value)]
+  $('aud-out').innerHTML = fmt(a) + ' <small>people</small>'
+  $('aud').setAttribute('aria-valuetext', fmt(a) + ' people')
+  const free = a <= 1000
+  const ga = Math.max(a, 5000)
+  $('p-free').classList.toggle('on', free)
+  $('p-growth').classList.toggle('on', !free && a < 100000)
+  $('p-ent').classList.toggle('on', a >= 100000)
+  $('g-price').innerHTML = '$' + fmt(growthPrice(ga)) + '<span> /month</span>'
+  $('g-pill').textContent = fmt(ga) + ' people'
+  $('g-aud').textContent = fmt(ga)
+  $('g-gb').textContent = fmt(growthGb(ga)) + ' GB'
+  $('g-events').textContent = fmt(ga * 100)
+  $('g-sub').textContent = a < 5000 && !free
+    ? 'Growth starts at 5,000 people for $49.'
+    : 'From $49 for 5,000, then $1 for every 100 more.'
+  $('ladder').innerHTML = LADDER.map((n) => {
+    const here = n === LADDER.filter((x) => x <= a).pop()
+    const price = n <= 1000 ? 'Free' : n >= 100000 ? '$' + fmt(growthPrice(n)) + ' or custom' : '$' + fmt(growthPrice(n))
+    const gb = n <= 1000 ? 5 : growthGb(n)
+    return `<tr class="${here ? 'here' : ''}"><td>${fmt(n)}</td><td>${price}</td><td>${fmt(gb)} GB</td></tr>`
+  }).join('')
+}
+$('aud').addEventListener('input', render)
+render()
+</script>

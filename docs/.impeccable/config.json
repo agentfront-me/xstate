@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "docs/pricing-draft.html"
+        ],
+        "createdAt": "2026-11-19T08:29:57.435Z",
+        "reason": "Claude: false positive; flagged #a1a1aa is the dark-theme muted token shown only on #18181b; light theme muted is #71717a on #ffffff (4.8:1)"
+      }
+    ]
+  }
+}

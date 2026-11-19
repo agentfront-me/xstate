@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_person ON events (person_id, name, occurred_at);
 CREATE INDEX IF NOT EXISTS events_time ON events (occurred_at);
 
--- Names for the segment builder's pickers.
+-- Names for the segment builder's pickers. total and last_at are no longer kept up to date: counts come from events (eventNames).
 CREATE TABLE IF NOT EXISTS event_names (name TEXT PRIMARY KEY, total INTEGER NOT NULL, last_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS attribute_defs (key TEXT PRIMARY KEY, type TEXT NOT NULL, created_at TEXT NOT NULL);
 
@@ -138,7 +138,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_time ON sessions (domain, started_at);
 CREATE INDEX IF NOT EXISTS sessions_person ON sessions (person_id, started_at);
-CREATE INDEX IF NOT EXISTS sessions_ended ON sessions (ended_at);
 
 -- Funnels (funnels.ts): ordered steps within a conversion window. Results are cached for a few minutes.
 CREATE TABLE IF NOT EXISTS funnels (
@@ -224,6 +223,11 @@ const UPGRADES: ((sql: SqlStorage) => void)[] = [
   (sql) => {
     sql.exec('CREATE TABLE IF NOT EXISTS sites (name TEXT PRIMARY KEY)')
   },
+  // 6: fewer writes per event. Every pageview moves a visit's ended_at, so an index on it cost a write each time;
+  // the daily clean-up finds old visits by when they started instead (sessions_started).
+  (sql) => {
+    sql.exec('DROP INDEX IF EXISTS sessions_ended')
+  },
 ]
 
 /** Organization-wide analytics settings, kept in the store's own storage. */
@@ -255,6 +259,8 @@ const toFunnel = (r: FunnelRow): Funnel => ({
   updatedAt: r.updated_at,
 })
 const DAY = 86_400_000
+/** A person's last_seen_at is only moved forward once it is this old: each move rewrites two indexes. */
+const LAST_SEEN_STEP_MS = 10 * 60_000
 
 type PersonRow = {
   id: string
@@ -404,9 +410,10 @@ export class AudienceStore extends DurableObject<Env> {
     const now = Date.now()
     this.ctx.storage.transactionSync(() => {
       this.sql.exec('DELETE FROM events WHERE occurred_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
-      // Visits outlive events (the Overview compares 90 days with the 90 before), but not their IP addresses.
-      this.sql.exec('DELETE FROM sessions WHERE ended_at < ?', daysAgo(SESSION_RETENTION_DAYS, now))
-      this.sql.exec('UPDATE sessions SET ip = NULL WHERE ip IS NOT NULL AND ended_at < ?', daysAgo(EVENT_RETENTION_DAYS, now))
+      // Visits outlive events (the Overview compares 90 days with the 90 before), but not their IP addresses. Found
+      // by start (no index on ended_at), with a day's margin so a visit is never cut before it ended.
+      this.sql.exec('DELETE FROM sessions WHERE started_at < ?', daysAgo(SESSION_RETENTION_DAYS + 1, now))
+      this.sql.exec('UPDATE sessions SET ip = NULL WHERE ip IS NOT NULL AND started_at < ?', daysAgo(EVENT_RETENTION_DAYS + 1, now))
       const stale = this.all<{ id: string }>(
         "SELECT id FROM people WHERE kind = 'lead' AND email IS NULL AND phone IS NULL AND last_seen_at < ?",
         daysAgo(ANONYMOUS_RETENTION_DAYS, now),
@@ -414,6 +421,29 @@ export class AudienceStore extends DurableObject<Env> {
       for (const { id } of stale) this.removePerson(id)
     })
     await this.ctx.storage.setAlarm(now + DAY)
+  }
+
+  /**
+   * Remembers an event name for the pickers. Only a new name is written (an ignored insert writes nothing); totals
+   * and last use are counted from events when read (eventNames).
+   */
+  private noteName(name: string, at: string) {
+    this.sql.exec('INSERT OR IGNORE INTO event_names VALUES (?, 0, ?)', name, at)
+  }
+
+  /** Event names by use over the events kept (90 days), most used first. */
+  private eventNames(limit: number, where = ''): { name: string; total: number; lastAt: string }[] {
+    return this.all(
+      `SELECT n.name, count(e.name) AS total, coalesce(max(e.occurred_at), n.last_at) AS lastAt
+       FROM event_names n LEFT JOIN events e ON e.name = n.name ${where}
+       GROUP BY n.name ORDER BY total DESC, n.name LIMIT ?`,
+      limit,
+    )
+  }
+
+  /** Moves last_seen_at forward only when it is LAST_SEEN_STEP_MS behind (it is indexed twice). */
+  private seenStale(lastSeenAt: string, at: string): boolean {
+    return Date.parse(at) - Date.parse(lastSeenAt) >= LAST_SEEN_STEP_MS
   }
 
   private removePerson(id: string) {
@@ -511,7 +541,8 @@ export class AudienceStore extends DurableObject<Env> {
     if (!person) return false
     if (item.type === 'page_leave') {
       this.pageLeave(person.id, item)
-      this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?) WHERE id = ?', item.at, person.id)
+      const seen = this.one<{ last_seen_at: string }>('SELECT last_seen_at FROM people WHERE id = ?', person.id)
+      if (seen && this.seenStale(seen.last_seen_at, item.at)) this.sql.exec('UPDATE people SET last_seen_at = ? WHERE id = ?', item.at, person.id)
       return true
     }
     const visit = this.visit(person.id, item)
@@ -530,15 +561,13 @@ export class AudienceStore extends DurableObject<Env> {
       item.context.path ?? null,
       item.at,
     )
-    this.sql.exec(
-      'INSERT INTO event_names VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET total = total + 1, last_at = max(last_at, excluded.last_at)',
-      name,
-      item.at,
-    )
+    this.noteName(name, item.at)
     this.creditRevenue(person.id, item, visit.id)
-    const current = this.one<{ metrics: string }>('SELECT metrics FROM people WHERE id = ?', person.id)!
-    const metrics = applyEvent(JSON.parse(current.metrics) as Metrics, item, { newSession: visit.created })
-    this.sql.exec('UPDATE people SET last_seen_at = max(last_seen_at, ?), metrics = ? WHERE id = ?', item.at, JSON.stringify(metrics), person.id)
+    const current = this.one<{ metrics: string; last_seen_at: string }>('SELECT metrics, last_seen_at FROM people WHERE id = ?', person.id)!
+    const metrics = JSON.stringify(applyEvent(JSON.parse(current.metrics) as Metrics, item, { newSession: visit.created }))
+    // Only metrics changes on most events; last_seen_at (two indexes) moves in LAST_SEEN_STEP_MS steps.
+    if (this.seenStale(current.last_seen_at, item.at)) this.sql.exec('UPDATE people SET last_seen_at = ?, metrics = ? WHERE id = ?', item.at, metrics, person.id)
+    else this.sql.exec('UPDATE people SET metrics = ? WHERE id = ?', metrics, person.id)
     return true
   }
 
@@ -882,13 +911,9 @@ export class AudienceStore extends DurableObject<Env> {
           p.domain,
           input.at,
         )
-        this.sql.exec(
-          'INSERT INTO event_names VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET total = total + 1, last_at = max(last_at, excluded.last_at)',
-          name,
-          input.at,
-        )
+        this.noteName(name, input.at)
         const metrics = JSON.stringify(applyEmail(JSON.parse(p.metrics) as Metrics, input.kind, input.at))
-        if (active) this.sql.exec('UPDATE people SET metrics = ?, last_seen_at = max(last_seen_at, ?) WHERE id = ?', metrics, input.at, p.id)
+        if (active && this.seenStale(p.last_seen_at, input.at)) this.sql.exec('UPDATE people SET metrics = ?, last_seen_at = ? WHERE id = ?', metrics, input.at, p.id)
         else this.sql.exec('UPDATE people SET metrics = ? WHERE id = ?', metrics, p.id)
         n++
       }
@@ -1033,7 +1058,7 @@ export class AudienceStore extends DurableObject<Env> {
 
   /** What the funnel editor offers: event names seen (yours, not xstate's own), and the most viewed paths. */
   async funnelOptions(): Promise<{ events: string[]; paths: string[] }> {
-    const events = this.all<{ name: string }>("SELECT name FROM event_names WHERE name NOT LIKE '$%' ORDER BY total DESC LIMIT 200").map((r) => r.name)
+    const events = this.eventNames(200, "WHERE n.name NOT LIKE '$%'").map((r) => r.name)
     const paths = this.all<{ path: string }>(
       "SELECT path, count(*) AS n FROM events WHERE name = '$pageview' AND path IS NOT NULL AND occurred_at >= ? GROUP BY path ORDER BY n DESC LIMIT 100",
       daysAgo(30),
@@ -1159,9 +1184,7 @@ export class AudienceStore extends DurableObject<Env> {
   async schema() {
     return {
       attributes: this.all<{ key: string; type: string }>('SELECT key, type FROM attribute_defs ORDER BY key'),
-      events: this.all<{ name: string; total: number; lastAt: string }>(
-        'SELECT name, total, last_at AS lastAt FROM event_names ORDER BY total DESC LIMIT 200',
-      ),
+      events: this.eventNames(200),
     }
   }
 

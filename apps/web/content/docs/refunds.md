@@ -5,7 +5,7 @@ description: How cancellations and refunds work for xstate's paid plans.
 
 **Last updated:** November 16, 2026
 
-xstate is operated by **HireNinja LLC**. Paid plans (Pro and Team) are sold by our reseller **Paddle.com**,
+xstate is operated by **HireNinja LLC**. Paid plans (Growth) are sold by our reseller **Paddle.com**,
 the merchant of record for all our orders. Paddle handles payments, invoices, sales tax and refunds.
 
 ## Cancel any time

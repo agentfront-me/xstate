@@ -19,8 +19,8 @@ export const metadata: Metadata = {
 const faqs = [
   ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own and xstate checks its DNS records for you, usually in a few minutes. Buying a domain during setup and a free xstate subdomain are coming.'],
   ['What can I keep in Storage?', 'Any file. Save attachments from your mail in one click, keep personal and shared spaces for your team, and edit Markdown and CSV or mark up PDFs in the browser. Earlier versions are kept, and you can share a file by link.'],
-  ['What does search look through?', 'Every email body, PDF and text attachments, and your files in Storage, indexed by meaning so you can ask in your own words. The free plan covers the last 90 days of mail. Your AI apps and agents search the same index, limited to what they were given.'],
-  ['How do agents run a campaign?', 'Describe the campaign in plain words and who it is for. For each person, the agent reads their contact details and your past emails with them, then writes a message for them alone. Every email waits for your approval until you let the agent send on its own. Agents come with Pro and Team and use your own Anthropic or OpenAI key.'],
+  ['What does search look through?', 'Every email body, PDF and text attachments, and your files in Storage, indexed by meaning so you can ask in your own words. Your AI apps and agents search the same index, limited to what they were given.'],
+  ['How do agents run a campaign?', 'Describe the campaign in plain words and who it is for. For each person, the agent reads their contact details and your past emails with them, then writes a message for them alone. Every email waits for your approval until you let the agent send on its own. Free includes one agent and Growth unlimited; agents use your own Anthropic or OpenAI key.'],
   ['Can my app send email through xstate?', 'Yes. Create a personal token and send receipts, password resets and alerts from any mailbox you choose, with one API request. Replies land in that mailbox. It is for email a person is waiting for, not newsletters.'],
   ['What does the website snippet track?', 'Page views on its own, and any events you send with one line of code. Visitors stay anonymous until they give an email, for example in a form. Anonymous visitors are removed 30 days after their last visit, and events after 90 days.'],
   ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
@@ -40,8 +40,7 @@ const structuredData = {
       description: 'Business email, calendar and files on your own domain, with AI apps you control.',
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },
-        { '@type': 'Offer', name: 'Pro', price: '6', priceCurrency: 'USD' },
-        { '@type': 'Offer', name: 'Team', price: '12', priceCurrency: 'USD' },
+        { '@type': 'Offer', name: 'Growth', price: '49', priceCurrency: 'USD' },
       ],
     },
     {
