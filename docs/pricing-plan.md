@@ -46,52 +46,71 @@ The recommendation in brief:
 
 ## 2. What xstate pays: fixed costs
 
+Refreshed 2026-11-19. Stalwart stopped on 2026-11-18, so deepo is no longer an xstate cost.
+
 | Item | Monthly | Notes |
 |---|---|---|
-| Cloudflare Workers Paid | $5.00 | Includes 10M requests, 30M CPU-ms, 1M queue operations, D1/DO/KV allowances, 50M queried and 10M stored Vectorize dimensions, and Workflows allowances |
-| deepo, EC2 t3.medium, us-east-2, on demand | $30.37 | $0.0416 an hour. Runs Stalwart, Postgres and ClamAV, and also unrelated projects (mastr, horizon) |
-| deepo EBS gp3, 30 GB | $2.40 | $0.08 per GB-month. 11 GB in use today |
-| deepo public IPv4 | $3.65 | $0.005 an hour |
-| Amazon SES base | $0 | Pay as you go, no monthly fee |
-| **Total** | **about $41.40** | Break-even is about 9 Pro people (§5) |
+| Cloudflare Workers Paid | $5.00 | Includes 10M requests, 30M CPU-ms, 1M queue operations, D1/DO/KV allowances (Durable Objects: 50M SQLite rows written and 5 GB stored), 50M queried and 10M stored Vectorize dimensions, and Workflows allowances |
+| Amazon SES base | $0 | Pay as you go, no monthly fee, for both sending and receiving |
+| Paddle | $0 | Fees per payment only (§4) |
+| **Total** | **about $5** | Covered by about one Pro person (§5) |
 
-**The step costs.** One t3.medium (4 GB, about 1 GB of it used by clamd) will hold some hundreds of active
-mailboxes, but that has not been measured. The model plans for one more box of this size (about $36) per 500
-active mailboxes. That works out to **about $0.08 per mailbox a month**. Measure Stalwart and Postgres load once
-real customers arrive.
+There is no server to scale any more: all mail runs on Workers, Durable Objects, R2 and SES, so cost grows with
+use rather than in steps. (Until 2026-11-18 deepo, an EC2 t3.medium at about $36 a month, ran Stalwart, Postgres
+and ClamAV, and the model added about $0.08 per mailbox for it.)
 
 ---
 
-## 3. What xstate pays: per mailbox
+## 3. What xstate pays: per organization
 
-### Measured on production (2026-11-16)
+An organization's costs grow with six things. Two of them matter: **mail kept searchable** and **website analytics
+events**. The rest are small or close to free.
 
-These figures come from the one real migrated organization, b6b21012…: 6 mailboxes and 82,019 emails, imported
-from Google Workspace.
-
-| Measure | Value | Per 1,000 emails |
+| What grows | Cost | Matters? |
 |---|---|---|
-| Search passages (vectors) | 215,925 in total; 200,060 are email bodies | **2.44 passages per email** |
-| Mail blobs in R2 (`xstate-mail-blobs`) | 5.54 GB | 68 MB |
-| Attachment copies in R2 (`files`) | 11,800 files, 4,979 MiB | 64 MB |
-| D1 database | 47.7 MB in total, nearly all of it this org's `search_docs` and `files` | about 0.5 MB |
+| Mail kept searchable (vectors) | ~$0.028 per 1,000 emails, **every month**, plus $0.013 once to index | **Biggest for mail.** About 75% of variable cost today, and it never stops growing |
+| Website analytics events | ~$15.50 per million events (§3a) | **Biggest for websites.** Not limited by any plan yet |
+| Storage: mail and files in R2 | ~$0.002 per 1,000 emails a month; $0.015 per GB of files | Small, but it grows without limit |
+| Received mail (SES) | ~$0.20 per 1,000 | Small |
+| Sent mail (SES) | ~$0.15 per 1,000, plus $0.12 per GB of attachments | Small; sending caps already limit it |
+| Mailbox index (MailboxStore Durable Objects) | ~2.2 KB per email at $0.20 per GB-month | Free for now: inside the account's included 5 GB |
+| Contacts (AudienceStore) | ~1 KB each; 10,000 contacts ≈ $0.002 a month | **No limit needed for cost** |
+| Searches (AI search, MCP, Storage) | ~$0.00001–0.00003 each | **No limit needed for cost**; rate limits stop abuse |
+| Agent runs | ~$0.0001 a run; AI tokens are on the customer's own key | No limit needed for cost |
 
-The previous estimate of 100,000 to 150,000 passages for a 52,000-email mailbox holds up: at the measured
-2.44 passages per email it comes to about 127,000.
+### Measured on production
+
+**2026-11-18**, the main organization (b6b21012…) after Stalwart was removed:
+
+| Measure | Value | Per email |
+|---|---|---|
+| Search passages (vectors) | 216,344 | **2.63** |
+| Organization R2 bucket (raw messages plus attachment copies) | 13.8 GB | ~145 KB |
+| MailboxStore Durable Objects | 181 MB | ~2.2 KB |
+| Mail volume | ~1,600 received and ~100 sent a month | – |
+| Variable cost, whole org | **~$2.40 a month**; Vectorize is ~75% of it | – |
+
+Per mailbox a month on that day: asif@hireninja.com ~$1.79 (of which search $1.50), mohammad@asif.pk ~$0.94,
+asif@xstate.com ~$0.11.
+
+**2026-11-16**, the same organization still on Stalwart: 82,019 emails, 215,925 vectors (2.44 per email), mail blobs
+5.54 GB plus attachment copies ~5 GB, D1 47.7 MB (about 0.5 MB per 1,000 emails, mostly `search_docs` and `files`).
 
 ### Unit costs
 
-| Cost | Rate | Per 1,000 emails kept |
+| Cost | Rate | Per 1,000 emails |
 |---|---|---|
-| **Keeping mail searchable**, every month | Vectorize bills every stored vector as queried dimensions, at $0.01 per million, plus storage at $0.05 per 100 million dimensions. 2,440 vectors × 1,024 dimensions is 2.5M dimensions | **$0.026 a month** |
+| **Keeping mail searchable**, every month | Vectorize bills every stored vector as queried dimensions, at $0.01 per million, plus storage at $0.05 per 100 million dimensions. 2,630 vectors × 1,024 dimensions is 2.7M dimensions | **$0.028 a month** |
 | Indexing, once | bge-m3 at $0.012 per million tokens. About 450 tokens per 1,800-character passage | $0.013 once |
-| Storing mail and attachments in R2 | $0.015 per GB-month, egress free | $0.002 a month |
-| Sending | SES at $0.10 per 1,000 messages, plus $0.12 per GB of attachments | – |
-| Workers, Queues, D1 and Durable Objects per message | Queue operations at $0.40 per million, D1 writes at $1 per million rows | about $0.013 per 1,000 messages handled |
+| Storing mail and attachments in R2 | $0.015 per GB-month, egress free. ~145 KB per email, because attachments are kept both inside the raw message and as a separate `files` copy | $0.002 a month |
+| Receiving | SES: $0.10 per 1,000 messages plus $0.09 per 1,000 incoming 256 KB chunks | ~$0.20 |
+| Sending | SES: ~$0.10–0.16 per 1,000 messages (the bill shows "Essentials" at ~$0.16), plus $0.12 per GB of attachments | ~$0.15 |
+| Mailbox index | Durable Object SQLite storage at $0.20 per GB-month beyond the account's 5 GB. ~2.2 KB per email | ~$0.0004 a month |
+| Workers, Queues, D1 and Durable Objects per message | Queue operations at $0.40 per million, D1 and DO rows written at $1 per million | about $0.013 per 1,000 messages handled |
 | One MCP search / one-file search / attachment text | earlier measurement | $0.00003 / $0.00001 / $0.000002 |
 | One agent run (the AI tokens are the customer's) | Workflows: $0.30 per million requests, $0.80 per 100,000 steps (step billing hasn't started yet). A run of about 10 steps costs about $0.0001 | – |
 
-Keeping mail searchable costs about **13 times as much as storing it**. That is why the plans limit search
+Keeping mail searchable costs about **14 times as much as storing it**. That is why the plans limit search
 history and leave storage generous.
 
 ### Monthly cost per mailbox
@@ -99,16 +118,63 @@ history and leave storage generous.
 | Profile | Light (Free, 90-day window) | Typical (Pro) | Heavy (Pro at its cap) |
 |---|---|---|---|
 | Emails kept searchable | about 3,000 | 15,000 | 52,000 |
-| Search vectors | $0.08 | $0.39 | $1.35 |
-| R2: mail and attachments | $0.01 | $0.03 | $0.10 |
+| Search vectors | $0.08 | $0.42 | $1.46 |
+| R2: mail and attachments | $0.01 | $0.03 | $0.11 |
 | R2: Storage files | $0.00 | $0.15 (10 GB) | $0.45 (30 GB full) |
-| SES: 300 / 800 / 2,500 sent | $0.03 | $0.10 | $0.32 |
+| SES received: 300 / 1,000 / 2,500 | $0.06 | $0.20 | $0.50 |
+| SES sent: 300 / 800 / 2,500 | $0.03 | $0.10 | $0.32 |
+| Mailbox index | $0.00 | $0.01 | $0.02 |
 | Workers, Queues, D1 | $0.01 | $0.02 | $0.04 |
-| deepo share | $0.08 | $0.08 | $0.08 |
-| **Total** | **about $0.21** | **about $0.77** | **about $2.34** |
+| **Total** | **about $0.19** | **about $0.93** | **about $2.90** |
 
-The worst case for a free person at every cap is about $0.85 a month: 5 GB of mail, 100 outside recipients
-every day, and 200 MCP searches every day. A typical free organization of 3 light users costs about $0.65 a month.
+The worst case for a free person at every cap is about $1.00 a month: 5 GB of mail, 100 outside recipients every
+day, and 200 MCP searches every day. A typical free organization of 3 light users costs about $0.57 a month.
+
+None of this includes website analytics, which is per organization, not per mailbox (§3a).
+
+### 3a. Website analytics events
+
+Every event that `/v1/collect` accepts (a pageview, a custom event, an `$email_*` event) is written to the
+organization's AudienceStore Durable Object. Counted from `apps/api/src/audience/store.ts` on 2026-11-19, one
+pageview writes about **15 rows** once indexes are counted:
+
+- the `events` row and its 5 indexes;
+- the `event_names` counter;
+- the visit in `sessions` and the indexes its update touches;
+- the person's `last_seen_at` in `people` and its indexes.
+
+| Cost | Rate | Per million events |
+|---|---|---|
+| Durable Object rows written | $1 per million rows, ~15 rows an event | ~$15.00 |
+| Worker request | $0.30 per million | $0.30 |
+| Durable Object request | $0.15 per million | $0.15 |
+| Storage | Events kept 90 days, visits 180 days; ~0.5 KB per event with indexes at $0.20 per GB-month | ~$0.05 a month per million kept |
+| **Total** | | **~$15.50** |
+
+The 15 rows are counted from the code, not measured on production. Check it against the Durable Objects
+rows-written metric once real traffic arrives.
+
+| Site | Events a month | Cost a month |
+|---|---|---|
+| Small business site | 10,000 | $0.16 |
+| Busy marketing site | 100,000 | $1.55 |
+| Busy site with product events | 1,000,000 | $15.50 |
+
+A site with 100,000 pageviews a month costs more than a heavy mailbox's search. Unlike mail, the traffic comes
+from the customer's visitors, not their people, so it doesn't grow with seats. The included 50M rows written on
+Workers Paid covers only about 3M events across all organizations together.
+
+**Proposed limits (not decided):**
+
+| | Free | Pro | Team |
+|---|---|---|---|
+| Analytics events a month | 10,000 per org | 25,000 per person, pooled | 100,000 per person, pooled |
+| Cost at the limit | $0.16 per org | $0.39 per person | $1.55 per person |
+| Extra events | – | $5 per 100,000 a month (cost $1.55 today, ~$0.65 after the fix below) | same |
+
+Over the limit, the usual 10% grace applies, then `/v1/collect` stops recording events until the month resets.
+Contacts, identify calls and already-recorded data are untouched. Cutting the rows per event (§6, item 7) to about
+6 would bring the cost down to about $6.50 per million.
 
 ---
 
@@ -131,16 +197,22 @@ Margin = (price − payment fee − cost to run) ÷ price.
 
 | | Price | Fee | Cost | Margin |
 |---|---|---|---|---|
-| Pro, monthly, typical person | $6.00 | $0.40 | $0.77 | **$4.83 (80%)** |
-| Pro, monthly, heavy person | $6.00 | $0.40 | $2.34 | $3.26 (54%) |
-| Pro, yearly, typical person | $5.00 | $0.26 | $0.77 | $3.97 (79%) |
-| Pro, yearly, heavy person | $5.00 | $0.26 | $2.34 | $2.40 (48%) |
-| Team, monthly, typical person (30 GB used) | $12.00 | $0.65 | $1.07 | $10.28 (86%) |
-| Team, monthly, a person at every cap (200,000 emails, 200 GB) | $12.00 | $0.65 | about $8.70 | about $2.65 (22%) |
+| Pro, monthly, typical person | $6.00 | $0.40 | $0.93 | **$4.67 (78%)** |
+| Pro, monthly, heavy person | $6.00 | $0.40 | $2.90 | $2.70 (45%) |
+| Pro, yearly, typical person | $5.00 | $0.26 | $0.93 | $3.81 (76%) |
+| Pro, yearly, heavy person | $5.00 | $0.26 | $2.90 | $1.84 (37%) |
+| Team, monthly, typical person (30 GB used) | $12.00 | $0.65 | $1.23 | $10.12 (84%) |
+| Team, monthly, a person at every cap (200,000 emails, 200 GB) | $12.00 | $0.65 | about $9.50 | about $1.85 (15%) |
 | Extra storage, 100 GB | $5.00 | $0.25 | $1.50 | $3.25 (65%) |
+| Extra analytics events, 100,000 (proposed, §3a) | $5.00 | $0.25 | $1.55 | $3.20 (64%) |
 
-**How free users are paid for.** One typical Pro person contributes about $4.83 a month. That covers about 23
-light free people, or about 7 typical free organizations. Fixed costs are covered at about 9 Pro people.
+Costs refreshed 2026-11-19 (§3): no deepo share, SES receiving added, 2.63 vectors per email. Margins exclude
+website analytics, which is per organization and needs its own limit (§3a). Without one, a Pro organization of
+one person with a 100,000-pageview site would cost $0.93 + $1.55 and fall to a 51% margin; a free organization
+with the same site would cost xstate about $1.75 a month.
+
+**How free users are paid for.** One typical Pro person contributes about $4.67 a month. That covers about 24
+light free people, or about 8 typical free organizations. Fixed costs ($5) are covered by about one Pro person.
 
 **Agents and connected apps** barely affect cost. Their token costs are the customer's. The run limits and
 daily call limits exist to stop runaway loops, not to cover a bill. A single connected app searching at today's
@@ -151,23 +223,28 @@ a month per person on Pro.
 
 ## 6. Cutting costs before launch (engineering follow-ups, not part of pricing)
 
-1. **Index less of each email.** 2.44 passages per email is high for business mail. Each reply most likely
+1. **Index less of each email.** 2.63 passages per email (2026-11-18) is high for business mail. Each reply most likely
    carries the whole quoted thread below it, so the same text is indexed many times. Stripping quoted replies and
    signatures before splitting could cut the vector bill by around 40–50%, which is the plan's largest variable
    cost. Measure it on the migrated org first.
-2. **Attachments are stored twice.** They are kept once in Stalwart's blobs and once as a copy in R2:
-   4.98 GB of copies next to 5.54 GB of blobs. At $0.015 per GB this is cheap, but it doubles what a storage cap
-   has to count. The cap should count what the customer sees, which is mail once plus their Storage files.
+2. **Attachments are stored twice.** They are kept once inside the raw message (`<mailboxId>/raw/<emailId>.eml`)
+   and once as a `files` copy, both in the org's R2 bucket (~145 KB per email in total). At $0.015 per GB this is
+   cheap, but it doubles what a storage cap has to count. The cap should count what the customer sees, which is mail once plus their Storage files.
 3. **D1 will hit its 10 GB limit.** `search_docs` and `files` take about 8 MB per heavy mailbox. At that rate
    the limit arrives at about 1,200 heavy mailboxes. Plan a move (for example per-org Durable Objects) well
    before then.
 4. **The SES account quota is shared by every customer.** It is 50,000 recipients a day, 14 a second. 25 Pro
    orgs sending at their limit of 2,000 a day would fill it. Ask AWS for a higher quota as paid organizations
    grow.
-5. **deepo is shared with other projects** (mastr, horizon). Move xstate to its own instance before paying
-   customers depend on it, so another project can't take mail down.
+5. **Cleared:** deepo no longer runs anything for xstate since Stalwart stopped on 2026-11-18. Stalwart's leftover
+   data (Postgres DB, `xstate-mail-blobs`) is deleted in phase 5c after ~2026-12-18.
 6. **Observability pricing changes on 2026-12-01.** Workers Logs moves to per-GB billing: 50 GB of ingest
    included, then $0.25 per GB. Check the log volume of the `mcp call` and migration logs.
+7. **Write fewer rows per analytics event.** One pageview writes about 15 Durable Object rows (§3a), almost all of
+   it the cost of an event. Options: drop `events` indexes that no query needs, update `people.last_seen_at` at most
+   once per visit instead of on every event, and keep `event_names` counts in memory and flush them on the daily
+   alarm. About 6 rows an event would cut the cost from ~$15.50 to ~$6.50 per million. Measure rows written per
+   event on production first.
 
 ---
 
