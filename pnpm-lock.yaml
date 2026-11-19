@@ -72,9 +72,6 @@ importers:
       '@fullcalendar/react':
         specifier: 7.1.4
         version: 7.1.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(temporal-polyfill@1.0.8)
-      '@paddle/paddle-js':
-        specifier: ^1.6.6
-        version: 1.6.6
       '@tanstack/react-query':
         specifier: ^5.106.1
         version: 5.106.1(@types/react@19.3.0)(react@19.3.1)
@@ -1853,9 +1850,6 @@ packages:
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
-
-  '@paddle/paddle-js@1.6.6':
-    resolution: {integrity: sha512-MHkqW4b7DP6F0HvbNG6HnGcSUdX2znwsvENIqJQuMqTtwcRPo6tTg8m1ail02mAODbFu/wsWUcRdsW7a9DVyTQ==}
 
   '@peculiar/asn1-schema@2.11.1':
     resolution: {integrity: sha512-jaU9OaCcbZUdyXx9hMETZB9xoNmxTGjOGFqd3cOwKFkpKnyKd9WxF3uqj4PvX4cyOMP9bSdHg5YyML2qtx/d/g==}
@@ -9654,8 +9648,6 @@ snapshots:
   '@oxc-project/types@0.154.0': {}
 
   '@oxc-project/types@0.156.0': {}
-
-  '@paddle/paddle-js@1.6.6': {}
 
   '@peculiar/asn1-schema@2.11.1':
     dependencies:

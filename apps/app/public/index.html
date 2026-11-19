@@ -9,10 +9,10 @@
 <link rel="canonical" href="https://go.xstate.com/">
 <!--
   go.xstate.com/: the public front of the app. Signed-in people go straight to the dashboard (the session lives in
-  localStorage, src/lib/core.ts); everyone else, Paddle's domain review included, sees what xstate is, its prices
+  localStorage, src/lib/core.ts); everyone else sees what xstate is, its prices
   and its legal pages. The look follows xstate.com's home page (apps/web/app/(marketing)/marketing.css): zinc ink
   and paper, 1px gridded panels, mono meta labels, regular-weight headings. Prices must match
-  docs/pricing-plan.md, the Paddle catalog and xstate.com.
+  docs/pricing-plan.md §8a, the billing catalog and xstate.com.
 -->
 <script>
 try { if (localStorage.getItem('xstate.session')) location.replace('/app/' + location.search + location.hash) } catch (e) {}
@@ -158,32 +158,32 @@ h1, h2, h3, p { margin: 0; }
   <section id="pricing" class="section" aria-labelledby="price-h">
     <div class="section-head">
       <h2 id="price-h">Pricing</h2>
-      <span class="small muted mono">USD · per person · annual saves 2 months</span>
+      <span class="small muted mono">USD · monthly · no charge per seat</span>
     </div>
     <div class="grid plans">
       <div class="plan">
         <span>Free</span>
         <span class="plan-price">$0</span>
-        <span class="small muted">forever</span>
-        <ul><li>Up to 5 people on 1 domain</li><li>5 GB per person</li><li>AI search of the last 90 days</li><li>Connected AI apps</li></ul>
+        <span class="small muted">up to 1,000 people a month</span>
+        <ul><li>5 GB storage for mail and files</li><li>5 mailboxes, personal and shared</li><li>3 domains</li><li>4,000 emails a month</li><li>1 agent on your own AI key</li></ul>
         <a href="/signup/">Start free</a>
       </div>
       <div class="plan">
-        <span>Pro</span>
-        <span class="plan-price">$6</span>
-        <span class="small muted">per person / month, or $5 billed yearly</span>
-        <ul><li>10 domains</li><li>30 GB per person, pooled</li><li>AI search of all your mail</li><li>Agents on your own AI key</li><li>Shared mailboxes free</li></ul>
-        <a href="/signup/?plan=pro">Start Pro</a>
+        <span>Growth</span>
+        <span class="plan-price">$49</span>
+        <span class="small muted">a month for 5,000 people, then $1 for every 100 more</span>
+        <ul><li>50 GB storage, growing with your audience</li><li>Unlimited mailboxes and domains</li><li>Unlimited emails</li><li>Unlimited agents on your own AI key</li></ul>
+        <a href="/signup/">Start free, then upgrade</a>
       </div>
       <div class="plan">
-        <span>Team</span>
-        <span class="plan-price">$12</span>
-        <span class="small muted">per person / month, or $10 billed yearly</span>
-        <ul><li>Unlimited domains</li><li>200 GB per person, pooled</li><li>Longer search history</li><li>More agent runs and app calls</li><li>Support within 4 hours</li></ul>
-        <a href="/signup/?plan=team">Start Team</a>
+        <span>Custom</span>
+        <span class="plan-price">Custom</span>
+        <span class="small muted">over 1,000,000 people a month</span>
+        <ul><li>Everything in Growth</li><li>Volume pricing</li><li>Storage and sending set for you</li><li>Priority support and migration help</li></ul>
+        <a href="https://xstate.com/#pricing">See pricing</a>
       </div>
     </div>
-    <p class="small muted">Plus tax where it applies. Paid plans are sold by our reseller, Paddle. Cancel any time, with a full refund within 14 days of any payment.</p>
+    <p class="small muted">People count once a month: everyone you email or who emails you, plus known website visitors. Cancel any time, with a full refund within 14 days of any payment.</p>
   </section>
 
   <section class="cta" aria-labelledby="cta-h">

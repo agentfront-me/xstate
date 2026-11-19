@@ -19,9 +19,8 @@ const secretOf = (env: AnalyticsEnv) => (env as { XSTATE_SECRET_KEY?: string }).
 /** Where an action came from. HTTP calls name their app in the X-Client header; anything else is "app". */
 export type Via = 'web' | 'mobile' | 'desktop' | 'app' | 'mcp' | 'agent'
 type Role = 'owner' | 'admin' | 'member'
-type PaidPlan = 'pro' | 'team'
+type PaidPlan = 'growth' | 'custom'
 type Plan = 'free' | PaidPlan
-type Interval = 'month' | 'year'
 
 /** Every server event and its properties (besides org_id, which every event carries). */
 export type ServerEvents = {
@@ -40,27 +39,20 @@ export type ServerEvents = {
   'AI App Connected': { client_name: string; scopes: string[] }
   'Agent Created': { provider: string | null }
   'API Token Created': { mailbox_count: number; expires: boolean }
-  // Money
+  // Money. size: the Growth size in people (5,000 plus 100 per extra hundred) the organization pays for.
   'Order Completed': {
     revenue: number
     currency: string
     plan: PaidPlan | null
-    interval: Interval | null
-    seats: number | null
+    size: number | null
     billing_reason: 'new' | 'renewal' | 'change' | 'other'
     transaction_id: string
   }
-  'Plan Changed': {
-    from_plan: Plan
-    to_plan: Plan
-    from_interval: Interval | null
-    to_interval: Interval | null
-    direction: 'upgrade' | 'downgrade' | 'interval'
-  }
-  'Payment Failed': { plan: Plan; interval: Interval | null; seats: number | null }
+  'Plan Changed': { from_plan: Plan; to_plan: Plan; from_size: number | null; to_size: number | null; direction: 'upgrade' | 'downgrade' }
+  'Payment Failed': { plan: Plan; size: number | null }
   'Order Refunded': { refund_amount: number; currency: string; transaction_id: string; full_refund: boolean }
   // Churn
-  'Subscription Canceled': { plan: Plan; interval: Interval | null; seats: number | null; tenure_days: number; immediate: boolean }
+  'Subscription Canceled': { plan: Plan; size: number | null; tenure_days: number; immediate: boolean }
   'Member Removed': { role: Role; tenure_days: number }
 }
 export type ServerEvent = keyof ServerEvents

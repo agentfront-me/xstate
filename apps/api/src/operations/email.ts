@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import * as mailserver from '../mailserver'
 import * as mailboxesDb from '../db/mailboxes'
-import { syncSeats } from '../billing/service'
 import { track, type Via } from '../analytics/events'
 import * as domainsDb from '../db/domains'
 import { defineOperation } from './define'
@@ -135,8 +134,6 @@ export const emailCreateMailbox = defineOperation({
   mcp: { scope: 'setup' },
   run: async ({ env, actor, waitUntil }, input) => {
     const result = await mailserver.createMailbox(env, actor, input)
-    // People are billed as seats (billing/): a new person changes the subscription's quantity.
-    if (result.mailbox.kind === 'personal') waitUntil(syncSeats(env, result.mailbox.organizationId))
     const organizationId = result.mailbox.organizationId
     track(env, waitUntil, actor.userId, organizationId, 'Mailbox Created', async () => {
       const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM mailboxes WHERE organization_id = ?').bind(organizationId).first<{ n: number }>()
@@ -187,10 +184,8 @@ export const emailDeleteMailbox = defineOperation({
   input: z.object({ mailboxId: id }),
   http: { method: 'DELETE', path: '/email/mailboxes/:mailboxId' },
   mcp: { scope: 'setup', destructive: true },
-  run: async ({ env, actor, waitUntil }, input) => {
-    const row = await mailboxesDb.find(env.DB, input.mailboxId)
+  run: async ({ env, actor }, input) => {
     await mailserver.deleteMailbox(env, actor, input.mailboxId)
-    if (row?.kind === 'personal') waitUntil(syncSeats(env, row.organization_id))
   },
 })
 

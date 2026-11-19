@@ -1,55 +1,41 @@
-// POST /webhooks/paddle: Paddle's notifications for this environment's destination, signed with
-// PADDLE_WEBHOOK_SECRET. Subscription events are mirrored onto the organization (service.applySubscription), which
-// is idempotent and ignores reports older than the stored one, so retries and out-of-order deliveries are safe.
-// Anything but a 2xx makes Paddle retry (live: for about 3 days), so failures answer 500.
-// Transaction and adjustment events only feed xstate's own analytics (./analytics.ts), after the response.
+// POST /webhooks/billing/:provider: the payment provider's notifications. The provider's own file checks the
+// signature and turns the delivery into neutral BillingEvents (./provider.ts); subscriptions are mirrored onto the
+// organization (service.applySubscription, idempotent and ordered, so retries and out-of-order deliveries are safe)
+// and payments feed xstate's own analytics (./analytics.ts) after the response.
+// Anything but a 2xx makes the provider retry, so failures answer 500.
 
 import type { Context } from 'hono'
-import { ipInCidrs, paddleWebhookCidrs } from './ips'
-import { apiBase, verifySignature, type PaddleSubscription } from './paddle'
-import { recordMoneyEvent } from './analytics'
+import { recordPayment } from './analytics'
+import { providerFor, WebhookRejected } from './provider'
 import { applySubscription, type BillingEnv } from './service'
 
-type PaddleEvent = { event_id: string; event_type: string; occurred_at: string; data: unknown }
-
-export async function handlePaddleWebhook(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleBillingWebhook(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env as unknown as BillingEnv
-  const raw = await c.req.text()
-  const signature = c.req.header('Paddle-Signature') ?? ''
-  if (!env.PADDLE_WEBHOOK_SECRET) {
-    console.error('billing webhook: PADDLE_WEBHOOK_SECRET is not set')
-    return c.json({ error: { code: 'not_configured', message: 'Billing is not set up' } }, 503)
+  const provider = providerFor(env)
+  if (!provider || provider.name !== c.req.param('provider')) {
+    return c.json({ error: { code: 'not_configured', message: 'Billing is not set up for this provider' } }, 404)
   }
-  // Only Paddle's published addresses (billing/ips.ts); local development posts signed fakes from localhost.
-  if ((c.env as { ENVIRONMENT?: string }).ENVIRONMENT !== 'development') {
-    const cidrs = await paddleWebhookCidrs(apiBase(env.PADDLE_API_KEY ?? ''))
-    if (!cidrs) return c.json({ error: { code: 'unavailable', message: 'Try again later' } }, 503)
-    const ip = c.req.header('CF-Connecting-IP') ?? ''
-    if (!ipInCidrs(ip, cidrs)) {
-      console.warn('billing webhook: rejected source address', ip)
-      return c.json({ error: { code: 'forbidden', message: 'Source address not allowed' } }, 403)
-    }
-  }
-  if (!(await verifySignature(env.PADDLE_WEBHOOK_SECRET, signature, raw))) {
-    return c.json({ error: { code: 'bad_signature', message: 'Signature does not match' } }, 401)
-  }
-  let event: PaddleEvent
+  let events
   try {
-    event = JSON.parse(raw) as PaddleEvent
-  } catch {
-    return c.json({ error: { code: 'invalid_json', message: 'Body is not JSON' } }, 400)
-  }
-  try {
-    const background = (promise: Promise<unknown>) => c.executionCtx.waitUntil(promise)
-    if (event.event_type.startsWith('subscription.')) {
-      const organizationId = await applySubscription(env, event.data as PaddleSubscription, event.occurred_at, background)
-      console.log('billing webhook', JSON.stringify({ event: event.event_type, id: event.event_id, organizationId }))
-    } else {
-      background(recordMoneyEvent(env, background, event.event_type, event.data))
-    }
-    return c.json({ received: true })
+    events = await provider.verifyWebhook(c.req.raw)
   } catch (err) {
-    console.error('billing webhook failed', event.event_type, event.event_id, err)
-    return c.json({ error: { code: 'internal', message: 'Could not process the event' } }, 500)
+    if (err instanceof WebhookRejected) return c.json({ error: { code: 'rejected', message: err.message } }, err.status)
+    console.error('billing webhook: verification failed', err)
+    return c.json({ error: { code: 'internal', message: 'Could not read the event' } }, 500)
   }
+  const background = (promise: Promise<unknown>) => c.executionCtx.waitUntil(promise)
+  for (const event of events) {
+    try {
+      if (event.kind === 'subscription') {
+        const organizationId = await applySubscription(env, provider.name, event.subscription, background)
+        console.log('billing webhook', JSON.stringify({ provider: provider.name, id: event.id, organizationId }))
+      } else {
+        background(recordPayment(env, background, provider.name, event))
+      }
+    } catch (err) {
+      console.error('billing webhook failed', provider.name, event.id, err)
+      return c.json({ error: { code: 'internal', message: 'Could not process the event' } }, 500)
+    }
+  }
+  return c.json({ received: true })
 }

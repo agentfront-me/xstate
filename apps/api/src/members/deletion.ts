@@ -13,7 +13,6 @@
 
 import { revokeTokensOfMember } from '../auth/api-tokens'
 import type { Actor } from '../auth/types'
-import { syncSeats } from '../billing/service'
 import * as mailboxAccessDb from '../db/mailbox-access'
 import * as membersDb from '../db/members'
 import { ApiError } from '../errors'
@@ -208,6 +207,5 @@ export async function finishDeletion(env: Env, memberId: string): Promise<void> 
   await revokeTokensOfMember(env, target.organization_id, { userId: target.user_id, name: target.name, email: target.email }, null).catch((err) =>
     console.error('revoking api tokens failed', err),
   )
-  await syncSeats(env, target.organization_id).catch((err) => console.error('seat sync after member deletion failed', err))
   console.log('member deleted', JSON.stringify({ memberId, organizationId: target.organization_id, mail: target.delete_mail }))
 }

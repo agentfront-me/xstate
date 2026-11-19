@@ -507,6 +507,12 @@ export class MailboxStore extends Agent<Env> {
     return { recorded, gone }
   }
 
+  /** Bytes of raw mail kept in this mailbox, trash included (plan storage usage, usage/storage.ts). */
+  mailBytes(): number {
+    const row = [...this.db.exec('SELECT COALESCE(SUM(raw_size), 0) AS bytes FROM messages')][0] as { bytes: number } | undefined
+    return row?.bytes ?? 0
+  }
+
   rawStats(): RawStats {
     const one = (q: string) => [...this.db.exec(q)][0] as Record<string, number>
     const m = one(`SELECT COUNT(*) AS messages, COALESCE(SUM(raw_key IS NOT NULL AND raw_key != ''), 0) AS copied,

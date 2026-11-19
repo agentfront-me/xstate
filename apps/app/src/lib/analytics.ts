@@ -16,7 +16,7 @@ declare global {
 
 /** Every browser event and its properties. org_id is added to each. */
 export type BrowserEvents = {
-  'Checkout Started': { plan: 'pro' | 'team'; interval: 'month' | 'year'; seats: number }
+  'Checkout Started': { plan: 'growth'; size: number }
   'Onboarding Completed': { domain_verified: boolean; agent_connected: boolean }
 }
 

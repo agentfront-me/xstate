@@ -10,8 +10,9 @@ import { migrationHourly } from './migration/watchdog'
 import { consumeMigration, consumeMigrationDead, type MigrationJob } from './migration/jobs'
 import { handleSesWebhook } from './jobs/ses-webhook'
 import { handleSesInbound } from './jobs/ses-inbound'
-import { handlePaddleWebhook } from './billing/webhook'
+import { handleBillingWebhook } from './billing/webhook'
 import { billingHourly } from './billing/service'
+import { usageDaily } from './usage/service'
 import { consumePush, type PushJob } from './push/send'
 import type { InboundJob } from './mailbox/inbound'
 import { consumeInbound } from './mailbox/receive'
@@ -80,8 +81,8 @@ app.route('/v1', v1)
 app.post('/webhooks/ses', handleSesWebhook)
 // Mail received through SES, delivered by SNS (signed; mailbox/receive.ts).
 app.post('/webhooks/ses-inbound', handleSesInbound)
-// Paddle subscription events (signed with PADDLE_WEBHOOK_SECRET; billing/webhook.ts).
-app.post('/webhooks/paddle', handlePaddleWebhook)
+// The payment provider's events (signed; billing/webhook.ts). :provider is BILLING_PROVIDER's name, e.g. stripe.
+app.post('/webhooks/billing/:provider', handleBillingWebhook)
 // Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
 app.post('/hooks/:triggerId', handleWebhook)
 app.post('/hooks/:triggerId/:token', handleWebhook)
@@ -140,8 +141,10 @@ export default {
         membersHourly(env).catch((err) => console.error('members-hourly failed', err)),
         // The send log of POST /v1/emails: messages older than 30 days.
         emailsHourly(env).catch((err) => console.error('emails-hourly failed', err)),
-        // Billing: every paying organization billed for its current number of people.
+        // Billing: refresh paying organizations' subscriptions in case a webhook was missed.
         billingHourly(env).catch((err) => console.error('billing-hourly failed', err)),
+        // Plan usage: the daily recount of every organization's stored mail (03:00 UTC).
+        usageDaily(env).catch((err) => console.error('usage-daily failed', err)),
         // SES verifies DKIM on its own schedule: pick up domains it has verified since they were last checked.
         sesHourly(env).then(
           (r) => r.changed && console.log('ses-hourly', JSON.stringify(r)),

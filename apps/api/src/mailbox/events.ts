@@ -3,6 +3,7 @@
 // agents' email triggers, and their removal when messages go. On a queue of their own, so delivery never waits for
 // or retries because of the model or Vectorize. Every step is safe to repeat.
 
+import { addStorageBytes, recordActiveAudience } from '../usage/record'
 import * as filesDb from '../db/files'
 import * as mailboxesDb from '../db/mailboxes'
 import type { MailboxRow } from '../db/mailboxes'
@@ -105,6 +106,14 @@ async function handle(env: Env, event: MailEvent) {
         if (parsed.inReplyTo) result.audience += await recordEmailActivity(env, mailbox.organization_id, { ...base, kind: 'replied' })
       }
     }
+    // Plan usage (usage/): everyone on the message counts toward this month's active audience, the organization's
+    // own addresses and Cc included (docs/pricing-plan.md §8a). Not mail in Junk, and not imported or caught-up mail.
+    // Its raw size counts toward storage.
+    if (fresh.offer !== false && row.folder !== 'junk') {
+      const everyone = [...parsed.from, ...(parsed.to ?? []), ...(parsed.cc ?? []), ...(parsed.bcc ?? [])].map((a) => a.email)
+      await recordActiveAudience(env, mailbox.organization_id, everyone, Date.parse(row.receivedAt) || Date.now())
+    }
+    if (fresh.offer !== false) await addStorageBytes(env, mailbox.organization_id, raw.length)
     const filed = await fileAttachments(env, mailbox, bucket, row, raw, parsed, fresh.direction)
     result.filed += filed.filed
     result.blocked += filed.blocked

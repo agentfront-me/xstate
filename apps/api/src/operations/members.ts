@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { syncSeats } from '../billing/service'
 import { completeReset, lookupReset, sendResetLink, setTemporaryPassword } from '../members/passwords'
 import { deleteMember } from '../members/deletion'
 import { restoreMember, signOutEverywhere, suspendMember } from '../members/security'
@@ -70,12 +69,7 @@ export const membersAdd = defineOperation({
   }),
   http: { method: 'POST', path: '/members/orgs/:organizationId/add', status: 201 },
   mcp: false,
-  run: async ({ env, actor, waitUntil }, { organizationId, ...input }) => {
-    const result = await addMember(env, actor, organizationId, input)
-    // A personal mailbox is a seat.
-    waitUntil(syncSeats(env, organizationId))
-    return result
-  },
+  run: ({ env, actor }, { organizationId, ...input }) => addMember(env, actor, organizationId, input),
 })
 
 export const membersSetPrimaryAddress = defineOperation({

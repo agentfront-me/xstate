@@ -72,14 +72,9 @@
     // MAIL_INBOUND_ACCESS_KEY_ID and MAIL_INBOUND_SECRET_ACCESS_KEY secrets. Setup: docs/mailbox-store-plan.md,
     // "Step 1 setup". Nothing is received until the SES receipt rule is active.
     "SES_INBOUND_TOPIC_ARN": "arn:aws:sns:us-east-2:881901370832:xstate-mail-inbound",
-    // Billing through Paddle (billing/, docs/pricing-plan.md). The client-side token (live_…) is public: it only
-    // opens checkout. PADDLE_PRICES maps plans to the live catalog's price ids, printed by
-    // `node scripts/paddle-catalog.mjs`. Local dev uses the sandbox, set in .dev.vars.
-    "PADDLE_CLIENT_TOKEN": "live_f98c13c9051250b7ab1d78ec490",
-    "PADDLE_PRICES": {
-      "pro": { "month": "pri_01m7hsw4asdwzjbx2jct35akfz", "year": "pri_01m7hsw4pgcs6hxfpbe735ybgw" },
-      "team": { "month": "pri_01m7hsw6jpntng6tpkkmjrw6kp", "year": "pri_01m7hsw6xnwnetag7j6z0xyr7p" }
-    }
+    // Billing (billing/, docs/billing-limits-plan.md): the payment provider billing/provider.ts uses. Its keys are
+    // secrets; until they are set, paid plans can't be bought and Settings → Billing says so.
+    "BILLING_PROVIDER": "stripe"
   },
   // Connected apps (mcp/oauth.ts): registered clients, grants and tokens, kept by @cloudflare/workers-oauth-provider
   // (tokens only as hashes), and sign-in requests waiting on the consent page for up to 10 minutes. Namespace
@@ -197,15 +192,16 @@
   // received mail to.
   // MAIL_SEND_ACCESS_KEY_ID / MAIL_SEND_SECRET_ACCESS_KEY (optional until a store-held mailbox sends): IAM user
   // xstate-mail-send, allowed only ses:SendRawEmail, for mail sent straight through SES (mailbox/ses-send.ts).
-  // PADDLE_API_KEY / PADDLE_WEBHOOK_SECRET: the live Paddle API key (pdl_live_…, "xstate production API", expires
-  // 2027-11-16: make a new one before then) and the secret of the notification destination
-  // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.
   // DOMAIN_CONNECT_PRIVATE_KEY (set in production; without it there is no one-click setup): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
   // XSTATE_SECRET_KEY (optional; without it nothing is sent): the secret key (sk_live_…) of the main organization's
   // Analytics, for xstate's own product analytics (src/analytics/events.ts, docs/analytics-events.md). Signs the
   // identify() hash in auth responses and authorizes server events to /v1/collect. Not in "required" so local dev
   // and deploys work without it.
+  // STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET (billing/stripe.ts): the Stripe secret key (sk_live_… in production) and
+  // the signing secret (whsec_…) of the endpoint https://api.xstate.com/webhooks/billing/stripe. Required, because
+  // wrangler dev only loads required secrets from .dev.vars; until live keys exist, set both to "off" and billing
+  // stays unavailable (anything not starting sk_ / whsec_ counts as unset).
   "secrets": {
     "required": [
       "JWT_SECRET",
@@ -215,8 +211,8 @@
       "AWS_SES_ACCESS_KEY_ID",
       "AWS_SES_SECRET_ACCESS_KEY",
       "API_KEYS_ENCRYPTION_KEY",
-      "PADDLE_API_KEY",
-      "PADDLE_WEBHOOK_SECRET"
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET"
     ]
   }
 }

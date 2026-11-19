@@ -215,9 +215,10 @@ A personal token lets your own server send email from mailboxes you can send fro
   roll them. They are for audience tracking and can't send email.
 - **Webhooks** xstate receives are checked before they're trusted. Mail-server events must carry a valid
   HMAC-SHA256 signature, Amazon SES notifications (bounces, complaints and received mail) must have a valid
-  signature from AWS and come from xstate's own notification topics, and billing events from
-  Paddle must come from one of Paddle's published addresses and carry a valid, recent HMAC-SHA256 signature.
-- **Payments** happen in Paddle's checkout, never on xstate's servers: xstate doesn't see or store card numbers.
+  signature from AWS and come from xstate's own notification topics, and billing events from the payment
+  provider must carry the provider's valid, recent signature.
+- **Payments** happen on the payment provider's hosted checkout page, never on xstate's servers: xstate doesn't
+  see or store card numbers.
   Only owners and admins can buy, change or cancel a plan, and connected AI apps and agents can't touch billing.
 - **Agent webhook triggers** check a secret or an HMAC signature in constant time, and are rate limited.
 

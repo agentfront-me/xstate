@@ -17,6 +17,7 @@ import { isAdmin, loadMember } from './access'
 import { EmailError, forbidden } from './errors'
 import { calendarOverLimit, judge, LIMITS, overLimit, SUSPEND } from './sending-rules'
 import type { Actor, EmailEnv } from './types'
+import { emailsAdd, emailsUndo, monthOf } from '../usage/record'
 
 const SUPPORT = 'support@xstate.io'
 
@@ -33,6 +34,9 @@ export async function reserveSend(
   const outside = await countOutside(db, recipients)
   const now = Date.now()
   const id = crypto.randomUUID()
+  // Plan usage: this month's emails, every recipient counted (usage/record.ts). Counted only; limits come in phase 5.
+  const month = monthOf(now)
+  const all = new Set(recipients.map((r) => r.trim().toLowerCase()).filter(Boolean)).size
   const hourAgo = new Date(now - 60 * 60 * 1000).toISOString()
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString()
 
@@ -41,9 +45,11 @@ export async function reserveSend(
     sendingDb.activeFor(db, mailbox.organization_id, mailbox.id),
     outside ? sendingDb.logSend(db, { id, organizationId: mailbox.organization_id, mailboxId: mailbox.id, recipients: outside, createdAt: new Date(now).toISOString() }) : db.prepare('SELECT 1'),
     sendingDb.usage(db, mailbox.organization_id, mailbox.id, hourAgo, dayAgo),
+    all ? emailsAdd(db, mailbox.organization_id, all, month) : db.prepare('SELECT 1'),
   ])
   const release = async () => {
-    if (outside) await db.batch([sendingDb.unlogSend(db, id)]).catch((err) => console.error('sending: release failed', err))
+    const undo = [...(outside ? [sendingDb.unlogSend(db, id)] : []), ...(all ? [emailsUndo(db, mailbox.organization_id, all, month)] : [])]
+    if (undo.length) await db.batch(undo).catch((err) => console.error('sending: release failed', err))
   }
 
   const suspension = (suspended!.results as sendingDb.SuspensionRow[])[0]

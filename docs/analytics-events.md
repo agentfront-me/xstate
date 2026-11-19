@@ -88,27 +88,27 @@ Money events are recorded for the organization's owner (`organizations.owner_id`
 
 | Event | Fires when | Where | Properties |
 | --- | --- | --- | --- |
-| Checkout Started | Paddle's checkout opens | Browser: `settings/Billing.tsx` `buy`, before `Paddle.Checkout.open` | `plan`: `pro` \| `team`; `interval`: `month` \| `year`; `seats`: number |
-| Order Completed | A payment succeeds: the first one, renewals, and prorated seat or plan changes | Server: `billing/analytics.ts`, from Paddle `transaction.completed` | **`revenue`**: number (total less tax, major units, e.g. 18); **`currency`**: `USD`; `plan`; `interval`; `seats`; `billing_reason`: `new` \| `renewal` \| `change` \| `other` (from Paddle's `origin`); `transaction_id` |
-| Plan Changed | The organization's plan or interval changes | Server: `billing/service.ts` `applySubscription` | `from_plan`; `to_plan`; `from_interval`; `to_interval`; `direction`: `upgrade` \| `downgrade` \| `interval` |
-| Payment Failed | A payment attempt fails (Paddle retries, so one failed renewal can send several) | Server: `billing/analytics.ts`, from Paddle `transaction.payment_failed` | `plan`; `interval`; `seats` |
-| Order Refunded | Paddle approves a refund | Server: `billing/analytics.ts`, from Paddle `adjustment.created` / `adjustment.updated` with status `approved` and action `refund` | `refund_amount`: number (major units, before tax); `currency`; `transaction_id` (the refunded payment); `full_refund`: boolean |
+| Checkout Started | The provider's checkout page is requested | Browser: `settings/Billing.tsx` `upgrade`, before redirecting | `plan`: `growth`; `size`: number (Growth size in people) |
+| Order Completed | A payment succeeds: the first one, renewals, and prorated size changes | Server: `billing/analytics.ts` `recordPayment`, from the provider's paid-payment webhook | **`revenue`**: number (total less tax, major units, e.g. 49); **`currency`**: `USD`; `plan`: `growth` \| `custom`; `size`: Growth size in people; `billing_reason`: `new` \| `renewal` \| `change` \| `other`; `transaction_id` |
+| Plan Changed | The organization's plan or Growth size changes | Server: `billing/service.ts` `applySubscription` | `from_plan`; `to_plan`; `from_size`; `to_size`; `direction`: `upgrade` \| `downgrade` |
+| Payment Failed | A payment attempt fails (the provider retries, so one failed renewal can send several) | Server: `billing/analytics.ts` `recordPayment` | `plan`; `size` |
+| Order Refunded | A refund is made | Server: `billing/analytics.ts` `recordPayment`, from the provider's refund webhook | `refund_amount`: number (major units, before tax); `currency`; `transaction_id` (the refunded payment); `full_refund`: boolean |
 
 `Order Completed` is the only event with `revenue`, so renewals count as real cash and nothing is counted twice.
-$0 transactions are skipped. Paddle amounts come in minor units as strings and are converted. Each payment and each
-refund is recorded once even when Paddle delivers the webhook again: the first delivery claims a row in
+$0 transactions are skipped. Provider amounts arrive in minor units and are converted. Each payment and each
+refund is recorded once even when the provider delivers the webhook again: the first delivery claims a row in
 `analytics_sent` (D1 migration 0044); without that table the event is skipped rather than risk a double count.
 `Order Refunded` carries `refund_amount`, not `revenue`, so it never adds to revenue totals; net revenue is the
 two subtracted.
 
 `applySubscription` only writes over the state it read (compare-and-set, retried), so when the webhook and the
-browser's checkout confirmation apply the same change at once, only one of them records it.
+hourly refresh apply the same change at once, only one of them records it.
 
 ### Churn
 
 | Event | Fires when | Where | Properties |
 | --- | --- | --- | --- |
-| Subscription Canceled | A paid subscription is canceled: once, when the cancellation is scheduled, or when it ends without having been scheduled | Server: `billing/service.ts` `applySubscription` | `plan`; `interval`; `seats`; `tenure_days`: number (since the subscription started); `immediate`: boolean |
+| Subscription Canceled | A paid subscription is canceled: once, when the cancellation is scheduled, or when it ends without having been scheduled | Server: `billing/service.ts` `applySubscription` | `plan`; `size`; `tenure_days`: number (since the subscription started); `immediate`: boolean |
 | Member Removed | A person who had joined is removed or leaves (not a cancelled invite) | Server: `members/service.ts` `removeMember` | `role` of the removed member; `tenure_days`. `userId` is the person who removed them, never the removed person's details. |
 
 When a scheduled cancellation takes effect, `Plan Changed` (to `free`, `downgrade`) follows.
@@ -120,12 +120,12 @@ When a scheduled cancellation takes effect, `Plan Changed` (to `free`, `downgrad
 - Storage and Calendar actions: page views of `/storage` and `/calendar` are enough for now. Add events when there
   is a question they'd answer.
 - Clicks on marketing-site buttons: page views and funnels (`/pricing` → `/signup` → `Signed Up`) cover them.
-- Seat-count syncs (`syncSeats`): the prorated charge shows up as `Order Completed` with `billing_reason: change`.
+- Size changes: the prorated charge shows up as `Order Completed` with `billing_reason: change`.
 
 ## 6. Decisions on the review questions
 
-1. Paddle notifications: the webhook now handles `transaction.completed`, `transaction.payment_failed`,
-   `adjustment.created` and `adjustment.updated`. They still have to be turned on at Paddle (§7).
+1. Payment notifications: the provider's file (`billing/stripe.ts`, phase 2 of docs/billing-limits-plan.md) turns
+   its payment and refund webhooks into neutral events for `recordPayment`. (Paddle was removed 2026-11-19.)
 2. Web, mobile or desktop: yes, the clients send `X-Client`.
 3. `/s/`: no snippet.
 4. Onboarding Completed stays a browser event.
@@ -138,9 +138,8 @@ When a scheduled cancellation takes effect, `Plan Changed` (to `free`, `downgrad
 1. `wrangler secret put XSTATE_SECRET_KEY` on the API: the main organization's secret key (Analytics → Install code).
 2. Apply D1 migration `0044_analytics_sent.sql` to production (`pnpm --filter @xstate/api db:migrate:remote`).
    Until then money events are skipped (logged), never double counted.
-3. In Paddle (production and sandbox), add `transaction.completed`, `transaction.payment_failed`,
-   `adjustment.created` and `adjustment.updated` to the notification destination for
-   `https://api.xstate.com/webhooks/paddle`.
+3. At the payment provider, send payment, failed-payment and refund events to
+   `https://api.xstate.com/webhooks/billing/stripe` (set up in phase 2 of docs/billing-limits-plan.md).
 4. The mobile app's `X-Client: mobile` header reaches phones with the next EAS update; until then mobile sends
    show as `via: app`.
 5. Check Analytics → Live events after signing up on go.xstate.com.

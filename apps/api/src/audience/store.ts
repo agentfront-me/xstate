@@ -228,7 +228,22 @@ const UPGRADES: ((sql: SqlStorage) => void)[] = [
   (sql) => {
     sql.exec('DROP INDEX IF EXISTS sessions_ended')
   },
+  // 7: plan usage (docs/billing-limits-plan.md §3.3). The active audience: everyone the organization emailed or got
+  // mail from, and every identified website visitor, once per calendar month (UTC, 'YYYY-MM'). source is how the
+  // person first counted that month. usage_months counts accepted website events, for the event load.
+  (sql) => {
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS active_people (month TEXT NOT NULL, email TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('mail', 'web')), PRIMARY KEY (month, email)) WITHOUT ROWID",
+    )
+    sql.exec('CREATE TABLE IF NOT EXISTS usage_months (month TEXT PRIMARY KEY, events INTEGER NOT NULL DEFAULT 0)')
+  },
 ]
+
+/** The calendar month (UTC) usage is counted in. */
+export const usageMonth = (at: number | string | Date = Date.now()) => new Date(at).toISOString().slice(0, 7)
+
+/** What plan usage counts this month, for Settings → Billing. */
+export type AudienceUsage = { month: string; total: number; mail: number; web: number; events: number }
 
 /** Organization-wide analytics settings, kept in the store's own storage. */
 export type AnalyticsSettings = { storeIp: boolean }
@@ -419,6 +434,9 @@ export class AudienceStore extends DurableObject<Env> {
         daysAgo(ANONYMOUS_RETENTION_DAYS, now),
       )
       for (const { id } of stale) this.removePerson(id)
+      // Plan usage: the active audience is only read for this month and the last two; event counts for two years.
+      this.sql.exec('DELETE FROM active_people WHERE month < ?', usageMonth(now - 92 * DAY))
+      this.sql.exec('DELETE FROM usage_months WHERE month < ?', usageMonth(now - 730 * DAY))
     })
     await this.ctx.storage.setAlarm(now + DAY)
   }
@@ -478,8 +496,39 @@ export class AudienceStore extends DurableObject<Env> {
       for (const item of batch.items) {
         if (this.collectOne(item, batch)) accepted++
       }
+      // Website event load (plan usage): one write per batch, not per event.
+      if (accepted)
+        this.sql.exec(
+          'INSERT INTO usage_months (month, events) VALUES (?, ?) ON CONFLICT (month) DO UPDATE SET events = events + excluded.events',
+          usageMonth(),
+          accepted,
+        )
     })
     return { accepted }
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Plan usage (docs/billing-limits-plan.md §3.3): the monthly active audience and website event load.
+
+  /** Counts these addresses as reached this month (mail sent or received). Returns how many were new this month. */
+  async recordActive(emails: string[], at: number = Date.now()): Promise<number> {
+    const month = usageMonth(at)
+    const list = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter((e) => e.includes('@') && e.length <= 254))].slice(0, 200)
+    let added = 0
+    this.ctx.storage.transactionSync(() => {
+      for (const email of list) {
+        added += this.sql.exec("INSERT OR IGNORE INTO active_people (month, email, source) VALUES (?, ?, 'mail')", month, email).rowsWritten > 0 ? 1 : 0
+      }
+    })
+    return added
+  }
+
+  async usage(month: string = usageMonth()): Promise<AudienceUsage> {
+    const counts = this.all<{ source: string; n: number }>('SELECT source, count(*) AS n FROM active_people WHERE month = ? GROUP BY source', month)
+    const mail = counts.find((c) => c.source === 'mail')?.n ?? 0
+    const web = counts.find((c) => c.source === 'web')?.n ?? 0
+    const events = this.one<{ events: number }>('SELECT events FROM usage_months WHERE month = ?', month)?.events ?? 0
+    return { month, total: mail + web, mail, web, events }
   }
 
   /** The organization's domains changed (or were never stored): keep the new list and move people onto it. */
@@ -539,6 +588,8 @@ export class AudienceStore extends DurableObject<Env> {
   private collectOne(item: CollectItem, batch: CollectBatch): boolean {
     const person = item.type === 'identify' ? this.identify(item, batch) : this.resolve(item, batch)
     if (!person) return false
+    // An identified visitor (one with an email) is part of this month's active audience.
+    if (person.email) this.sql.exec("INSERT OR IGNORE INTO active_people (month, email, source) VALUES (?, ?, 'web')", usageMonth(), person.email.toLowerCase())
     if (item.type === 'page_leave') {
       this.pageLeave(person.id, item)
       const seen = this.one<{ last_seen_at: string }>('SELECT last_seen_at FROM people WHERE id = ?', person.id)

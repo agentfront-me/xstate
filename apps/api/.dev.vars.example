@@ -41,12 +41,9 @@ DOMAIN_CONNECT_PRIVATE_KEY=
 # The MCP server and its OAuth sign-in, on the API's own local address (production: https://mcp.xstate.com).
 MCP_URL=http://localhost:8788
 
-# Billing through Paddle's sandbox (billing/, docs/pricing-plan.md). Sandbox dashboard → Developer tools →
-# Authentication: an API key (pdl_sdbx_…, permissions: product, price, customer, subscription, transaction read and
-# write; customer portal session write) and a client-side token (test_…). Then `node scripts/paddle-catalog.mjs`
-# prints PADDLE_PRICES. The webhook secret is the sandbox notification destination's (Developer tools →
-# Notifications); locally, checkout is confirmed without it, so it is only needed to test the webhook itself.
-PADDLE_API_KEY=
-PADDLE_CLIENT_TOKEN=
-PADDLE_PRICES=
-PADDLE_WEBHOOK_SECRET=
+# Billing through Stripe test mode (billing/stripe.ts, docs/billing-limits-plan.md). Dashboard → Developers → API keys:
+# the secret key (sk_test_…). Then `node scripts/billing-catalog.mjs` creates the Growth product, prices and portal
+# configuration. The webhook secret (whsec_…) comes from `stripe listen --forward-to localhost:8788/webhooks/billing/stripe`;
+# "off" when not testing webhooks (checkout is confirmed by the app without it).
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=off
