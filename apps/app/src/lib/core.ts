@@ -4,6 +4,8 @@
 // the same build from app://xstate/. In Electron, `window.xstateDesktop` (apps/desktop/preload.cjs) adds the
 // native bits: launch at login, menu bar, updates.
 
+import { reset as resetAnalytics } from './analytics'
+
 export type DesktopSettings = Record<string, boolean>
 export type DesktopBridge = {
   platform: string
@@ -99,6 +101,7 @@ export function saveSession(s: Session): void {
 }
 
 export function signOut(): void {
+  resetAnalytics()
   writeJson(SESSION_KEY, null)
   setSignedInHint(null)
   writeJson(PROGRESS_KEY, null)
@@ -156,6 +159,8 @@ async function request(method: string, path: string, body?: unknown, { file, ano
       method,
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
+        // Which app made the call, for xstate's own analytics ("Email Sent" via web or desktop).
+        'X-Client': desktop ? 'desktop' : 'web',
         ...(body !== undefined && { 'Content-Type': 'application/json' }),
         ...(file && { 'Content-Type': file.type || 'application/octet-stream' }),
       },

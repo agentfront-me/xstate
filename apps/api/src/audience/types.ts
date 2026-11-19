@@ -232,7 +232,10 @@ export type EventContext = {
 export type CollectItem = {
   /** page_leave: how long the visitor stayed on a page and how far they scrolled; updates that page view. */
   type: 'identify' | 'track' | 'page' | 'page_leave'
+  /** The hostname the event came from, without www. Kept on events and visits. */
   domain: string
+  /** The site people are kept under: the organization's domain that `domain` falls under, else `domain` (site.ts). */
+  site: string
   anonymousId: string | null
   /** Only set when the call is trusted: the secret key, or a valid user hash. */
   userId: string | null
@@ -246,4 +249,5 @@ export type CollectItem = {
   at: string
 }
 
-export type CollectBatch = { trusted: boolean; source: string; items: CollectItem[] }
+/** `sites`: the organization's verified domains (site.ts normalizeSites); the store re-keys its people when they change. */
+export type CollectBatch = { trusted: boolean; source: string; items: CollectItem[]; sites: string[] }

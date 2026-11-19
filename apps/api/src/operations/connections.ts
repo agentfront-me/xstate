@@ -38,7 +38,7 @@ export const connectApprove = defineOperation({
   }),
   http: { method: 'POST', path: '/connect/requests/:requestId/approve' },
   mcp: false,
-  run: ({ env, actor }, { requestId: request, ...input }) => approveRequest(env, actor, request, input),
+  run: ({ env, actor, waitUntil }, { requestId: request, ...input }) => approveRequest(env, actor, request, input, waitUntil),
 })
 
 export const connectDeny = defineOperation({

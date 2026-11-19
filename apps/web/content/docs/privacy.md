@@ -3,7 +3,7 @@ title: Privacy Policy
 description: What data xstate collects, why, who we share it with, and the choices you have.
 ---
 
-**Last updated:** November 18, 2026
+**Last updated:** November 19, 2026
 
 This policy explains how **HireNinja LLC** ("xstate", "we", "us") handles personal data when you use
 xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related services (the
@@ -64,8 +64,18 @@ xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, a
 - **Mail delivery data:** delivery, bounce and complaint notifications for mail sent through the Service.
 - **Mobile apps:** device push token, app version and device platform, to send notifications you turned on.
   Lists you have opened may be cached on your device so the app works offline; that cache stays on your device.
+- **Product analytics:** on xstate.com and go.xstate.com we use our own website analytics (the same xstate
+  Analytics our customers use) to record page visits, where they came from (referrer and campaign tags), and the
+  browser, device and approximate location of the visitor. When you're signed in, those visits are linked to your
+  account (your user id, email and name, your organization, role and plan). We also record key actions so we can
+  improve the Service: signing up, adding and verifying a domain, creating mailboxes, inviting people, sending
+  mail (only the number of recipients and whether any are outside your organization, never addresses, subjects
+  or content), importing, connecting AI apps, and plan, payment and cancellation events. This stays within xstate;
+  it is kept as described for Website analytics in our [Security](./security.md) page, and Do Not Track and Global
+  Privacy Control are honoured.
 - **Local storage and cookies:** we use your browser's local storage and strictly necessary cookies to keep
-  you signed in and remember preferences. We don't use advertising cookies or cross-site tracking.
+  you signed in and remember preferences, and a first-party analytics cookie on xstate.com that holds only random
+  visitor and visit ids. We don't use advertising cookies or cross-site tracking.
 
 ### Data from third parties
 

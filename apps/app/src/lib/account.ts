@@ -6,6 +6,7 @@ import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, session } from './core'
 import * as sample from './sample'
 import type { DnsRecord, Domain, Mailbox, MailboxKind, Org, User } from './types'
+import { identify } from './analytics'
 
 export type Account = {
   mode: 'live' | 'demo'
@@ -39,9 +40,10 @@ async function loadAccount(): Promise<Account | null> {
       records: { dom_3: sample.sampleRecords },
     }
   }
-  const me = await api<{ user: User; organizations: Org[] }>('GET', '/auth/me')
+  const me = await api<{ user: User; organizations: Org[]; userHash?: string | null }>('GET', '/auth/me')
   const org = me.organizations.find((o) => o.role === 'owner') ?? me.organizations[0]
   if (!org) throw new Error('Your account has no organization.')
+  identify(me.user, org, me.userHash)
   const { domains, mailboxes } = await fetchDomains(org.id)
   const account: Account = { mode: 'live', user: me.user, org, domains, mailboxes, records: {} }
   await checkPending(account)

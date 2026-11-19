@@ -12,6 +12,7 @@ export type PaddleSubscription = {
   items: { price: { id: string }; quantity: number }[]
   current_billing_period: { starts_at: string; ends_at: string } | null
   scheduled_change: { action: string; effective_at: string } | null
+  started_at?: string | null
   updated_at: string
 }
 

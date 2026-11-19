@@ -2,10 +2,12 @@
 // PADDLE_WEBHOOK_SECRET. Subscription events are mirrored onto the organization (service.applySubscription), which
 // is idempotent and ignores reports older than the stored one, so retries and out-of-order deliveries are safe.
 // Anything but a 2xx makes Paddle retry (live: for about 3 days), so failures answer 500.
+// Transaction and adjustment events only feed xstate's own analytics (./analytics.ts), after the response.
 
 import type { Context } from 'hono'
 import { ipInCidrs, paddleWebhookCidrs } from './ips'
 import { apiBase, verifySignature, type PaddleSubscription } from './paddle'
+import { recordMoneyEvent } from './analytics'
 import { applySubscription, type BillingEnv } from './service'
 
 type PaddleEvent = { event_id: string; event_type: string; occurred_at: string; data: unknown }
@@ -38,9 +40,12 @@ export async function handlePaddleWebhook(c: Context<{ Bindings: Env }>): Promis
     return c.json({ error: { code: 'invalid_json', message: 'Body is not JSON' } }, 400)
   }
   try {
+    const background = (promise: Promise<unknown>) => c.executionCtx.waitUntil(promise)
     if (event.event_type.startsWith('subscription.')) {
-      const organizationId = await applySubscription(env, event.data as PaddleSubscription, event.occurred_at)
+      const organizationId = await applySubscription(env, event.data as PaddleSubscription, event.occurred_at, background)
       console.log('billing webhook', JSON.stringify({ event: event.event_type, id: event.event_id, organizationId }))
+    } else {
+      background(recordMoneyEvent(env, background, event.event_type, event.data))
     }
     return c.json({ received: true })
   } catch (err) {

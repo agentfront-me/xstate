@@ -16,6 +16,7 @@ import { GoogleError } from './google/auth'
 import { PERMISSIONS, SCOPES, workspace, type Permission, type WorkspaceEnv } from './google/workspace'
 import { checkOwnership, ownershipRecord, updateMailbox } from '../mailserver'
 import { enqueueMigrationJobs, GROUP_DEFAULT_MAX_MEMBERS, startMailCopies } from './jobs'
+import { noBackground, track, type Background } from '../analytics/events'
 
 export type MigrationEnv = EmailEnv & WorkspaceEnv & Pick<Env, 'MIGRATION'>
 
@@ -337,7 +338,7 @@ export async function savePlan(env: MigrationEnv, actor: Actor, organizationId: 
  * Review → Start: checks the plan can be carried out, then creates the members, mailboxes, aliases and shared
  * mailboxes in the background. Copying itself starts in phase 2.
  */
-export async function start(env: MigrationEnv, actor: Actor, organizationId: string): Promise<MigrationView> {
+export async function start(env: MigrationEnv, actor: Actor, organizationId: string, background: Background = noBackground): Promise<MigrationView> {
   await context(env, actor, organizationId, 'admin')
   const m = await active(env, organizationId)
   if (m.discovery_state !== 'done') throw new ApiError('not_discovered', 'Finish discovery first', 409)
@@ -385,6 +386,12 @@ export async function start(env: MigrationEnv, actor: Actor, organizationId: str
 
   await migrationsDb.update(env.DB, m.id, { apply_state: 'running', apply_error: null, started_at: new Date().toISOString(), stage: 'copying' }).run()
   await enqueueMigrationJobs(env, [{ kind: 'apply', migrationId: m.id }])
+  const copied = users.filter((u) => u.action !== 'skip')
+  const parts = { mail: 'copy_mail', calendar: 'copy_calendar', drive: 'copy_drive', contacts: 'copy_contacts' } as const
+  track(env, background, actor.userId, organizationId, 'Migration Started', {
+    mailbox_count: copied.length,
+    includes: Object.entries(parts).filter(([, col]) => copied.some((u) => u[col])).map(([part]) => part),
+  })
   return view(env, (await migrationsDb.find(env.DB, m.id))!, null)
 }
 

@@ -89,7 +89,7 @@ export const migrationStart = defineOperation({
   input: z.object({ organizationId }),
   http: { method: 'POST', path: '/migration/orgs/:organizationId/start' },
   mcp: false,
-  run: async ({ env, actor }, input) => ({ migration: await start(env, actor, input.organizationId) }),
+  run: async ({ env, actor, waitUntil }, input) => ({ migration: await start(env, actor, input.organizationId, waitUntil) }),
 })
 
 export const migrationCopyStatus = defineOperation({

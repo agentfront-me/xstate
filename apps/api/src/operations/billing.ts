@@ -27,7 +27,7 @@ export const billingConfirmCheckout = defineOperation({
   input: z.object({ organizationId: id, transactionId: z.string().regex(/^txn_[a-z0-9]{10,40}$/, 'Not a Paddle transaction id') }),
   http: { method: 'POST', path: '/orgs/:organizationId/billing/checkouts/:transactionId/confirm' },
   mcp: false,
-  run: ({ env, actor }, input) => confirmCheckout(env, actor, input.organizationId, input.transactionId),
+  run: ({ env, actor, waitUntil }, input) => confirmCheckout(env, actor, input.organizationId, input.transactionId, waitUntil),
 })
 
 export const billingChangePlan = defineOperation({
@@ -36,8 +36,8 @@ export const billingChangePlan = defineOperation({
   input: z.object({ organizationId: id, plan: z.enum(['pro', 'team']), interval: z.enum(['month', 'year']) }),
   http: { method: 'PUT', path: '/orgs/:organizationId/billing/plan' },
   mcp: false,
-  run: async ({ env, actor }, input) => ({
-    billing: await changePlan(env, actor, input.organizationId, input.plan, input.interval),
+  run: async ({ env, actor, waitUntil }, input) => ({
+    billing: await changePlan(env, actor, input.organizationId, input.plan, input.interval, waitUntil),
   }),
 })
 

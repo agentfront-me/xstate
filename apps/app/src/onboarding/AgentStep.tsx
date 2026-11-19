@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { Icon, type IconName } from '../components/Icon'
+import { track } from '../lib/analytics'
 import { api, MCP_URL, signOut } from '../lib/core'
 import { domainName, progress, setProgress, type Data } from './state'
 import { Back, Head, useCopied } from './ui'
@@ -135,6 +136,7 @@ export function AgentStep({ data, back, next }: { data: Data; back: () => void; 
         className="btn btn-primary"
         id="finish"
         onClick={() => {
+          if (!progress().finished) track('Onboarding Completed', { domain_verified: data.domain?.status === 'verified', agent_connected: !!connected })
           setProgress({ finished: true, agent: { id: selected } })
           next()
         }}
@@ -147,6 +149,7 @@ export function AgentStep({ data, back, next }: { data: Data; back: () => void; 
         id="skip"
         onClick={(event) => {
           event.preventDefault()
+          if (!progress().finished) track('Onboarding Completed', { domain_verified: data.domain?.status === 'verified', agent_connected: !!connected })
           setProgress({ finished: true })
           next()
         }}

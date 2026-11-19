@@ -25,6 +25,7 @@ import { ReviewStep } from './steps/Review'
 import { SwitchStep } from './steps/Switch'
 import { stepIndex, STEPS, type Migration, type Stage } from './types'
 import { StepBar } from './ui'
+import { identify } from '../lib/analytics'
 
 applyTheme()
 
@@ -66,9 +67,10 @@ async function loadAccount(): Promise<Loaded> {
     location.assign('/login')
     throw new ApiError('signed_out', 'Sign in to continue.', 401)
   }
-  const me = await api<{ user: User; organizations: Org[] }>('GET', '/auth/me')
+  const me = await api<{ user: User; organizations: Org[]; userHash?: string | null }>('GET', '/auth/me')
   const org = me.organizations.find((o) => o.role === 'owner') ?? me.organizations[0]
   if (!org) throw new Error('Your account has no organization.')
+  identify(me.user, org, me.userHash)
   const [{ domains }, { mailboxes }] = await Promise.all([
     api<{ domains: Domain[] }>('GET', `/email/orgs/${org.id}/domains`),
     api<{ mailboxes: Mailbox[] }>('GET', `/email/orgs/${org.id}/mailboxes`),

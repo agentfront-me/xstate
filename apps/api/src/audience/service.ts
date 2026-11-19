@@ -14,6 +14,7 @@ import { organizationBucket } from '../storage/buckets'
 import { getObject } from '../storage/r2'
 import type { Funnel, FunnelInput, FunnelRange, FunnelResult } from './funnels'
 import type { AnalyticsSettings, EventQuery, ListQuery, Viewer } from './store'
+import { organizationSites, siteOf } from './site'
 import { METRICS, type MetricKey } from './types'
 import type { CollectBatch, FeedEvent, Filter, Person, PersonDetail, PersonFields, SegmentIcon, VisitContext } from './types'
 
@@ -80,7 +81,9 @@ export async function getEvent(env: Env, actor: Actor, organizationId: string, e
 export async function sendTestEvent(env: Env, actor: Actor, organizationId: string, domain: string) {
   const { s, viewer } = await reader(env, actor, organizationId)
   const at = new Date().toISOString()
-  const base = { domain, anonymousId: `vis_test_${viewer.memberId.slice(0, 12)}`, userId: null, email: null, url: `https://${domain}/`, at }
+  const sites = await organizationSites(env, organizationId)
+  const host = domain.toLowerCase().replace(/^www\./, '')
+  const base = { domain: host, site: siteOf(host, sites), anonymousId: `vis_test_${viewer.memberId.slice(0, 12)}`, userId: null, email: null, url: `https://${host}/`, at }
   const batch: CollectBatch = {
     trusted: true,
     source: 'Test',
@@ -88,6 +91,7 @@ export async function sendTestEvent(env: Env, actor: Actor, organizationId: stri
       { ...base, type: 'identify', traits: { name: 'Test visitor' }, event: null, properties: {}, context: {} },
       { ...base, type: 'track', traits: {}, event: 'Test Event', properties: { sent_from: 'xstate dashboard' }, context: { path: '/' } },
     ],
+    sites,
   }
   return s.collect(batch)
 }

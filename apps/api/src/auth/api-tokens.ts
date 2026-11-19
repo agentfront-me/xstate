@@ -32,6 +32,7 @@ import {
   type TokenState,
 } from './api-token-rules.ts'
 import type { Actor } from './types'
+import { track } from '../analytics/events'
 
 export type Token = {
   id: string
@@ -190,6 +191,7 @@ export async function createToken(
   const row = (await db.find(env.DB, organizationId, id))!
   // There is no audit log yet: this email is how a token made from someone else's session gets noticed.
   waitUntil(emailCreated(env, row).catch((err) => console.error('api token email failed', err)))
+  track(env, waitUntil, actor.userId, organizationId, 'API Token Created', { mailbox_count: mailboxIds.length, expires: input.expiresIn !== 'never' })
   return { token: await presentOne(env, actor, row), secret }
 }
 

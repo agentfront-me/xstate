@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { changePassword, getMe, login, register } from '../auth/service'
+import { track, userHash } from '../analytics/events'
 import { ensureBucketsInBackground } from '../storage/buckets'
 import { defineOperation } from './define'
 
@@ -22,7 +23,8 @@ export const authRegister = defineOperation({
     const session = await register(env, input, ip)
     // The organization's R2 bucket. If this fails, the first file stored creates it instead.
     ensureBucketsInBackground(env, waitUntil, [session.organization.id])
-    return session
+    track(env, waitUntil, session.user.id, session.organization.id, 'Signed Up', { source: 'signup', role: 'owner' })
+    return { ...session, userHash: await userHash(env, session.user.id) }
   },
 })
 
@@ -33,7 +35,10 @@ export const authLogin = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/login' },
   mcp: false,
-  run: ({ env, ip }, input) => login(env, input, ip),
+  run: async ({ env, ip }, input) => {
+    const session = await login(env, input, ip)
+    return { ...session, userHash: await userHash(env, session.user.id) }
+  },
 })
 
 export const authChangePassword = defineOperation({
@@ -44,7 +49,10 @@ export const authChangePassword = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/password/change' },
   mcp: false,
-  run: ({ env }, input) => changePassword(env, input),
+  run: async ({ env }, input) => {
+    const session = await changePassword(env, input)
+    return { ...session, userHash: await userHash(env, session.user.id) }
+  },
 })
 
 export const authMe = defineOperation({
@@ -57,7 +65,8 @@ export const authMe = defineOperation({
     const me = await getMe(env, actor)
     // Backfill: organizations created before buckets existed get theirs the next time their owner signs in.
     ensureBucketsInBackground(env, waitUntil, me.organizations.filter((o) => o.role === 'owner').map((o) => o.id))
-    return me
+    // For identify() in the app (xstate's own analytics): proves this user id is really the signed-in person.
+    return { ...me, userHash: await userHash(env, me.user.id) }
   },
 })
 

@@ -56,7 +56,7 @@ const v1 = new Hono<AppEnv>()
 v1.use('*', (c, next) =>
   cors({
     origin: (origin) => (c.env.APP_ORIGINS.split(',').includes(origin) ? origin : null),
-    allowHeaders: ['Authorization', 'Content-Type'],
+    allowHeaders: ['Authorization', 'Content-Type', 'X-Client'],
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     // Attachment downloads say why a file needs care (security/attachments).
     exposeHeaders: ['X-Attachment-Warning'],

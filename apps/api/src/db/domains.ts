@@ -66,7 +66,8 @@ export function setEnabled(db: D1Database, id: string, enabled: boolean, now: st
 export function setVerified(db: D1Database, id: string, now: string): D1PreparedStatement {
   // Mail records found prove ownership too.
   return db
-    .prepare("UPDATE domains SET status = 'verified', verified_at = ?, owned_at = COALESCE(owned_at, ?), updated_at = ? WHERE id = ?")
+    // Only from pending, so of two checks at once just one sees the change (and records "Domain Verified").
+    .prepare("UPDATE domains SET status = 'verified', verified_at = ?, owned_at = COALESCE(owned_at, ?), updated_at = ? WHERE id = ? AND status != 'verified'")
     .bind(now, now, now, id)
 }
 

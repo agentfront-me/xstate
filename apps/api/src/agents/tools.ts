@@ -17,6 +17,7 @@ import { storageSearch } from '../operations/storage'
 import type { AgentConfig } from './config'
 import type { ConnectorTool } from './connectors'
 import { connectorToolName, matches, type Condition } from './rules'
+import { collector } from '../analytics/events'
 
 type Group = 'Email' | 'Contacts' | 'Storage' | 'Calendar' | 'Team'
 type Builtin = { op: AnyOperation; label: string; group: Group; readOnly: boolean; approval: 'always' | 'never' }
@@ -204,7 +205,13 @@ export async function runBuiltin(
   const parsed: unknown = builtin.op.input.parse({ ...input, organizationId: run.organizationId })
   // Operations ignore fields they don't declare, so the extra organizationId is harmless for mailbox-scoped tools.
   const actor: Actor = { userId: run.userId, mailboxIds: run.mailboxes }
-  return builtin.op.run({ env, actor, waitUntil: () => {} } as never, parsed)
+  // A run has no request to outlive, so background work (seat sync, analytics) is awaited before the tool answers.
+  const { background, flush } = collector()
+  try {
+    return await builtin.op.run({ env, actor, waitUntil: background, via: 'agent' } as never, parsed)
+  } finally {
+    await flush()
+  }
 }
 
 export const toolLabel = (name: string) => BUILTIN.find((b) => b.op.name === name)?.label ?? name

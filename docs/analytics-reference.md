@@ -53,14 +53,23 @@ one organization's visitors is ever in another's store. The store trusts its cal
 
 | Call | Sends |
 | --- | --- |
-| `xstate('init', key, { autocapture, respectDoNotTrack })` | Stores the key, sends the first page view, hooks `pushState`/`replaceState`/`popstate`, scroll, clicks, `visibilitychange`, `pagehide`. |
+| `xstate('init', key, { autocapture, respectDoNotTrack, cookie })` | Stores the key, sends the first page view, hooks `pushState`/`replaceState`/`popstate`, scroll, clicks, `visibilitychange`, `pagehide`. |
 | `xstate('page')` | A page view (also automatic on load and route changes). |
 | `xstate('track', name, props)` | A `track` event. |
 | `xstate('identify', userId, traits, userHash)` | An `identify`. With no `userId` it only describes the visitor's own lead. |
-| `xstate('reset')` | Sends any `page_leave`, then forgets the visitor and visit ids. |
+| `xstate('reset')` | Sends any `page_leave`, then forgets the visitor and visit ids (cookie and `localStorage`). |
 
-Kept in `localStorage` (memory if unavailable): `xstate_aid` (visitor id `vis_…`) and `xstate_sid`
-(`{ id: 'ses_…', k: <attribution key>, t: <last activity ms> }`).
+Kept in a first-party cookie and in `localStorage` (memory if both are unavailable): `xstate_aid` (visitor id
+`vis_…`) and `xstate_sid` (`{ id: 'ses_…', k: <attribution key>, t: <last activity ms> }`).
+
+**Cross-subdomain (2.1.0).** The cookies are set on the top domain (`domain=acme.com`, `path=/`, `SameSite=Lax`,
+`Secure` on https, one year), so `acme.com`, `www.acme.com` and `go.acme.com` share one visitor and one visit. The
+top domain is found by trying to set a probe cookie `xstate_t` from the shortest candidate upward (`acme.com`,
+then `shop.acme.com`…); the browser refuses public suffixes (`com`, `co.uk`), so the first that sticks is the
+registrable domain and no suffix list ships with the snippet. Localhost and IP addresses get host-only cookies.
+Reads prefer the cookie; an id found only in `localStorage` (pre-2.1.0 visitors) is copied into the cookie.
+`cookie: false` keeps everything in `localStorage` only, per origin, as before 2.1.0. The server half of this is
+the site rule in §3.2.
 
 **Visits.** A new session starts when there is no session, after 30 minutes without activity, or when the first
 page of a page load carries a *different* attribution key: `utm:<source>|<medium>|<campaign>`,
@@ -156,15 +165,16 @@ one.** Columns added by an upgrade must not also be in `SCHEMA` (a new store run
 | 2 | Analytics: `events.type/domain/session_id/path`, `people.metrics`, backfill type and domain, indexes. |
 | 3 | `people_email_any` index (email activity finds people on any site). |
 | 4 | `sessions.revenue/orders` (backfilled from events), `sessions_started` index. |
+| 5 | `sites` table: the organization's verified domains as last seen; a change re-keys people (§3.2). |
 
 ### 3.1 Tables
 
-**`people`**: one per (site, person). `id` (`per_…`), `kind` (`user` \| `lead` \| `contact`), `domain` (site host;
-`''` for contacts), `external_id` (your user id), `anonymous_id` (first visitor id), `name`, `email`, `phone`,
+**`people`**: one per (site, person). `id` (`per_…`), `kind` (`user` \| `lead` \| `contact`), `domain` (the site,
+§3.2; `''` for contacts), `external_id` (your user id), `anonymous_id` (first visitor id), `name`, `email`, `phone`,
 `source` (`Website`, `API`, `Test`, imports…), `attributes` (your JSON, ≤ 100 keys), `metrics` (xstate's JSON, §5),
 `first_seen_at`, `last_seen_at`, `created_at`, `updated_at`, `owner_member_id` (contacts).
 
-**`aliases`**: `(domain, anonymous_id) → person_id`. Every browser a person used.
+**`aliases`**: `(domain, anonymous_id) → person_id`, `domain` being the site. Every browser a person used.
 
 **`events`**: `id` (autoincrement; the feed's order and cursor), `person_id`, `type` (`page` \| `track` \|
 `identify` \| `email`), `name` (`$pageview`, `$identify`, `$email_*`, `$outbound_click` or yours), `properties`
@@ -187,6 +197,14 @@ one.** Columns added by an upgrade must not also be in `SCHEMA` (a new store run
 Durable Object storage key `analytics_settings` holds `{ storeIp: boolean }` (default true).
 
 ### 3.2 Who an event belongs to (`resolve` / `identify`)
+
+**Sites (`site.ts`).** People and aliases are kept per *site*, not per hostname: the longest of the organization's
+verified domains that the event's hostname is or ends in (`go.acme.com` → `acme.com`), else the hostname itself.
+`collect.ts` reads the verified domains from D1 (cached 5 minutes per isolate) and sends them with the batch; events
+and sessions keep the exact hostname in `domain`. When the list differs from the store's `sites` table, the store
+re-keys first (`useSites` → `rekey`): people on a hostname move to its site, and where the site already has the same
+person (same `external_id`, or same email) they are merged, a user keeping a lead's history. Two different users
+sharing an email stay on their hostnames. Aliases move too; a visitor id seen on both keeps the site's person.
 
 - `userId` (trusted) → the person with that `external_id` on the site, created as a `user` if new; the visitor id
   becomes an alias.

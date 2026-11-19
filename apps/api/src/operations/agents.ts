@@ -12,6 +12,7 @@ import * as designer from '../agents/designer'
 import { TEMPLATES } from '../agents/templates'
 import * as triggers from '../agents/triggers'
 import { defineOperation } from './define'
+import { track } from '../analytics/events'
 
 const id = z.string().min(1).max(64)
 const provider = z.enum(PROVIDERS)
@@ -105,7 +106,12 @@ export const agentsCreate = defineOperation({
   input: z.object({ organizationId: id, name: z.string().max(200), description: z.string().max(1000).optional(), config: z.unknown().optional() }),
   http: { method: 'POST', path: '/agents/orgs/:organizationId', status: 201 },
   mcp: false,
-  run: async ({ env, actor }, { organizationId, ...input }) => ({ agent: await agents.create(env, actor, organizationId, input) }),
+  run: async ({ env, actor, waitUntil }, { organizationId, ...input }) => {
+    const agent = await agents.create(env, actor, organizationId, input)
+    const model = (input.config as { model?: { provider?: string } | null } | undefined)?.model
+    track(env, waitUntil, actor.userId, organizationId, 'Agent Created', { provider: model?.provider ?? null })
+    return { agent }
+  },
 })
 
 export const agentsTools = defineOperation({

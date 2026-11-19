@@ -28,6 +28,8 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
       method,
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
+        // Which app made the call, for xstate's own analytics ("Email Sent" via mobile).
+        'X-Client': 'mobile',
         ...(body !== undefined && { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

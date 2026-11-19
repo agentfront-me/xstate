@@ -2,6 +2,8 @@ import { z } from 'zod'
 import * as mailserver from '../mailserver'
 import * as mailboxesDb from '../db/mailboxes'
 import { syncSeats } from '../billing/service'
+import { track, type Via } from '../analytics/events'
+import * as domainsDb from '../db/domains'
 import { defineOperation } from './define'
 import { search } from '../search/search'
 import { deliveryLog } from '../mailbox/delivery-log'
@@ -20,7 +22,14 @@ export const emailAddDomain = defineOperation({
   input: z.object({ organizationId: id, name: z.string().trim().min(3).max(253) }),
   http: { method: 'POST', path: '/email/orgs/:organizationId/domains', status: 201 },
   mcp: { scope: 'setup' },
-  run: async ({ env, actor }, input) => ({ domain: await mailserver.addDomain(env, actor, input.organizationId, input.name) }),
+  run: async ({ env, actor, waitUntil }, input) => {
+    const domain = await mailserver.addDomain(env, actor, input.organizationId, input.name)
+    track(env, waitUntil, actor.userId, input.organizationId, 'Domain Added', async () => {
+      const [all, check] = await Promise.all([domainsDb.listByOrganization(env.DB, input.organizationId), mailserver.checkDomain(env, domain.name)])
+      return { domain: domain.name, is_first_domain: all.length === 1, dns_provider: check.provider?.id ?? null }
+    })
+    return { domain }
+  },
 })
 
 export const emailCheckDomain = defineOperation({
@@ -70,7 +79,7 @@ export const emailVerifyDomain = defineOperation({
   input: z.object({ domainId: id }),
   http: { method: 'POST', path: '/email/domains/:domainId/verify' },
   mcp: { scope: 'setup' },
-  run: ({ env, actor }, input) => mailserver.verifyDomain(env, actor, input.domainId),
+  run: ({ env, actor, waitUntil }, input) => mailserver.verifyDomain(env, actor, input.domainId, waitUntil),
 })
 
 export const emailDomainConnectUrl = defineOperation({
@@ -128,6 +137,11 @@ export const emailCreateMailbox = defineOperation({
     const result = await mailserver.createMailbox(env, actor, input)
     // People are billed as seats (billing/): a new person changes the subscription's quantity.
     if (result.mailbox.kind === 'personal') waitUntil(syncSeats(env, result.mailbox.organizationId))
+    const organizationId = result.mailbox.organizationId
+    track(env, waitUntil, actor.userId, organizationId, 'Mailbox Created', async () => {
+      const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM mailboxes WHERE organization_id = ?').bind(organizationId).first<{ n: number }>()
+      return { kind: result.mailbox.kind, is_first_mailbox: (row?.n ?? 0) <= 1 }
+    })
     return result
   },
 })
@@ -188,9 +202,11 @@ export const emailAddAlias = defineOperation({
   input: z.object({ mailboxId: id, localPart, domainId: id }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/aliases', status: 201 },
   mcp: { scope: 'setup' },
-  run: async ({ env, actor }, { mailboxId, ...alias }) => ({
-    mailbox: await mailserver.addAlias(env, actor, mailboxId, alias),
-  }),
+  run: async ({ env, actor, waitUntil }, { mailboxId, ...alias }) => {
+    const mailbox = await mailserver.addAlias(env, actor, mailboxId, alias)
+    track(env, waitUntil, actor.userId, mailbox.organizationId, 'Alias Added', {})
+    return { mailbox }
+  },
 })
 
 export const emailRemoveAlias = defineOperation({
@@ -423,15 +439,40 @@ export const emailSend = defineOperation({
   }),
   http: { method: 'POST', path: '/email/mailboxes/:mailboxId/send', status: 201 },
   mcp: { scope: 'mail.send' },
-  run: async ({ env, actor }, input) => ({
-    message: await mailserver.sendMessage(env, actor, input.mailboxId, {
+  run: async ({ env, actor, waitUntil, via }, input) => {
+    const message = await mailserver.sendMessage(env, actor, input.mailboxId, {
       ...input,
       to: toAddresses(input.to)!,
       cc: toAddresses(input.cc),
       bcc: toAddresses(input.bcc),
-    }),
-  }),
+    })
+    waitUntil(recordSent(env, waitUntil, actor.userId, via ?? 'app', input))
+    return { message }
+  },
 })
+
+/** "Email Sent", worked out after the response: only counts and yes/no, never addresses or content. */
+async function recordSent(
+  env: Env,
+  waitUntil: (promise: Promise<unknown>) => void,
+  userId: string,
+  via: Via,
+  input: { mailboxId: string; to: { email: string }[]; cc?: { email: string }[]; bcc?: { email: string }[]; inReplyTo?: string; attachments?: unknown[] },
+): Promise<void> {
+  const mailbox = await mailboxesDb.find(env.DB, input.mailboxId).catch(() => null)
+  if (!mailbox) return
+  const recipients = [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])]
+  track(env, waitUntil, userId, mailbox.organization_id, 'Email Sent', async () => {
+    const own = new Set((await domainsDb.listByOrganization(env.DB, mailbox.organization_id)).map((d) => d.name))
+    return {
+      via,
+      is_reply: !!input.inReplyTo,
+      recipient_count: recipients.length,
+      has_external_recipients: recipients.some((r) => !own.has(r.email.split('@').pop()!.toLowerCase())),
+      has_attachments: !!input.attachments?.length,
+    }
+  })
+}
 
 export const emailCreateDraft = defineOperation({
   name: 'email_create_draft',

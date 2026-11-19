@@ -6,6 +6,7 @@
 // Seats are the organization's people (personal mailboxes). Shared and agent mailboxes are free. Adding or removing a
 // person updates the subscription's quantity (prorated now), and the hourly check repairs anything that drifted.
 
+import { daysSince, noBackground, track, type Background } from '../analytics/events'
 import { ApiError } from '../errors'
 import type { Actor } from '../auth/types'
 import { isAdmin, loadMember } from '../mailserver/access'
@@ -32,6 +33,7 @@ export type BillingEnv = Pick<Env, 'DB'> &
 
 type OrgBillingRow = {
   id: string
+  owner_id: string
   plan: Plan
   billing_interval: Interval | null
   paddle_customer_id: string | null
@@ -60,7 +62,7 @@ function requireConfig(env: BillingEnv) {
 
 async function loadOrg(env: BillingEnv, organizationId: string): Promise<OrgBillingRow | null> {
   return env.DB.prepare(
-    `SELECT id, plan, billing_interval, paddle_customer_id, paddle_subscription_id, subscription_status, billed_seats,
+    `SELECT id, owner_id, plan, billing_interval, paddle_customer_id, paddle_subscription_id, subscription_status, billed_seats,
             current_period_end, scheduled_change, billing_event_at
        FROM organizations WHERE id = ?`,
   )
@@ -146,6 +148,7 @@ export async function confirmCheckout(
   actor: Actor,
   organizationId: string,
   transactionId: string,
+  background: Background = noBackground,
 ): Promise<{ pending: boolean; billing?: BillingView }> {
   requireConfig(env)
   await requireManager(env, actor, organizationId)
@@ -153,7 +156,7 @@ export async function confirmCheckout(
   if (txn.custom_data?.organizationId !== organizationId) throw new ApiError('transaction_mismatch', 'That checkout was for another organization', 400)
   if (!txn.subscription_id) return { pending: true }
   const sub = await paddleCall(() => getSubscription(env, txn.subscription_id!))
-  await applySubscription(env, sub, sub.updated_at)
+  await applySubscription(env, sub, sub.updated_at, background)
   return { pending: false, billing: await getBilling(env, actor, organizationId) }
 }
 
@@ -164,6 +167,7 @@ export async function changePlan(
   organizationId: string,
   plan: PaidPlan,
   interval: Interval,
+  background: Background = noBackground,
 ): Promise<BillingView> {
   const c = requireConfig(env)
   const org = await requireManager(env, actor, organizationId)
@@ -173,7 +177,7 @@ export async function changePlan(
   const sub = await paddleCall(() =>
     updateSubscriptionItems(env, org.paddle_subscription_id!, [{ price_id: c.prices[plan][interval], quantity }]),
   )
-  await applySubscription(env, sub, sub.updated_at)
+  await applySubscription(env, sub, sub.updated_at, background)
   return getBilling(env, actor, organizationId)
 }
 
@@ -197,7 +201,25 @@ export async function portalLinks(
  * is ignored, since webhooks can arrive out of order. Returns the organization id, or null when the subscription
  * isn't ours.
  */
-export async function applySubscription(env: BillingEnv, sub: PaddleSubscription, occurredAt: string): Promise<string | null> {
+export async function applySubscription(
+  env: BillingEnv,
+  sub: PaddleSubscription,
+  occurredAt: string,
+  background: Background = noBackground,
+): Promise<string | null> {
+  // The update only applies over the state it was worked out from, so of two reports applied at once (webhook and
+  // confirmCheckout) just one sees each change and records it. The other reloads and tries again.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await applyOnce(env, sub, occurredAt, background)
+    if (result !== RETRY) return result
+  }
+  console.error('billing: subscription kept changing underneath', JSON.stringify({ subscription: sub.id }))
+  return null
+}
+
+const RETRY = Symbol('retry')
+
+async function applyOnce(env: BillingEnv, sub: PaddleSubscription, occurredAt: string, background: Background): Promise<string | null | typeof RETRY> {
   const ids = priceIds(env.PADDLE_PRICES)
   const claimed = typeof sub.custom_data?.organizationId === 'string' ? sub.custom_data.organizationId : null
   let org = claimed ? await loadOrg(env, claimed) : null
@@ -222,11 +244,12 @@ export async function applySubscription(env: BillingEnv, sub: PaddleSubscription
   const plan = effectivePlan(sub.status, priced?.plan ?? null)
   const scheduled = sub.scheduled_change ? JSON.stringify({ action: sub.scheduled_change.action, effectiveAt: sub.scheduled_change.effective_at }) : null
 
-  await env.DB.prepare(
+  const updated = await env.DB.prepare(
     `UPDATE organizations SET plan = ?, billing_interval = ?, paddle_customer_id = ?, paddle_subscription_id = ?,
             subscription_status = ?, billed_seats = ?, current_period_end = ?, scheduled_change = ?, billing_event_at = ?,
             updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND plan IS ? AND billing_interval IS ? AND subscription_status IS ? AND scheduled_change IS ?
+            AND billing_event_at IS ?`,
   )
     .bind(
       plan,
@@ -240,10 +263,59 @@ export async function applySubscription(env: BillingEnv, sub: PaddleSubscription
       occurredAt,
       new Date().toISOString(),
       org.id,
+      org.plan,
+      org.billing_interval,
+      org.subscription_status,
+      org.scheduled_change,
+      org.billing_event_at,
     )
     .run()
+  if (!updated.meta.changes) return RETRY
   if (plan !== org.plan) console.log('billing: plan changed', JSON.stringify({ organizationId: org.id, from: org.plan, to: plan, status: sub.status }))
+  recordChanges(env, background, org, { plan, interval: priced?.interval ?? null, sub })
   return org.id
+}
+
+const RANK: Record<Plan, number> = { free: 0, pro: 1, team: 2 }
+
+/** "Plan Changed" and "Subscription Canceled" (docs/analytics-events.md), from the state before and after. */
+function recordChanges(
+  env: BillingEnv,
+  background: Background,
+  org: OrgBillingRow,
+  next: { plan: Plan; interval: Interval | null; sub: PaddleSubscription },
+): void {
+  const fromInterval = org.plan === 'free' ? null : org.billing_interval
+  const toInterval = next.plan === 'free' ? null : next.interval
+  if (next.plan !== org.plan || fromInterval !== toInterval) {
+    const direction = RANK[next.plan] > RANK[org.plan] ? 'upgrade' : RANK[next.plan] < RANK[org.plan] ? 'downgrade' : 'interval'
+    track(env, background, org.owner_id, org.id, 'Plan Changed', {
+      from_plan: org.plan,
+      to_plan: next.plan,
+      from_interval: fromInterval,
+      to_interval: toInterval,
+      direction,
+    })
+  }
+  const wasScheduled = org.scheduled_change ? (JSON.parse(org.scheduled_change) as { action?: string }).action === 'cancel' : false
+  const scheduled = next.sub.scheduled_change?.action === 'cancel'
+  const endedNow = next.sub.status === 'canceled' && org.subscription_status !== 'canceled' && org.subscription_status !== null
+  // Once per cancellation: when it's scheduled, or when it ends without having been scheduled first.
+  if ((scheduled && !wasScheduled) || (endedNow && !wasScheduled)) {
+    track(env, background, org.owner_id, org.id, 'Subscription Canceled', {
+      plan: org.plan === 'free' ? (planOfPriceSafe(env, next.sub) ?? 'free') : org.plan,
+      interval: org.billing_interval,
+      seats: org.billed_seats,
+      tenure_days: daysSince(next.sub.started_at),
+      immediate: !scheduled,
+    })
+  }
+}
+
+function planOfPriceSafe(env: BillingEnv, sub: PaddleSubscription): PaidPlan | null {
+  const ids = priceIds(env.PADDLE_PRICES)
+  const item = sub.items[0]
+  return ids && item ? (planOfPrice(ids, item.price.id)?.plan ?? null) : null
 }
 
 /**

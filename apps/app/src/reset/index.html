@@ -8,6 +8,15 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script>try { var m = document.cookie.match(/(?:^|; )theme=(light|dark)(?:;|$)/), t = m ? m[1] : localStorage.getItem('theme'); if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (e) {}</script>
 <script type="module" src="../onboarding/reset.tsx"></script>
+<!-- xstate's own analytics (docs/analytics-events.md). Loads only on xstate.com and go.xstate.com: on localhost
+     and in the desktop app (app://xstate) calls just queue up and go nowhere. -->
+<script>
+  window.xstate = window.xstate || function () { (xstate.q = xstate.q || []).push(arguments) }
+  if (/(^|\.)xstate\.com$/.test(location.hostname)) {
+    xstate('init', 'pk_live_yu66CLbuyW9uTjnxwBdcVwRsSsZcojLd')
+    var xs = document.createElement('script'); xs.async = true; xs.src = 'https://api.xstate.com/js/xstate.js'; document.head.appendChild(xs)
+  }
+</script>
 </head>
 <body>
 <div id="root"></div>

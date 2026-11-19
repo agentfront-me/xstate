@@ -275,6 +275,48 @@
         "8081"
       ],
       "port": 8081
+    },
+    {
+      "name": "api-analytics",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8824",
+        "--inspector-port",
+        "9264",
+        "--persist-to",
+        ".wrangler/analytics-test",
+        "--var",
+        "APP_ORIGINS:http://localhost:8825",
+        "--var",
+        "APP_URL:http://localhost:8825",
+        "--var",
+        "XSTATE_SECRET_KEY:sk_live_local_dummy_not_a_real_key",
+        "--var",
+        "PADDLE_WEBHOOK_SECRET:local_test_webhook_secret"
+      ],
+      "port": 8824
+    },
+    {
+      "name": "app-analytics",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8824/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8825",
+        "--strictPort"
+      ],
+      "port": 8825
     }
   ]
 }

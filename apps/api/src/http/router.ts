@@ -3,6 +3,7 @@
 import type { ErrorHandler, Handler, Hono } from 'hono'
 import { z } from 'zod'
 import { requireAuth } from '../auth/middleware'
+import type { Via } from '../analytics/events'
 import { ApiError } from '../errors'
 import type { AnyOperation } from '../operations/define'
 import type { AppEnv } from './types'
@@ -18,7 +19,7 @@ export function mountOperations(app: Hono<AppEnv>, operations: readonly AnyOpera
       const input = operation.input.parse({ ...body, ...c.req.query(), ...c.req.param() })
       const waitUntil = (promise: Promise<unknown>) => c.executionCtx.waitUntil(promise)
       const ip = c.req.header('CF-Connecting-IP')
-      const result = await operation.run({ env: c.env, actor: c.get('actor'), waitUntil, ip }, input)
+      const result = await operation.run({ env: c.env, actor: c.get('actor'), waitUntil, ip, via: clientOf(c.req.header('X-Client')) }, input)
       if (result === undefined) return c.body(null, 204)
       // Downloads (attachments) return a Response as is.
       if (result instanceof Response) return result
@@ -28,6 +29,11 @@ export function mountOperations(app: Hono<AppEnv>, operations: readonly AnyOpera
     if (operation.public) app.on(method, path, handler)
     else app.on(method, path, requireAuth, handler)
   }
+}
+
+/** The app a request came from: the web app, mobile and desktop send X-Client. */
+function clientOf(header: string | undefined): Via {
+  return header === 'web' || header === 'mobile' || header === 'desktop' ? header : 'app'
 }
 
 export const onError: ErrorHandler<AppEnv> = (err, c) => {

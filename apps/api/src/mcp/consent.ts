@@ -10,6 +10,7 @@ import { isAdmin, loadMember, readableMailboxes } from '../mailserver/access'
 import { oauthApi } from './oauth'
 import { scopesFor, type Choices } from './scopes'
 import type { Grant } from './tools'
+import { noBackground, track, type Background } from '../analytics/events'
 
 type Pending = { request: AuthRequest; app: ConsentDescription }
 
@@ -72,6 +73,7 @@ export async function approveRequest(
   actor: Actor,
   id: string,
   input: { organizationId: string; mailboxIds: string[] } & Choices,
+  background: Background = noBackground,
 ): Promise<{ redirectTo: string }> {
   const { request, app } = await loadPending(env, id)
   const member = await loadMember(env, input.organizationId, actor.userId)
@@ -103,6 +105,7 @@ export async function approveRequest(
   })
   await Promise.all(replaced.map((g) => oauth.revokeGrant(g.id, actor.userId)))
   console.log('mcp connected', JSON.stringify({ userId: actor.userId, organizationId: input.organizationId, app: app.clientName, appDomain: app.clientDomain ?? null, scopes, mailboxes: mailboxIds.length, replaced: replaced.length }))
+  track(env, background, actor.userId, input.organizationId, 'AI App Connected', { client_name: app.clientName, scopes: [...scopes] })
   return { redirectTo }
 }
 

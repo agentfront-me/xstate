@@ -202,6 +202,10 @@
   // https://api.xstate.com/webhooks/paddle. Required, because wrangler dev only loads required secrets from .dev.vars.
   // DOMAIN_CONNECT_PRIVATE_KEY (set in production; without it there is no one-click setup): RSA key that signs Domain
   // Connect apply links; scripts/domain-connect-key.sh makes one. Not in "required" so deploys work without it.
+  // XSTATE_SECRET_KEY (optional; without it nothing is sent): the secret key (sk_live_…) of the main organization's
+  // Analytics, for xstate's own product analytics (src/analytics/events.ts, docs/analytics-events.md). Signs the
+  // identify() hash in auth responses and authorizes server events to /v1/collect. Not in "required" so local dev
+  // and deploys work without it.
   "secrets": {
     "required": [
       "JWT_SECRET",

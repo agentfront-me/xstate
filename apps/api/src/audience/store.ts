@@ -25,6 +25,7 @@ import {
 } from './overview'
 import { type Funnel, type FunnelInput, type FunnelRange, type FunnelResult, funnelQuery, summarize } from './funnels'
 import { addEngagement, applyEmail, applyEvent, identified, type Metrics, mergeMetrics } from './metrics'
+import { siteOf } from './site'
 import {
   ANONYMOUS_RETENTION_DAYS,
   type AudienceEvent,
@@ -50,7 +51,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS people (
   id             TEXT PRIMARY KEY,
   kind           TEXT NOT NULL,                 -- 'user' (identified with a user id), 'lead' or 'contact'
-  domain         TEXT NOT NULL,                 -- the website's hostname, without www.
+  domain         TEXT NOT NULL,                 -- the website (site.ts): the organization's domain, else the hostname
   external_id    TEXT,                          -- the customer's own user id
   anonymous_id   TEXT,                          -- first visitor id seen
   name           TEXT,
@@ -218,6 +219,11 @@ const UPGRADES: ((sql: SqlStorage) => void)[] = [
     )
     sql.exec('CREATE INDEX IF NOT EXISTS sessions_started ON sessions (started_at)')
   },
+  // 5: people are kept per site (site.ts), not per hostname. The organization's domains last used, so a change to
+  // them re-keys people and visitor ids (useSites); the first collect after this upgrade does that once.
+  (sql) => {
+    sql.exec('CREATE TABLE IF NOT EXISTS sites (name TEXT PRIMARY KEY)')
+  },
 ]
 
 /** Organization-wide analytics settings, kept in the store's own storage. */
@@ -358,6 +364,8 @@ const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g,
 export class AudienceStore extends DurableObject<Env> {
   private sql: SqlStorage
   private settings: AnalyticsSettings = DEFAULT_SETTINGS
+  /** The organization's domains as last stored in `sites`, joined; null until first read. */
+  private sitesKey: string | null = null
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -436,11 +444,66 @@ export class AudienceStore extends DurableObject<Env> {
   async collect(batch: CollectBatch): Promise<{ accepted: number }> {
     let accepted = 0
     this.ctx.storage.transactionSync(() => {
+      this.useSites(batch.sites)
       for (const item of batch.items) {
         if (this.collectOne(item, batch)) accepted++
       }
     })
     return { accepted }
+  }
+
+  /** The organization's domains changed (or were never stored): keep the new list and move people onto it. */
+  private useSites(sites: string[]) {
+    const key = sites.join(' ')
+    if (key === this.sitesKey) return
+    if (this.storedSites().join(' ') !== key) {
+      this.sql.exec('DELETE FROM sites')
+      for (const name of sites) this.sql.exec('INSERT INTO sites VALUES (?)', name)
+      this.rekey(sites)
+    }
+    this.sitesKey = key
+  }
+
+  private storedSites(): string[] {
+    return this.all<{ name: string }>('SELECT name FROM sites ORDER BY name').map((r) => r.name)
+  }
+
+  /**
+   * Moves website people and visitor ids from a hostname (app.acme.com) to its site (acme.com). Where the site
+   * already has the same person (same user id, or the same email), the two become one, the user keeping the history
+   * of the lead. Two different users who share an email stay where they are, on their hostname.
+   */
+  private rekey(sites: string[]) {
+    const domains = this.all<{ domain: string }>("SELECT DISTINCT domain FROM people WHERE kind <> 'contact' AND domain <> ''")
+    for (const { domain } of domains) {
+      const site = siteOf(domain, sites)
+      if (site === domain) continue
+      const ids = this.all<{ id: string }>("SELECT id FROM people WHERE kind <> 'contact' AND domain = ? ORDER BY first_seen_at", domain)
+      for (const { id } of ids) {
+        const current = this.one<PersonRow>('SELECT * FROM people WHERE id = ?', id)
+        if (!current) continue
+        const twins = this.all<PersonRow>(
+          `SELECT * FROM people WHERE domain = ? AND kind <> 'contact'
+           AND ((external_id IS NOT NULL AND external_id = ?) OR (email IS NOT NULL AND email = ?))`,
+          site,
+          current.external_id,
+          current.email,
+        )
+        const group = [current, ...twins]
+        const users = group.filter((p) => p.kind === 'user')
+        if (new Set(users.map((u) => u.external_id)).size > 1) continue
+        const byAge = (a: PersonRow, b: PersonRow) => (a.first_seen_at < b.first_seen_at ? -1 : a.first_seen_at > b.first_seen_at ? 1 : 0)
+        const keeper = (users.length ? users : group).slice().sort(byAge)[0]!
+        for (const p of group) {
+          if (p.id === keeper.id) continue
+          this.merge(this.one<PersonRow>('SELECT * FROM people WHERE id = ?', p.id)!, this.one<PersonRow>('SELECT * FROM people WHERE id = ?', keeper.id)!)
+        }
+        this.sql.exec('UPDATE people SET domain = ? WHERE id = ?', site, keeper.id)
+      }
+      // A visitor id seen on both the hostname and the site keeps the site's person.
+      this.sql.exec('UPDATE OR IGNORE aliases SET domain = ? WHERE domain = ?', site, domain)
+      this.sql.exec('DELETE FROM aliases WHERE domain = ?', domain)
+    }
   }
 
   private collectOne(item: CollectItem, batch: CollectBatch): boolean {
@@ -663,7 +726,7 @@ export class AudienceStore extends DurableObject<Env> {
 
   /** The person a track or page call is about, created as an anonymous lead if new. */
   private resolve(item: CollectItem, batch: CollectBatch): PersonRow | null {
-    const { domain, anonymousId, userId, email } = item
+    const { site: domain, anonymousId, userId, email } = item
     if (userId) {
       const user = this.byExternal(domain, userId) ?? this.create({ kind: 'user', domain, externalId: userId, anonymousId, source: batch.source, at: item.at })
       this.alias(domain, anonymousId, user.id)
@@ -679,7 +742,7 @@ export class AudienceStore extends DurableObject<Env> {
    * user keeps its history; if that user already exists, the lead's history moves to it and the lead is deleted.
    */
   private identify(item: CollectItem, batch: CollectBatch): PersonRow | null {
-    const { domain, anonymousId, userId, at } = item
+    const { site: domain, anonymousId, userId, at } = item
     let person: PersonRow | null
     if (userId) {
       const user = this.byExternal(domain, userId)
@@ -1166,6 +1229,7 @@ export class AudienceStore extends DurableObject<Env> {
     input: { kind: 'lead' | 'contact'; domain: string; source: string; ownerMemberId?: string | null } & PersonFields,
   ): Promise<{ person?: Person; conflict?: string }> {
     const contact = input.kind === 'contact'
+    input = { ...input, domain: contact ? '' : siteOf(input.domain, this.storedSites()) }
     if (input.email && !contact && this.byEmail(input.domain, input.email)) return { conflict: 'Someone with that email already exists on this domain' }
     if (input.email && contact && this.contactByEmail(input.ownerMemberId ?? null, input.email)) {
       return { conflict: input.ownerMemberId ? 'You already have a contact with that email' : 'There’s already a shared contact with that email' }

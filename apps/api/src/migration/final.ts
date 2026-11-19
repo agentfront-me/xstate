@@ -19,6 +19,7 @@ import { folderIdsFor, folders, importIds, MAX_IMPORT_BYTES, roleOf, setIssue, t
 import { store as mailboxStore } from '../mailbox/stub'
 import { placement } from './mail-rules'
 import { migrationStore } from './store'
+import { collector, track } from '../analytics/events'
 
 export type MailFinalJob = { kind: 'final_mail'; migrationId: string; owner: string; run: number }
 
@@ -84,9 +85,34 @@ export async function finishIfDone(env: Env, migrationId: string): Promise<void>
     .bind(migrationId)
     .first<{ n: number }>()
   if (busy?.n) return
-  await env.DB.prepare("UPDATE migrations SET final_state = 'done', final_runs = final_runs + 1, updated_at = ? WHERE id = ? AND final_state = 'running'")
+  const done = await env.DB.prepare("UPDATE migrations SET final_state = 'done', final_runs = final_runs + 1, updated_at = ? WHERE id = ? AND final_state = 'running'")
     .bind(new Date().toISOString(), migrationId)
     .run()
+  if (done.meta.changes) await recordCompleted(env, migrationId)
+}
+
+/** "Migration Completed" once, when the first final pass ends (the automatic second pass isn't counted again). */
+async function recordCompleted(env: Env, migrationId: string): Promise<void> {
+  try {
+    const m = await migrationsDb.find(env.DB, migrationId)
+    if (!m || m.final_runs !== 1 || !m.started_by) return
+    const counts = await env.DB.prepare(
+      "SELECT COUNT(*) AS people, COALESCE(SUM(mail_done), 0) AS mail FROM migration_users WHERE migration_id = ? AND action != 'skip'",
+    )
+      .bind(migrationId)
+      .first<{ people: number; mail: number }>()
+    const hours = m.started_at ? Math.round((Date.now() - Date.parse(m.started_at)) / 360_000) / 10 : 0
+    // Called from queue jobs, which have no waitUntil: the send is awaited here, and never throws.
+    const { background, flush } = collector()
+    track(env, background, m.started_by, m.organization_id, 'Migration Completed', {
+      mailbox_count: counts?.people ?? 0,
+      email_count: counts?.mail ?? 0,
+      duration_hours: hours,
+    })
+    await flush()
+  } catch (err) {
+    console.error('analytics: migration completed', err)
+  }
 }
 
 /** Hourly: the automatic second pass, 24 hours after the first. */

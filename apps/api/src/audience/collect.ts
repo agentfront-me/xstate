@@ -22,6 +22,7 @@ import type { AppEnv } from '../http/types'
 import { CLICK_IDS, channelOf, hostOf, sameSite } from './channel'
 import { isBot, parseUserAgent } from './device'
 import * as keys from './keys'
+import { organizationSites, siteOf } from './site'
 import type { CollectBatch, CollectItem, EventContext } from './types'
 
 const MAX_BODY = 64 * 1024
@@ -108,6 +109,7 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
     if (!success) throw new ApiError('rate_limited', 'Too many events from this visitor', 429)
   }
 
+  const sites = await organizationSites(c.env, auth.organizationId)
   const originHost = hostOf(c.req.header('Origin'))
   const now = Date.now()
   const items: CollectItem[] = []
@@ -126,9 +128,11 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
     }
     const anonymousId = e.anonymousId ?? input.anonymousId ?? null
     if (!anonymousId && !userId && !(trusted && e.email)) continue
+    const host = normalizeHost(domain)
     items.push({
       type: e.type,
-      domain: normalizeHost(domain),
+      domain: host,
+      site: siteOf(host, sites),
       anonymousId,
       userId,
       email: trusted ? (e.email ?? null) : null,
@@ -136,13 +140,13 @@ export async function handleCollect(c: Context<AppEnv>): Promise<Response> {
       event: e.event ?? null,
       properties: capJson(e.properties),
       url: e.url ?? null,
-      context: contextOf(e.type, e.url ?? null, normalizeHost(domain), e.context, visitor, trusted),
+      context: contextOf(e.type, e.url ?? null, host, e.context, visitor, trusted),
       at: timestampOf(e.timestamp, now),
     })
   }
   if (!items.length) return c.json({ accepted: 0 }, 202)
 
-  const batch: CollectBatch = { trusted, source: trusted ? 'API' : 'Website', items }
+  const batch: CollectBatch = { trusted, source: trusted ? 'API' : 'Website', items, sites }
   const store = c.env.AUDIENCE.get(c.env.AUDIENCE.idFromName(auth.organizationId))
   if (trusted) return c.json(await store.collect(batch), 200)
   // Browsers don't wait for the write.

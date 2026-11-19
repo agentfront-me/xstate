@@ -235,10 +235,38 @@ function serverExample(domain: string) {
   }'`
 }
 
-function agentPrompt(key: string) {
-  return `Add xstate analytics to this codebase.
+// The prompt behind "Copy prompt". The agent studies the codebase and writes an event dictionary first, and changes
+// no code until the person has reviewed it: a good dictionary is most of the value, and it's easier to fix on paper.
+function agentPrompt(key: string, domain?: string) {
+  const site = domain ?? 'your-site.com'
+  return `Add xstate analytics to this codebase. Work in four steps, and don't change any code until I've approved the event dictionary in step 3.
 
-1. Add this snippet to the <head> of every page (the root layout or HTML template), once:
+## Step 1: Study the codebase (read only)
+
+Read through the whole codebase before writing anything. Find:
+- The root layout or HTML template of every web front end (marketing site, app, docs). Note their hostnames: if the site and the app are on different subdomains (${site} and app.${site}), both get the snippet with the same key, and xstate counts each visitor once across them.
+- Where people sign up, sign in and sign out, and where the server knows the signed-in user's id, email and name.
+- What the product is for: the few actions that show someone got value (created their first project, invited a teammate, sent their first message...), onboarding steps, and the main features.
+- Everything to do with money: checkout, the payment provider's webhooks (Stripe, Paddle, Lemon Squeezy...), plans, upgrades, downgrades, cancellations, failed payments, refunds.
+- Work that finishes on the server, in background jobs or in webhooks, and clients the browser snippet can't see (mobile apps, APIs, CLIs). These events are sent from the server.
+
+## Step 2: Write an event dictionary
+
+Write it to docs/analytics-events.md (or wherever this repo keeps docs). Include:
+- Conventions: event names in Title Case, object then past-tense verb ("Project Created", "Plan Changed"); property names in snake_case; one id on every event to group by (account, workspace or organization id) if the product has one.
+- Identify: when it's called and which traits it sends (email, name, and things like plan or role).
+- The events, grouped as sign-up and onboarding, activation and use, money, and churn. For each event give: its name, when exactly it fires, browser or server, the file and function where the call will go, and each property with its type and example values. Aim for 10 to 25 events that answer real questions, not one per button.
+- Revenue: a numeric "revenue" (in major units, before tax, for example 12.5) and a "currency" ("USD") go on exactly one event per payment, sent from the server when the payment succeeds (for example the payment provider's "invoice paid" or "transaction completed" webhook), so renewals count and nothing is counted twice. "Checkout Started" and similar events carry no revenue.
+- What you deliberately don't track, and why. Never put passwords, tokens, message or document contents, or other people's personal data in properties.
+- Open questions where you weren't sure.
+
+## Step 3: Stop for review
+
+Show me the dictionary with a short summary, ask the open questions, and wait. Change the dictionary as I ask. Don't continue until I say it's approved.
+
+## Step 4: Implement the approved dictionary
+
+1. Add this snippet to the <head> of every page (each root layout or HTML template), once:
 
 ${snippet(key)}
 
@@ -250,7 +278,15 @@ ${snippet(key)}
 
 3. On sign-out, call xstate('reset').
 
-4. Track the key actions with xstate('track', 'Event Name', { ...properties }): for example 'Signed Up', 'Checkout Started' and 'Order Completed'. Give events that earn money a numeric "revenue" and a "currency" property.
+4. Browser events: xstate('track', 'Event Name', { ...properties }).
+
+5. Server events: POST ${API_ORIGIN}/v1/collect with the header "Authorization: Bearer $XSTATE_SECRET_KEY" and a body like
+   { "type": "track", "event": "Order Completed", "userId": "<the same id as identify>", "domain": "${site}", "properties": { "revenue": 96, "currency": "USD" } }
+   Send them without slowing the request down (in the background, after the response, or from a queue) and never let a failure break the action itself.
+
+6. Keep the event names and their properties in one module (constants and a small typed helper for the browser and one for the server), so the names in code always match the dictionary.
+
+7. Check it: run the app, sign up, sign in and do a few key actions, and confirm the events arrive in xstate under Analytics → Live events. List anything from the dictionary you couldn't add.
 
 Docs: ${DOCS_URL}`
 }
@@ -315,9 +351,9 @@ function Install({ orgId, status, domain, onOpenLive }: { orgId: string; status:
             <span className="a-card-icon"><Icon name="sparkles" size={16} /></span>
             <div className="grow">
               <strong className="hi">Install with an AI agent</strong>
-              <p className="muted small">Paste this prompt into Claude Code, Cursor or another coding agent. It adds page, identify and track calls to your codebase.</p>
+              <p className="muted small">Paste this prompt into Claude Code, Cursor or another coding agent. It studies your codebase, writes an event dictionary for you to review, then adds the code.</p>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => copy(agentPrompt(key))}><Icon name="copy" size={13} />Copy prompt</button>
+            <button className="btn btn-primary btn-sm" onClick={() => copy(agentPrompt(key, domain))}><Icon name="copy" size={13} />Copy prompt</button>
           </div>
 
           <div className="a-install-row">

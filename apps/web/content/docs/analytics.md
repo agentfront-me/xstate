@@ -32,9 +32,10 @@ The publishable key is safe to put in a web page. It can only add visitors and e
 
 ### Install with an AI agent
 
-**Analytics** also has a **Copy prompt** button. Paste the prompt into Claude Code, Cursor or another coding agent
-and it adds the snippet, `identify` on sign-in, `reset` on sign-out and `track` calls for your key actions to your
-codebase.
+**Analytics** also has a **Copy prompt** button. Paste the prompt into Claude Code, Cursor or another coding agent.
+It first reads your whole codebase and writes an event dictionary: the events and properties worth tracking, where
+each call goes, and which event carries revenue. It stops for you to review the dictionary, and only then adds the
+snippet, `identify` on sign-in, `reset` on sign-out, and the `track` calls from the browser and your server.
 
 ### Check it works
 
@@ -227,6 +228,14 @@ xstate('init', 'pk_live_your_publishable_key', { autocapture: false })
 | --- | --- | --- |
 | `autocapture` | `true` | Set to `false` to stop recording clicks on outbound links |
 | `respectDoNotTrack` | `true` | Set to `false` to record visitors whose browser sends Do Not Track or Global Privacy Control |
+| `cookie` | `true` | Set to `false` to keep the visitor id in local storage only. Visitors are then counted separately on each subdomain |
+
+### Your site and your app on different subdomains
+
+If your marketing site is on `example.com` and your app on `app.example.com`, put the snippet on both with the same
+key. A visitor who reads your pricing page and then signs up in the app is one person with one visit, so the
+sign-up is credited to the ad, campaign or site that brought them. This works for any subdomain of a domain you
+have verified in xstate; the dashboard shows them together under that domain.
 
 To record a page view yourself, for example after a change the address bar doesn't show, call `xstate('page')`.
 
@@ -297,8 +306,10 @@ Names starting with `$pageview`, `$identify` and `$email_` are recorded by xstat
 You decide what to record about your visitors, and you are responsible for telling them, for example in your
 privacy policy and cookie notice. xstate processes this data on your behalf.
 
-- The snippet stores a random visitor id and the current visit in the browser's local storage. It doesn't set
-  cookies.
+- The snippet stores a random visitor id and the current visit in a first-party cookie on your domain
+  (`xstate_aid` and `xstate_sid`, kept for a year) and in the browser's local storage. The cookie lets your site and
+  its subdomains share one visitor. It holds nothing but those two random ids. Set
+  `cookie: false` to use local storage only.
 - Nothing is sent when the visitor's browser asks not to be tracked (Do Not Track or Global Privacy Control),
   unless you set `respectDoNotTrack: false`.
 - IP addresses are kept with each visit for 90 days, then removed from it. To stop keeping them, turn off **Keep IP addresses** in

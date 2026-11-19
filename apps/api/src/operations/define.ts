@@ -2,6 +2,7 @@
 // The services do the work; an operation only names it, describes it, validates its input and says where it lives.
 
 import type { z } from 'zod'
+import type { Via } from '../analytics/events'
 import type { Actor } from '../auth/types'
 
 /**
@@ -29,8 +30,9 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 /**
  * `waitUntil` keeps background work (e.g. creating a bucket after sign-up) running after the response is sent.
  * `ip` is the caller's IP (CF-Connecting-IP) for HTTP calls, used for rate limits; unset for MCP and agent calls.
+ * `via` is where the call came from, for xstate's own analytics (analytics/events.ts).
  */
-type Background = { waitUntil: (promise: Promise<unknown>) => void; ip?: string }
+type Background = { waitUntil: (promise: Promise<unknown>) => void; ip?: string; via?: Via }
 
 export type OperationContext<Public extends boolean> = Public extends true
   ? { env: Env; actor?: undefined } & Background

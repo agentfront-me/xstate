@@ -25,6 +25,7 @@ import { isAdmin, loadMember, requireOrgPermission } from '../mailserver/access'
 import { generatePassword, normalizeLocalPart } from '../mailserver/validation'
 import { sendSystemEmail, type SystemMailEnv } from '../mailserver/system-mail'
 import { inviteEmail } from './invite-email'
+import { daysSince, noBackground, track, type Background } from '../analytics/events'
 
 export type MembersEnv = SystemMailEnv & Pick<Env, 'APP_URL' | 'JWT_SECRET'>
 
@@ -189,7 +190,7 @@ export async function updateMember(
   return reload(env, actor, me, memberId)
 }
 
-export async function removeMember(env: MembersEnv, actor: Actor, memberId: string): Promise<void> {
+export async function removeMember(env: MembersEnv, actor: Actor, memberId: string, background: Background = noBackground): Promise<void> {
   const { target, me } = await memberContext(env, actor, memberId)
   if (target.role === 'owner') throw forbidden("The owner can't be removed")
   const leaving = target.user_id === actor.userId
@@ -220,6 +221,8 @@ export async function removeMember(env: MembersEnv, actor: Actor, memberId: stri
   }
   // Invited and never accepted: the placeholder account goes too, or they could never sign up on their own.
   if (target.status === 'invited') await usersDb.removeIfUnclaimed(env.DB, target.user_id).run()
+  // Churn of a person who had joined; a cancelled invite isn't. Recorded for the person who removed them.
+  else track(env, background, actor.userId, target.organization_id, 'Member Removed', { role: target.role, tenure_days: daysSince(target.created_at) })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -531,13 +534,14 @@ export async function lookupInvite(env: MembersEnv, token: string): Promise<Invi
  * Accepts an invite. Someone new sets their password and is signed in. Someone with an xstate account already
  * joins the organization and signs in as usual: the link alone never signs anyone in to an existing account.
  */
-export async function acceptInvite(env: MembersEnv, input: { token: string; name?: string; password?: string }) {
+export async function acceptInvite(env: MembersEnv, input: { token: string; name?: string; password?: string }, background: Background = noBackground) {
   const row = await openInvitation(env, input.token)
   const now = new Date().toISOString()
   const organization = { id: row.organization_id, name: row.organization_name }
 
   if (row.has_password) {
     await env.DB.batch([membersDb.activate(env.DB, row.member_id, now), invitationsDb.remove(env.DB, row.member_id)])
+    track(env, background, row.user_id, organization.id, 'Invite Accepted', { role: row.role as Role, new_account: false })
     return { organization, signIn: true as const }
   }
 
@@ -551,6 +555,8 @@ export async function acceptInvite(env: MembersEnv, input: { token: string; name
   ])
   // Someone set a password between the lookup and here (another tab): they sign in with it instead.
   if (!setPassword!.meta.changes) return { organization, signIn: true as const }
+  track(env, background, row.user_id, organization.id, 'Invite Accepted', { role: row.role as Role, new_account: true })
+  track(env, background, row.user_id, organization.id, 'Signed Up', { source: 'invite', role: row.role as Role })
   return {
     organization,
     signIn: false as const,

@@ -15,6 +15,7 @@ import {
   setRole,
   updateMember,
 } from '../members/service'
+import { track, userHash } from '../analytics/events'
 import { ApiError } from '../errors'
 import { defineOperation } from './define'
 
@@ -45,7 +46,11 @@ export const membersInvite = defineOperation({
   }),
   http: { method: 'POST', path: '/members/orgs/:organizationId', status: 201 },
   mcp: false,
-  run: ({ env, actor }, { organizationId, ...input }) => inviteMember(env, actor, organizationId, input),
+  run: async ({ env, actor, waitUntil }, { organizationId, ...input }) => {
+    const result = await inviteMember(env, actor, organizationId, input)
+    if (input.send) track(env, waitUntil, actor.userId, organizationId, 'Member Invited', { role: input.role })
+    return result
+  },
 })
 
 const address = z.object({ localPart: z.string().trim().min(1).max(64), domainId: id })
@@ -121,7 +126,7 @@ export const membersRemove = defineOperation({
   input: z.object({ memberId: id }),
   http: { method: 'DELETE', path: '/members/:memberId' },
   mcp: false,
-  run: ({ env, actor }, input) => removeMember(env, actor, input.memberId),
+  run: ({ env, actor, waitUntil }, input) => removeMember(env, actor, input.memberId, waitUntil),
 })
 
 export const membersSetPassword = defineOperation({
@@ -225,7 +230,10 @@ export const invitationAccept = defineOperation({
   public: true,
   http: { method: 'POST', path: '/auth/invitations/accept' },
   mcp: false,
-  run: ({ env }, input) => acceptInvite(env, input),
+  run: async ({ env, waitUntil }, input) => {
+    const result = await acceptInvite(env, input, waitUntil)
+    return result.signIn ? result : { ...result, userHash: await userHash(env, result.user.id) }
+  },
 })
 
 export const memberOperations = [

@@ -8,6 +8,7 @@ import * as domainConnect from './domain-connect'
 import * as ses from './ses'
 import { toDomain, type Actor, type Domain, type EmailEnv } from './types'
 import { normalizeDomain } from './validation'
+import { noBackground, track, type Background } from '../analytics/events'
 
 /** Adds a domain to the organization. A plain member who adds it gets manage access to it. */
 export async function addDomain(env: EmailEnv, actor: Actor, organizationId: string, name: string): Promise<Domain> {
@@ -125,6 +126,7 @@ export async function verifyDomain(
   env: EmailEnv,
   actor: Actor,
   domainId: string,
+  background: Background = noBackground,
 ): Promise<{ domain: Domain; records: DnsRecord[] }> {
   const { domain: row } = await domainContext(env, actor, domainId, 'read')
   // Also registers domains added before SES, and picks up SES's verification once its DKIM records are found.
@@ -142,7 +144,11 @@ export async function verifyDomain(
   const now = new Date().toISOString()
   const mailReady = records.every((r) => r.found || !r.required)
   if (domain.status !== 'verified' && mailReady) {
-    await domainsDb.setVerified(env.DB, domain.id, now).run()
+    const set = await domainsDb.setVerified(env.DB, domain.id, now).run()
+    if (set.meta.changes) {
+      const hours = Math.round(((Date.parse(now) - Date.parse(domain.created_at)) / 3_600_000) * 10) / 10
+      track(env, background, actor.userId, domain.organization_id, 'Domain Verified', { domain: domain.name, hours_to_verify: hours })
+    }
     return { domain: toDomain((await domainsDb.find(env.DB, domain.id))!), records }
   }
   if (!domain.owned_at && owner.length && records[0]!.found) {

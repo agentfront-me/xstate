@@ -10,6 +10,16 @@ const themeCookieScript = `try {
   if (m) localStorage.setItem('theme', m[1]); else localStorage.removeItem('theme');
 } catch (e) {}`
 
+/**
+ * xstate's own analytics (docs/analytics-events.md), the same snippet as every page of the app. Loads only on
+ * xstate.com and its subdomains, so local dev and previews send nothing.
+ */
+const analyticsScript = `window.xstate = window.xstate || function () { (xstate.q = xstate.q || []).push(arguments) }
+if (/(^|\\.)xstate\\.com$/.test(location.hostname)) {
+  xstate('init', 'pk_live_yu66CLbuyW9uTjnxwBdcVwRsSsZcojLd')
+  var xs = document.createElement('script'); xs.async = true; xs.src = 'https://api.xstate.com/js/xstate.js'; document.head.appendChild(xs)
+}`
+
 export const metadata: Metadata = {
   metadataBase: new URL('https://xstate.com'),
   title: { default: 'xstate · Free business email on your own domain, built for AI apps', template: '%s · xstate' },
@@ -27,6 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeCookieScript }} />
+        <script dangerouslySetInnerHTML={{ __html: analyticsScript }} />
       </head>
       <body className="flex min-h-screen flex-col">
         <RootProvider search={{ enabled: false }} theme={{ defaultTheme: 'system', enableSystem: true }}>

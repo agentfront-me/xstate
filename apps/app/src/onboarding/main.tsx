@@ -17,6 +17,7 @@ import { DomainStep } from './DomainStep'
 import { progress, readConnectReturn, STEP_LABELS, type Data, type Screen } from './state'
 import { Head } from './ui'
 import { VerifyStep } from './VerifyStep'
+import { identify } from '../lib/analytics'
 
 readConnectReturn()
 
@@ -31,9 +32,10 @@ function Onboarding() {
 
   /** Loads the account and works out which step comes next. */
   const resume = useCallback(async () => {
-    const me = await api<{ user: User; organizations: Org[] }>('GET', '/auth/me')
+    const me = await api<{ user: User; organizations: Org[]; userHash?: string | null }>('GET', '/auth/me')
     const org = me.organizations.find((o) => o.role === 'owner') ?? me.organizations[0]
     if (!org) throw new Error('Your account has no organization.')
+    identify(me.user, org, me.userHash)
     // Someone invited to another organization: setting up domains is its owner's job, so straight to the dashboard.
     if (org.role !== 'owner') return location.assign('/app/')
     const [{ domains }, { mailboxes }] = await Promise.all([

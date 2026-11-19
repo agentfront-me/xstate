@@ -201,6 +201,13 @@ A personal token lets your own server send email from mailboxes you can send fro
   never the subject or body. A member sees only the email events of mailboxes they can read, as with the mail.
 - The snippet sends nothing when the browser asks not to be tracked (Do Not Track or Global Privacy Control),
   unless the site turns that off, or when the page is run by automation.
+- The snippet keeps a random visitor id and visit id in a first-party cookie on the site's own domain, so a site and
+  its subdomains count one visitor. The cookie holds no personal data, and sites can turn it off (`cookie: false`).
+  A site's subdomains only share people when the domain is verified in that organization.
+- xstate uses its own analytics on xstate.com and go.xstate.com, with the same snippet. Signed-in people are
+  identified with a hash the API makes from their user id; the secret key never reaches a browser. Key actions are
+  also sent from the API with the secret key. They carry ids, counts and yes/no flags, never message content,
+  recipient addresses, file names or tokens.
 
 ## Keys and webhooks
 
@@ -226,6 +233,11 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 19, 2026:** xstate records its own product analytics (page visits, sign-ups and key actions such as
+  adding a domain or sending mail, as counts only) with xstate Analytics on xstate.com and go.xstate.com.
+- **November 19, 2026:** The analytics snippet keeps its random visitor id in a first-party cookie on the site's
+  domain (as well as local storage), so a site and its subdomains count one visitor; `cookie: false` turns it off.
+  Subdomains are grouped only under domains the organization has verified.
 - **November 18, 2026:** Website analytics records each visit's IP address, location, network and device, its
   campaign and referrer, and time on page. Bots are dropped, and Do Not Track and Global Privacy Control are
   honoured by default. Organizations can turn off keeping IP addresses. The Overview keeps visits

@@ -13,6 +13,7 @@ import { toast } from '../components/Toast'
 import { type Account } from '../lib/account'
 import { api, errorMessage } from '../lib/core'
 import { ConfirmDialog } from '../storage/dialogs'
+import { track } from '../lib/analytics'
 
 type Plan = 'free' | 'pro' | 'team'
 type PaidPlan = Exclude<Plan, 'free'>
@@ -138,6 +139,7 @@ function LiveBilling({ orgId, email }: { orgId: string; email: string }) {
     try {
       const paddle = await loadPaddle(c.environment, c.clientToken, c.customerId)
       if (!paddle) throw new Error('Paddle checkout didn’t load. Check your connection and try again.')
+      track('Checkout Started', { plan, interval, seats: Math.max(1, b!.people) })
       paddle.Checkout.open({
         items: [{ priceId: c.priceIds[plan][interval], quantity: Math.max(1, b!.people) }],
         customer: c.customerId ? { id: c.customerId } : { email },

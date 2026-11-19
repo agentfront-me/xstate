@@ -45,7 +45,7 @@ async function runTool(env: Env, grant: Grant, caller: Caller, background: Backg
   try {
     const input: unknown = operation.input.parse(toolInput(grant, args))
     const actor = { userId: grant.userId, mailboxIds: grant.mailboxIds }
-    const result = await operation.run({ env, actor, waitUntil: background.waitUntil } as never, input)
+    const result = await operation.run({ env, actor, waitUntil: background.waitUntil, via: 'mcp' } as never, input)
     if (result instanceof Response) return toolError('not_available', `${name} returns a file, which this connection can't carry`)
     return toolResult(result)
   } catch (err) {
