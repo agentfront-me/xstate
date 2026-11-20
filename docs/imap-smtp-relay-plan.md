@@ -4,8 +4,8 @@ Status: **draft, 2026-11-20.** The four open questions were answered the same da
 changed the plan in 13 places (§13). **Phases 0, 1 and 2 are built and deployed (2026-11-20; §14–§16), and
 tested in production through deepo (§17).** Mail apps are released to the main organization only (`MAIL_APPS`). Not
 done yet: the mail ports aren't open to the internet and the bridge has a temporary self-signed certificate (§17).
-**Phase 3 (reading mail over IMAP) is built and tested locally (2026-11-20; §18), committed but not pushed:** pushing
-would replace the session code under the 12-hour idle test that is running until 20:57 UTC.
+**Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
+§18).** A 12-hour idle test is running on deepo until 21:26 UTC.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -515,9 +515,14 @@ So about **105 KB per connection**, at the top of the estimate. With about 420 M
 bridge can hold roughly 3,000 connections before the machine gets tight; a larger instance raises that in step.
 All 1,000 opened without a failure.
 
-**Running:** a 12-hour idle test on deepo (unit `mail-bridge-idle-test`, signed in as asif@xstate.com, IDLE renewed
-every 25 minutes), started 08:57 UTC, ending 20:57 UTC. Read it with
-`sudo journalctl -u mail-bridge-idle-test`; the last line says PASSED or LOST.
+**Idle test.** The first run (started 08:57 UTC) lost its connection after 247 seconds: the bridge logged the
+WebSocket closed from Cloudflare's side, at the moment the 1,000-connection test was closing its connections. One
+drop proves little, since mail apps reconnect by themselves, so the tool now reconnects and records every drop.
+**The second run started 09:26 UTC against the phase 3 session and ends 21:26 UTC** (unit `mail-bridge-idle-test`,
+signed in as asif@xstate.com, IDLE renewed every 25 minutes). Read it with
+`sudo journalctl -u mail-bridge-idle-test`: each `LOST` line says how long that connection lasted, and the last
+line (`FINISHED`) gives the number of drops and the longest connection. If connections drop every few minutes, that
+is a problem to fix before launch; a handful over 12 hours is normal.
 
 **Still to do**
 1. **Open ports 993, 465 and 587** in deepo's security group, and confirm 3.130.37.150 is an Elastic IP. Needs
@@ -589,6 +594,25 @@ unit tests for the four `imap/` modules, 21 tests):
 - IDLE: a new message arrives as `EXISTS`; a flag changed in the web app arrives as a `FETCH`; NOOP reports the next.
 - STORE, COPY and CREATE are refused.
 
-**Still to check in production:** a first sync of the 53,000-message mailbox (time, and the cost of the
-background preparation), then Apple Mail, Thunderbird and Outlook once the ports are open.
+**Tested in production** (Python's imaplib through an SSH tunnel to deepo, as asif@xstate.com and
+asif@hireninja.com; read-only):
+- Sign-in about 2 seconds, opening a folder about 2 seconds, a whole message at exactly the promised size.
+- The 52,072-message Archive folder of asif@hireninja.com:
+
+| Step | Time |
+|---|---|
+| Open the folder | 2.5 s |
+| UID and flags of all 52,072 messages | 10.4 s |
+| Headers of 500 messages not yet prepared | 14.8 s (about 34 a second) |
+| Headers of 2,000 messages not yet prepared | 52.5 s |
+| Headers of 500 prepared messages | 2.0 s |
+| SEARCH SUBJECT (995 found) | 0.5 s |
+| SEARCH BODY, two words (3,149 found) | 0.4 s |
+
+  The times include the SSH tunnel from my machine. A first sync of a folder this size with nothing prepared would
+  take about 25 minutes of header fetches; prepared, about 3 to 4 minutes. The background job does about 120
+  messages a batch, newest first.
+
+**Still to check:** how long the background preparation takes for the whole 53,000 messages and what it costs,
+then Apple Mail, Thunderbird and Outlook once the ports are open.
 
