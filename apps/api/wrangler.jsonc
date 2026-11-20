@@ -167,7 +167,9 @@
       // One per organization: the mobile app's live-updates sockets (live/hub.ts).
       { "name": "LIVE", "class_name": "LiveHub" },
       // One per mailbox: its message index (mailbox/store.ts, docs/mailbox-store-plan.md).
-      { "name": "MAILBOX_STORE", "class_name": "MailboxStore" }
+      { "name": "MAILBOX_STORE", "class_name": "MailboxStore" },
+      // One per mail-app connection: its IMAP session (relay/imap-session.ts, docs/imap-smtp-relay-plan.md).
+      { "name": "IMAP_SESSION", "class_name": "ImapSession" }
     ]
   },
   "migrations": [
@@ -175,7 +177,8 @@
     { "tag": "v2-migration-store", "new_sqlite_classes": ["MigrationStore"] },
     { "tag": "v3-agent-store", "new_sqlite_classes": ["AgentStore"] },
     { "tag": "v4-live-hub", "new_sqlite_classes": ["LiveHub"] },
-    { "tag": "v5-mailbox-store", "new_sqlite_classes": ["MailboxStore"] }
+    { "tag": "v5-mailbox-store", "new_sqlite_classes": ["MailboxStore"] },
+    { "tag": "v6-imap-session", "new_sqlite_classes": ["ImapSession"] }
   ],
   // One agent run = one AgentRun instance (agents/run.ts): every model and tool call is a durable step.
   "workflows": [{ "name": "xstate-agent-run", "binding": "AGENT_RUN", "class_name": "AgentRun" }],
@@ -198,6 +201,9 @@
   // Analytics, for xstate's own product analytics (src/analytics/events.ts, docs/analytics-events.md). Signs the
   // identify() hash in auth responses and authorizes server events to /v1/collect. Not in "required" so local dev
   // and deploys work without it.
+  // RELAY_SECRET (optional; without it /relay/* does not exist): the secret the mail bridge on deepo sends when it
+  // hands over a mail app's connection (relay/route.ts). Any long random string; the same value goes in the
+  // bridge's secret file. RELAY_SPIKE_LOGIN (phase 0 only): "user:password", the one login the spike session accepts.
   // STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET (billing/stripe.ts): the Stripe secret key (sk_live_… in production) and
   // the signing secret (whsec_…) of the endpoint https://api.xstate.com/webhooks/billing/stripe. Required, because
   // wrangler dev only loads required secrets from .dev.vars; until live keys exist, set both to "off" and billing

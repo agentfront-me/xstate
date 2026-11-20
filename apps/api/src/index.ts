@@ -24,6 +24,7 @@ import { membersHourly } from './members/deletion'
 import { emailsHourly } from './emails/service'
 import { requireAuth, requireToken } from './auth/middleware'
 import { handleLive } from './live/route'
+import { handleRelay, handleRelayPoke } from './relay/route'
 import { handleGetEmail, handleListEmails, handleSendEmail } from './http/emails'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
@@ -90,6 +91,10 @@ app.post('/hooks/:triggerId/:token', handleWebhook)
 // Connectors' OAuth sign-in comes back here, then on to Settings → Agent setup → Connectors (agents/connectors.ts).
 app.get('/connectors/oauth/callback', handleOAuthCallback)
 
+// Mail apps: the mail bridge hands each IMAP or SMTP connection over as a WebSocket (relay/route.ts). Bridge only.
+app.get('/relay/:protocol', handleRelay)
+app.post('/relay/poke/:id', handleRelayPoke)
+
 app.onError(onError)
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint' } }, 404))
 
@@ -104,6 +109,8 @@ export { AgentRun } from './agents/run'
 export { LiveHub } from './live/hub'
 // One per mailbox: its mail index, folders, calendars and delivery log (mailbox/store.ts).
 export { MailboxStore } from './mailbox/store'
+// One per mail-app connection: an IMAP session handed over by the mail bridge (relay/imap-session.ts).
+export { ImapSession } from './relay/imap-session'
 
 export default {
   // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) and the mta-sts.<domain> policy hosts

@@ -277,6 +277,28 @@
       "port": 8081
     },
     {
+      "name": "api-relay",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@xstate/api",
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8826",
+        "--inspector-port",
+        "9266",
+        "--persist-to",
+        ".wrangler/relay-test",
+        "--var",
+        "RELAY_SECRET:local-relay-secret",
+        "--var",
+        "RELAY_SPIKE_LOGIN:spike@xstate.test:local-spike-password"
+      ],
+      "port": 8826
+    },
+    {
       "name": "api-analytics",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

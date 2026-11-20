@@ -1,0 +1,42 @@
+# systemd unit for the mail bridge on deepo (docs/imap-smtp-relay-plan.md, 3.1). Install as
+# /etc/systemd/system/mail-bridge.service. The bridge runs as its own user, kept apart from everything else on the
+# machine: it can read its certificate and secret, bind the mail ports, and nothing more.
+[Unit]
+Description=xstate mail bridge (IMAP and SMTP to the Worker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mail-bridge
+Group=mail-bridge
+ExecStart=/usr/local/bin/mail-bridge \
+  -imaps :993 -smtps :465 -submission :587 \
+  -cert /etc/mail-bridge/fullchain.pem -key /etc/mail-bridge/privkey.pem \
+  -secret-file /etc/mail-bridge/secret
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+
+# Ports under 1024 without root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+# Mail passes through memory in plain text: keep it out of swap and core dumps.
+LimitCORE=0
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target
