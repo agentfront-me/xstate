@@ -3,7 +3,7 @@
 Status: **draft, 2026-11-20.** The four open questions were answered the same day (§12), and a review the same day
 changed the plan in 13 places (§13). **Phases 0, 1 and 2 are built and deployed (2026-11-20; §14–§16), and
 tested in production through deepo (§17).** Mail apps are released to the main organization only (`MAIL_APPS`). Not
-done yet: the mail ports aren't open to the internet and the bridge has a temporary self-signed certificate (§17).
+done yet: the mail ports aren't open to the internet (§17). The bridge has its real certificate.
 **Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
 §18).** A 12-hour idle test is running on deepo until 21:26 UTC.
 
@@ -490,8 +490,8 @@ Sent copy.
 `MAIL_APPS` is the main organization's id, so only it sees the App passwords tab.
 
 **On deepo:** the bridge runs as the `mail-bridge` user under the sandboxed unit (systemd rates its exposure 2.4,
-"OK"), listening on 993, 465 and 587, with the secret in `/etc/mail-bridge/secret`. Its certificate is a
-**temporary self-signed one**. The load tool is at `/usr/local/bin/mail-bridge-loadtest`
+"OK"), listening on 993, 465 and 587, with the secret in `/etc/mail-bridge/secret`. Its certificate was a temporary
+self-signed one during these tests, replaced by a real one the same day (see "Still to do"). The load tool is at `/usr/local/bin/mail-bridge-loadtest`
 (`services/mail-bridge/loadtest`).
 
 **Tested through an SSH tunnel to deepo** (so: real bridge, real Worker, real SES; only the public ports missing):
@@ -527,9 +527,13 @@ is a problem to fix before launch; a handful over 12 hours is normal.
 **Still to do**
 1. **Open ports 993, 465 and 587** in deepo's security group, and confirm 3.130.37.150 is an Elastic IP. Needs
    `aws login` (the session has expired).
-2. **A real certificate** for `mail.xstate.com` from Let's Encrypt. deepo has no Let's Encrypt account any more, so
-   this means registering one and accepting their terms; it also needs a small nginx server block for
-   `mail.xstate.com` on port 80 (today port 80 redirects everything to hireninja).
+2. ~~A real certificate~~ **Done 2026-11-20.** A Let's Encrypt certificate for `mail.xstate.com` (expires
+   2027-02-18), got with certbot's web check on port 80 (user approved registering the account, without an email
+   address). On deepo: `/etc/nginx/conf.d/mail-xstate.conf` answers only the check; the hook
+   `/etc/letsencrypt/renewal-hooks/deploy/mail-bridge.sh` copies each new certificate to `/etc/mail-bridge/`, and
+   the bridge picks it up without a restart; `certbot-renew.timer` is on and a dry-run renewal passed. It verifies
+   on 993, 465 and 587. A Cloudflare certificate was ruled out: Origin CA certificates are trusted only by
+   Cloudflare's proxy, and proxying the mail ports (Spectrum) needs an Enterprise plan.
 3. After both: Apple Mail, Thunderbird and Outlook against `mail.xstate.com`, and a send to Gmail with a Bcc.
 4. Read the cost of the idle test's Durable Object from Cloudflare's analytics and write the cost per connection
    into `pricing-plan.md`.

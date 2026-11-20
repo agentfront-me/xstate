@@ -17,9 +17,12 @@ deepo is x86_64 (Amazon Linux 2023). One static binary; nothing else to install.
 
 1. DNS: `mail.xstate.com` A record → deepo's IP, **DNS only**.
 2. AWS security group: open TCP 993, 465 and 587 to the world.
-3. Certificate: `sudo certbot certonly --nginx -d mail.xstate.com`, with a deploy hook that copies
-   `fullchain.pem` and `privkey.pem` to `/etc/mail-bridge/` (owner `mail-bridge`, mode 600). The bridge re-reads the
-   certificate when the file changes, so renewals need no restart.
+3. Certificate: an nginx server block for `mail.xstate.com` on port 80 that serves
+   `/.well-known/acme-challenge/` from `/var/www/letsencrypt`, then
+   `sudo certbot certonly --webroot -w /var/www/letsencrypt -d mail.xstate.com`, with a deploy hook in
+   `/etc/letsencrypt/renewal-hooks/deploy/` that copies `fullchain.pem` and `privkey.pem` to `/etc/mail-bridge/`
+   (owner `mail-bridge`, mode 600), and `certbot-renew.timer` enabled. The bridge re-reads the certificate when the
+   file changes, so renewals need no restart. (A Cloudflare Origin CA certificate won't do: mail apps don't trust it.)
 4. User and files:
    ```bash
    sudo useradd --system --no-create-home --shell /sbin/nologin mail-bridge
