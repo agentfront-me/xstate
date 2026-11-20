@@ -38,7 +38,8 @@ test('a literal is asked for, then read', () => {
   assert.deepEqual(first, { kind: 'literal', size: 9, sync: true, announcedAt: 13 })
   assert.equal(nextCommand(bytes('a LOGIN {9+}\r\nme@x')).kind, 'literal')
   const { command: c, consumed } = command('a LOGIN {9}\r\nme@x.test {4}\r\nab d\r\nb NOOP\r\n')
-  assert.deepEqual(c.args, [{ t: 'string', v: 'me@x.test' }, { t: 'string', v: 'ab d' }])
+  assert.deepEqual(c.args.map((a) => (a.t === 'string' ? a.v : null)), ['me@x.test', 'ab d'])
+  assert.deepEqual(c.args[1], { t: 'string', v: 'ab d', raw: bytes('ab d') })
   assert.equal(consumed, 'a LOGIN {9}\r\nme@x.test {4}\r\nab d\r\n'.length)
 })
 
@@ -48,6 +49,8 @@ test('bad syntax names the tag and skips the line', () => {
   assert.equal(next.kind === 'bad' && next.tag, 'a7')
   assert.equal(next.kind === 'bad' && next.consumed, 19)
   assert.equal(nextCommand(bytes('a8 APPEND INBOX {99999999}\r\n')).kind, 'bad')
+  // A message being saved may be larger than a name or a search word.
+  assert.equal(nextCommand(bytes('a8 APPEND INBOX {2000000}\r\n'), 40_000_000).kind, 'literal')
 })
 
 test('sequence sets', () => {

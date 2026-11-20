@@ -62,12 +62,17 @@ export type ImapRow = {
   answered: number
   forwarded: number
   draft: number
+  /** IMAP's \\Deleted mark in this folder. */
+  deleted: number
   receivedS: number
   size: number
   rawKey: string | null
   modseq: number
   meta: string | null
 }
+
+/** Flags a mail app sets or clears; a flag left out is left alone. */
+export type ImapFlagChange = Partial<Record<'seen' | 'flagged' | 'answered' | 'draft' | 'forwarded' | 'deleted', boolean>>
 
 /** Where one attachment sits inside its raw message. */
 export type StoreAttachment = {
@@ -310,6 +315,12 @@ export class MailboxStore extends Agent<Env> {
     addColumns('messages', ['imap_meta TEXT'])
     sql.exec(`CREATE INDEX IF NOT EXISTS messages_no_imap_meta ON messages (n) WHERE imap_meta IS NULL`)
     sql.exec(`CREATE TABLE IF NOT EXISTS watchers (session TEXT PRIMARY KEY, at_s INTEGER NOT NULL) WITHOUT ROWID`)
+    // Changes from mail apps (phase 4). `deleted` is IMAP's \Deleted mark, kept per folder the message is in and
+    // acted on by EXPUNGE. `client_message_id` is the Message-ID a mail app gave a message it sent over SMTP (SES
+    // replaces it on the way out), so the app's own copy for Sent can be matched to ours.
+    addColumns('placements', ['deleted INTEGER'])
+    addColumns('messages', ['client_message_id TEXT'])
+    sql.exec(`CREATE INDEX IF NOT EXISTS messages_client_message_id ON messages (client_message_id) WHERE client_message_id IS NOT NULL`)
   }
 
   private get db() {
@@ -1149,7 +1160,7 @@ export class MailboxStore extends Agent<Env> {
   imapRows(folderId: string, lo: number, hi: number, withMeta: boolean): ImapRow[] {
     const rows = this.db.exec(
       `SELECT p.uid, m.n, m.id, m.seen, m.pinned, COALESCE(m.answered, 0) AS answered, COALESCE(m.forwarded, 0) AS forwarded,
-        COALESCE(m.is_draft, 0) AS draft, m.received_s AS receivedS, COALESCE(m.raw_size, m.size) AS size, m.raw_key AS rawKey,
+        COALESCE(m.is_draft, 0) AS draft, COALESCE(p.deleted, 0) AS deleted, m.received_s AS receivedS, COALESCE(m.raw_size, m.size) AS size, m.raw_key AS rawKey,
         COALESCE(m.modseq, 0) AS modseq, ${withMeta ? 'm.imap_meta' : 'NULL'} AS meta
         FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND p.uid BETWEEN ? AND ? ORDER BY p.uid`,
       folderId, lo, hi,
@@ -1174,6 +1185,200 @@ export class MailboxStore extends Agent<Env> {
     const where = searchSql(criterion)
     const rows = this.db.exec(`SELECT p.uid FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND (${where.sql}) ORDER BY p.uid`, folderId, ...where.params)
     return ([...rows] as { uid: number }[]).map((r) => r.uid)
+  }
+
+  // Changes from mail apps (phase 4). Sets of messages come as UID ranges that hold no other message of the folder
+  // (the session builds them from its UID list), so flags change in a statement or two per range, not per message.
+
+  /** Sets or clears flags on messages of a folder. One change number for the whole call. */
+  imapStore(folderId: string, ranges: [number, number][], flags: ImapFlagChange) {
+    const columns: [keyof ImapFlagChange, string][] = [['seen', 'seen'], ['flagged', 'pinned'], ['answered', 'answered'], ['draft', 'is_draft'], ['forwarded', 'forwarded']]
+    this.ctx.storage.transactionSync(() => {
+      const modseq = this.nextModseq()
+      for (const [lo, hi] of ranges) {
+        const inRange = `n IN (SELECT n FROM placements WHERE folder_id = ? AND uid BETWEEN ? AND ?)`
+        const sets = columns.filter(([flag]) => flags[flag] !== undefined).map(([flag, column]) => `${column} = ${flags[flag] ? 1 : 0}`)
+        this.db.exec(`UPDATE messages SET ${[...sets, 'modseq = ?'].join(', ')} WHERE ${inRange}`, modseq, folderId, lo, hi)
+        // The copy of "read" that folder counts are made from.
+        if (flags.seen !== undefined) this.db.exec(`UPDATE placements SET seen = ? WHERE ${inRange}`, flags.seen ? 1 : 0, folderId, lo, hi)
+        if (flags.deleted !== undefined) this.db.exec(`UPDATE placements SET deleted = ? WHERE folder_id = ? AND uid BETWEEN ? AND ?`, flags.deleted ? 1 : 0, folderId, lo, hi)
+      }
+      this.db.exec(`UPDATE folders SET highest_modseq = ? WHERE id = ?`, modseq, folderId)
+    })
+  }
+
+  /** Puts a message in a folder, or finds it there: its UID in that folder. */
+  private placeIn(n: number, folderId: string, receivedS: number, seen: number): number {
+    const there = [...this.db.exec(`SELECT uid FROM placements WHERE folder_id = ? AND n = ?`, folderId, n)][0] as { uid: number | null } | undefined
+    if (there?.uid) return there.uid
+    const uid = ([...this.db.exec(`SELECT COALESCE(uid_next, 1) AS next FROM folders WHERE id = ?`, folderId)][0] as { next: number }).next
+    if (there) this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, uid, folderId, n)
+    else this.db.exec(`INSERT INTO placements (folder_id, received_s, n, seen, uid) VALUES (?, ?, ?, ?, ?)`, folderId, receivedS, n, seen, uid)
+    this.db.exec(`UPDATE folders SET uid_next = ? WHERE id = ?`, uid + 1, folderId)
+    return uid
+  }
+
+  private roleOf(folderId: string): StoreFolderRole | null | undefined {
+    const row = [...this.db.exec(`SELECT role FROM folders WHERE id = ?`, folderId)][0] as { role: StoreFolderRole | null } | undefined
+    return row ? row.role : undefined
+  }
+
+  /**
+   * Moves messages to another folder (`move`), or also puts them there (a copy: the same message in two folders,
+   * sharing its flags). Returns each message's UID here and its UID there, and for a move the ids that moved. Null
+   * when either folder is gone.
+   */
+  imapPlace(folderId: string, uids: number[], targetId: string, move: boolean): { pairs: [number, number][]; ids: string[] } | null {
+    return this.ctx.storage.transactionSync(() => {
+      const from = this.roleOf(folderId)
+      const to = this.roleOf(targetId)
+      if (from === undefined || to === undefined) return null
+      const pairs: [number, number][] = []
+      const ids: string[] = []
+      if (!uids.length) return { pairs, ids }
+      const modseq = this.nextModseq()
+      const now = Math.floor(Date.now() / 1000)
+      for (const uid of uids) {
+        const row = [...this.db.exec(
+          `SELECT p.n, p.received_s, m.seen, m.id, m.from_addr FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND p.uid = ?`,
+          folderId, uid,
+        )][0] as { n: number; received_s: number; seen: number; id: string; from_addr: string } | undefined
+        if (!row) continue
+        pairs.push([uid, this.placeIn(row.n, targetId, row.received_s, row.seen)])
+        if (!move || targetId === folderId) continue
+        this.db.exec(`DELETE FROM placements WHERE folder_id = ? AND n = ?`, folderId, row.n)
+        this.db.exec(`UPDATE messages SET folder = ?, trashed_s = ?, modseq = ? WHERE n = ?`, to, to === 'trash' ? now : null, modseq, row.n)
+        // "Junk" and "Not junk": a move between Inbox and Junk is the mailbox's verdict on the sender (spam layer 3).
+        if (row.from_addr && ((from === 'inbox' && to === 'junk') || (from === 'junk' && to === 'inbox'))) {
+          this.db.exec(`INSERT OR REPLACE INTO sender_verdicts (address, verdict, at_s) VALUES (?, ?, ?)`, row.from_addr, to === 'junk' ? 'junk' : 'notjunk', now)
+        }
+        ids.push(row.id)
+      }
+      this.db.exec(`UPDATE folders SET highest_modseq = ? WHERE id IN (?, ?)`, modseq, folderId, targetId)
+      return { pairs, ids }
+    })
+  }
+
+  /**
+   * EXPUNGE: acts on the messages of a folder marked \Deleted (only those in `ranges`, when given).
+   * - In Trash and in Drafts the message is deleted for good.
+   * - A message that is also in another folder (a mail app copied it to Trash first) just leaves this one.
+   * - Anywhere else it moves to Trash, where it stays 30 days like mail deleted in the web app.
+   * Returns the messages deleted for good, with their raw copies' keys for the caller to delete, and those moved.
+   */
+  imapExpunge(folderId: string, ranges: [number, number][] | null): { removedIds: string[]; rawKeys: string[]; movedIds: string[] } {
+    const gone: string[] = []
+    const movedIds: string[] = []
+    this.ctx.storage.transactionSync(() => {
+      const role = this.roleOf(folderId)
+      if (role === undefined) return
+      const within = ranges ? ` AND (${ranges.map(() => 'p.uid BETWEEN ? AND ?').join(' OR ')})` : ''
+      if (ranges && !ranges.length) return
+      const rows = [...this.db.exec(
+        `SELECT p.n, p.received_s, m.id, m.seen, (SELECT COUNT(*) FROM placements x WHERE x.n = p.n) AS places
+          FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND p.deleted = 1${within}`,
+        folderId, ...(ranges ?? []).flat(),
+      )] as unknown as { n: number; received_s: number; id: string; seen: number; places: number }[]
+      if (!rows.length) return
+      const modseq = this.nextModseq()
+      const now = Math.floor(Date.now() / 1000)
+      const trash = this.ensureOwned().get('trash')!
+      for (const row of rows) {
+        if (row.places > 1) {
+          this.db.exec(`DELETE FROM placements WHERE folder_id = ? AND n = ?`, folderId, row.n)
+          const left = [...this.db.exec(`SELECT f.role FROM placements p JOIN folders f ON f.id = p.folder_id WHERE p.n = ? LIMIT 1`, row.n)][0] as { role: StoreFolderRole | null }
+          this.db.exec(`UPDATE messages SET folder = ?, trashed_s = ?, modseq = ? WHERE n = ?`, left.role, left.role === 'trash' ? now : null, modseq, row.n)
+          movedIds.push(row.id)
+        } else if (role === 'trash' || role === 'drafts') gone.push(row.id)
+        else {
+          this.placeIn(row.n, trash, row.received_s, row.seen)
+          this.db.exec(`DELETE FROM placements WHERE folder_id = ? AND n = ?`, folderId, row.n)
+          this.db.exec(`UPDATE messages SET folder = 'trash', trashed_s = ?, modseq = ? WHERE n = ?`, now, modseq, row.n)
+          movedIds.push(row.id)
+        }
+      }
+      this.db.exec(`UPDATE folders SET highest_modseq = ? WHERE id IN (?, ?)`, modseq, folderId, trash)
+    })
+    const removed = gone.length ? this.remove(gone) : { rawKeys: [] }
+    return { removedIds: gone, rawKeys: removed.rawKeys, movedIds }
+  }
+
+  /** A new folder of the mailbox's own. Null when the name is taken (capitals aside) or is a built-in folder's. */
+  imapCreateFolder(name: string): { id: string } | null {
+    this.ensureOwned()
+    if (this.folderNamed(name)) return null
+    const id = ulid()
+    const validity = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff || 1
+    this.db.exec(`INSERT INTO folders (id, role, name, uid_validity, uid_next, highest_modseq) VALUES (?, NULL, ?, ?, 1, 0)`, id, name, validity)
+    this.nextModseq()
+    return { id }
+  }
+
+  /** Renames a folder of the mailbox's own, and the folders inside it ("Clients" also renames "Clients/Acme"). */
+  imapRenameFolder(folderId: string, name: string): boolean {
+    const folder = [...this.db.exec(`SELECT role, name FROM folders WHERE id = ?`, folderId)][0] as { role: string | null; name: string } | undefined
+    if (!folder || folder.role || this.folderNamed(name)) return false
+    this.ctx.storage.transactionSync(() => {
+      const inside = [...this.db.exec(`SELECT id, name FROM folders WHERE role IS NULL`)] as { id: string; name: string }[]
+      for (const f of inside) if (f.name.startsWith(`${folder.name}/`)) this.db.exec(`UPDATE folders SET name = ? WHERE id = ?`, name + f.name.slice(folder.name.length), f.id)
+      this.db.exec(`UPDATE folders SET name = ? WHERE id = ?`, name, folderId)
+      this.nextModseq()
+    })
+    return true
+  }
+
+  /**
+   * Deletes a folder of the mailbox's own. Its messages aren't lost: each moves to Trash, unless it is also in
+   * another folder. Returns the ids that moved, or null when the folder can't be deleted (a built-in one, or gone).
+   */
+  imapDeleteFolder(folderId: string): { movedIds: string[] } | null {
+    if (this.roleOf(folderId) !== null) return null
+    return this.ctx.storage.transactionSync(() => {
+      this.db.exec(`UPDATE placements SET deleted = 1 WHERE folder_id = ?`, folderId)
+      const { movedIds } = this.imapExpunge(folderId, null)
+      this.db.exec(`DELETE FROM folders WHERE id = ?`, folderId)
+      this.nextModseq()
+      return { movedIds }
+    })
+  }
+
+  private folderNamed(name: string): boolean {
+    const wanted = name.toLowerCase()
+    if (wanted === 'inbox') return true
+    return ([...this.db.exec(`SELECT name FROM folders`)] as { name: string }[]).some((f) => f.name.toLowerCase() === wanted)
+  }
+
+  /** A message's UID in a folder (after a mail app saved it there), or null. */
+  imapUidOf(folderId: string, id: string): number | null {
+    const row = [...this.db.exec(`SELECT p.uid FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND m.id = ?`, folderId, id)][0] as { uid: number } | undefined
+    return row?.uid ?? null
+  }
+
+  /** Remembers the Message-ID a mail app gave a message it sent (SES gave it another). */
+  setClientMessageId(id: string, clientMessageId: string) {
+    this.db.exec(`UPDATE messages SET client_message_id = ? WHERE id = ?`, clientMessageId, id)
+  }
+
+  /** The Sent copy of a message a mail app sent with this Message-ID since `sinceS`: its UID in Sent, or null. */
+  imapSentCopy(clientMessageId: string, sinceS: number): { id: string; uid: number } | null {
+    const sent = this.ensureOwned().get('sent')!
+    const row = [...this.db.exec(
+      `SELECT m.id, p.uid FROM messages m JOIN placements p ON p.n = m.n AND p.folder_id = ? WHERE m.client_message_id = ? AND m.received_s >= ? ORDER BY m.n DESC LIMIT 1`,
+      sent, clientMessageId, sinceS,
+    )][0] as { id: string; uid: number } | undefined
+    return row ?? null
+  }
+
+  /** Messages a mail app saved (APPEND) with this Message-ID: its own Sent copies of a message we now hold ourselves. */
+  imapSavedCopies(messageId: string): string[] {
+    const rows = [...this.db.exec(`SELECT id FROM messages WHERE message_id = ? AND ses_id LIKE 'migrated.imap.%'`, messageId)] as { id: string }[]
+    return rows.map((r) => r.id)
+  }
+
+  /** Marks the message with this Message-ID as answered: a reply to it was just sent from a mail app. */
+  markAnswered(messageId: string) {
+    const row = [...this.db.exec(`SELECT id FROM messages WHERE message_id = ? ORDER BY n DESC LIMIT 1`, messageId)][0] as { id: string } | undefined
+    if (row) this.markOriginal(row.id, 'answered')
   }
 
   /** An IMAP session starts waiting for news of this mailbox (IDLE); it is called when anything changes. */

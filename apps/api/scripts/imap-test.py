@@ -97,18 +97,16 @@ check("a part that doesn't exist is an empty string", b'BODY[9] ""' in data[0] i
 
 typ, data = M.fetch("1:*", "(UID RFC822.SIZE ENVELOPE BODYSTRUCTURE)")
 check("ENVELOPE and BODYSTRUCTURE for the whole folder at once", typ == "OK" and sum(1 for d in data if isinstance(d, (bytes, tuple)) and b"ENVELOPE" in (d if isinstance(d, bytes) else d[0])) >= 1, len(data))
-typ, found = M.uid("SEARCH", None, "LARGER", "10000000")
+# Locally the dev server reads the real R2 bucket over the internet, so big downloads are only checked with LARGE=1.
+typ, found = M.uid("SEARCH", None, "LARGER", "10000000") if os.environ.get("LARGE") else ("OK", [b""])
 if found[0]:
     big = found[0].split()[-1].decode()
     t = time.time()
     typ, data = M.uid("FETCH", big, "(RFC822.SIZE BODY.PEEK[])")
     want = int(re.search(rb"RFC822.SIZE (\d+)", data[0][0]).group(1))
     check("a message over 10 MB downloads whole", len(data[0][1]) == want, f"{want / 1048576:.1f} MB in {time.time() - t:.1f}s")
-for cmd, args in (("STORE", (uid, "+FLAGS", "(\\Flagged)")), ("COPY", (uid, "Archive"))):
-    typ, data = M.uid(cmd, *args)
-    check(f"{cmd} is refused for now", typ == "NO", data)
-typ, data = M.create("New folder")
-check("CREATE is refused for now", typ == "NO", data)
+typ, data = M.uid("STORE", uid, "+FLAGS", "(\\Flagged)")
+check("STORE is refused in a folder opened read-only", typ == "NO", data)
 
 print("  waiting 15s so the session sleeps…", flush=True); time.sleep(15)
 typ, data = M.fetch(str(exists), "(UID)")

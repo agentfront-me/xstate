@@ -6,7 +6,7 @@
 
 import { parseSet, text, type Token } from './syntax.ts'
 
-export type Flag = 'seen' | 'flagged' | 'answered' | 'draft' | 'forwarded'
+export type Flag = 'seen' | 'flagged' | 'answered' | 'draft' | 'forwarded' | 'deleted'
 
 export type Criterion =
   | { k: 'all' }
@@ -73,9 +73,11 @@ export function parseSearch(tokens: Token[]): Criterion {
       case 'UNANSWERED': return not({ k: 'flag', flag: 'answered' })
       case 'DRAFT': return { k: 'flag', flag: 'draft' }
       case 'UNDRAFT': return not({ k: 'flag', flag: 'draft' })
-      // Nothing is ever \Deleted or \Recent here (deleting arrives with phase 4).
-      case 'DELETED': case 'RECENT': case 'NEW': return { k: 'none' }
-      case 'UNDELETED': case 'OLD': return { k: 'all' }
+      case 'DELETED': return { k: 'flag', flag: 'deleted' }
+      case 'UNDELETED': return not({ k: 'flag', flag: 'deleted' })
+      // Nothing is ever \Recent here.
+      case 'RECENT': case 'NEW': return { k: 'none' }
+      case 'OLD': return { k: 'all' }
       case 'KEYWORD': return string().toLowerCase() === '$forwarded' ? { k: 'flag', flag: 'forwarded' } : { k: 'none' }
       case 'UNKEYWORD': return string().toLowerCase() === '$forwarded' ? not({ k: 'flag', flag: 'forwarded' }) : { k: 'all' }
       case 'BEFORE': case 'SENTBEFORE': return { k: 'date', op: 'before', day: date() }
@@ -146,6 +148,7 @@ const FLAG_SQL: Record<Flag, string> = {
   answered: 'COALESCE(m.answered, 0) = 1',
   draft: 'COALESCE(m.is_draft, 0) = 1',
   forwarded: 'COALESCE(m.forwarded, 0) = 1',
+  deleted: 'COALESCE(p.deleted, 0) = 1',
 }
 const TOP = 4294967295
 const contains = (column: string) => `instr(lower(${column}), lower(?)) > 0`

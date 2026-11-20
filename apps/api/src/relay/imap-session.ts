@@ -3,8 +3,8 @@
 // to it; see services/mail-bridge/main.go). The session speaks IMAP4rev1 and answers from the mailbox's store
 // (mailbox/store.ts) and its raw messages in R2. Nothing of the mail is kept here.
 //
-// PHASE 3: reading. Every folder opens read-only; changing flags, moving, deleting and saving messages arrive with
-// phase 4, and until then those commands are refused.
+// Reading and changing: a mail app can read, search, mark, move, copy, delete and save messages and manage folders.
+// A shared mailbox the person can only read opens read-only, and so does any folder opened with EXAMINE.
 //
 // State. The socket hibernates between commands, so nothing that matters lives only in memory:
 //   - the socket's attachment (at most 16 KB): who is signed in, the open folder's numbers, IDLE, the byte counts;
@@ -17,15 +17,23 @@
 
 import { DurableObject } from 'cloudflare:workers'
 import { appAccess, authenticateApp } from '../auth/app-passwords'
+import * as accessDb from '../db/mailbox-access'
+import * as mailboxesDb from '../db/mailboxes'
+import { ApiError } from '../errors'
+import { requireStorageRoom } from '../limits'
+import { announce } from '../live/announce'
+import { queueMailEvent } from '../mailbox/events'
+import { ulid } from '../mailbox/inbound'
+import { deliverMigrated } from '../mailbox/receive'
 import { decodeName, encodeName, matches } from '../imap/names.ts'
-import { describe, envelope, parseFields, pickFields, quote, section, type ImapMeta } from '../imap/message.ts'
+import { describe, envelope, parseFields, pickFields, quote, readHeaders, section, type ImapMeta } from '../imap/message.ts'
 import { queueImapPrepare } from '../imap/prepare'
 import { parseSearch, resolveSequences, type Criterion } from '../imap/search.ts'
 import { nextCommand, parseSet, text, type Command, type Token } from '../imap/syntax.ts'
-import type { ImapFolder, ImapRow } from '../mailbox/store'
+import type { ImapFlagChange, ImapFolder, ImapRow } from '../mailbox/store'
 import { store } from '../mailbox/stub'
 import { organizationBucket } from '../storage/buckets'
-import { getObject, getObjectRange } from '../storage/r2'
+import { deleteObject, getObject, getObjectRange } from '../storage/r2'
 
 const FRAME = 64 * 1024
 /** Most bytes sent ahead of the bridge's last ack. The bridge acks every 256 KB, so this can't stall. */
@@ -41,14 +49,21 @@ const ROWS_WITH_META = 100
 /** Section reads from R2 at once, when every section is small. */
 const PARALLEL = 6
 const SMALL_SECTION = 256 * 1024
+/** A large section is read from R2 and sent in pieces of this size, so a big download never sits whole in memory. */
+const STREAM_PIECE = 2 * 1024 * 1024
 const MAX_BAD = 10
 
-const CAPABILITIES = 'IMAP4rev1 SASL-IR ID ENABLE IDLE NAMESPACE UNSELECT SPECIAL-USE CONDSTORE'
-const FLAGS = '\\Answered \\Flagged \\Draft \\Deleted \\Seen $Forwarded'
+const CAPABILITIES = 'IMAP4rev1 SASL-IR ID ENABLE IDLE NAMESPACE UNSELECT SPECIAL-USE CONDSTORE UIDPLUS MOVE'
+const FLAGS = '\\Answered \\Flagged \\Draft \\Deleted \\Seen $Forwarded $Junk $NotJunk'
+/** The largest message a mail app may save (APPEND): the same as one it may send. */
+const MAX_APPEND = 36 * 1024 * 1024
+/** Half a command larger than this isn't kept in storage; a timer keeps the session awake until the rest arrives. */
+const MAX_STORED_INPUT = 1024 * 1024
+const FLAG_NAMES: Record<string, keyof ImapFlagChange> = { '\\seen': 'seen', '\\flagged': 'flagged', '\\answered': 'answered', '\\draft': 'draft', '\\deleted': 'deleted', $forwarded: 'forwarded' }
 const SPECIAL: Record<string, string> = { sent: '\\Sent', drafts: '\\Drafts', archive: '\\Archive', junk: '\\Junk', trash: '\\Trash' }
 
 type Auth = { passwordId: string; userId: string; organizationId: string; mailboxId: string; address: string; canWrite: boolean }
-type Selected = { folderId: string; name: string; uidValidity: number; uidNext: number; modseq: number; total: number }
+type Selected = { folderId: string; name: string; role: string | null; readOnly: boolean; uidValidity: number; uidNext: number; modseq: number; total: number }
 
 /** What survives hibernation with the socket (at most 16 KB). */
 type State = {
@@ -70,10 +85,14 @@ type State = {
   stored: boolean
 }
 
+/** Part of an answer: text, bytes, or a large stretch of a raw message to be read from R2 piece by piece as it is sent. */
+type Piece = string | Uint8Array | { key: string; start: number; end: number }
+
 /** One FETCH data item, as asked. */
 type Item =
   | { kind: 'uid' | 'flags' | 'internaldate' | 'size' | 'envelope' | 'structure' | 'modseq'; label: string }
-  | { kind: 'body'; label: string; spec: string; partial: [number, number] | null }
+  /** `peek`: asked with BODY.PEEK, so reading it doesn't mark the message read. */
+  | { kind: 'body'; label: string; spec: string; partial: [number, number] | null; peek: boolean }
 
 class Closed extends Error {}
 
@@ -90,9 +109,28 @@ function internalDate(seconds: number): string {
   const d = new Date(seconds * 1000)
   return `"${pad(d.getUTCDate())}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} +0000"`
 }
-const flagsOf = (r: Pick<ImapRow, 'seen' | 'answered' | 'pinned' | 'draft' | 'forwarded'>) =>
-  [r.seen && '\\Seen', r.answered && '\\Answered', r.pinned && '\\Flagged', r.draft && '\\Draft', r.forwarded && '$Forwarded'].filter(Boolean).join(' ')
+const flagsOf = (r: Pick<ImapRow, 'seen' | 'answered' | 'pinned' | 'draft' | 'forwarded' | 'deleted'>) =>
+  [r.seen && '\\Seen', r.answered && '\\Answered', r.pinned && '\\Flagged', r.draft && '\\Draft', r.deleted && '\\Deleted', r.forwarded && '$Forwarded'].filter(Boolean).join(' ')
 const folderName = (f: Pick<ImapFolder, 'role' | 'name'>) => (f.role === 'inbox' ? 'INBOX' : f.name)
+/** UIDs in the order given as a set: "3:5,9". A run is only joined while the numbers go up by one. */
+function ranges(uids: number[]): string {
+  const out: string[] = []
+  for (let i = 0; i < uids.length; ) {
+    let j = i
+    while (j + 1 < uids.length && uids[j + 1] === uids[j]! + 1) j++
+    out.push(j > i ? `${uids[i]}:${uids[j]}` : String(uids[i]))
+    i = j + 1
+  }
+  return out.join(',')
+}
+/** APPEND's date ("20-Nov-2026 10:00:00 +0000"), or null. */
+function appendDate(value: string): Date | null {
+  const m = /^\s*(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/.exec(value)
+  const month = m ? MONTHS.findIndex((x) => x.toLowerCase() === m[2]!.toLowerCase()) : -1
+  if (!m || month < 0) return null
+  const offset = (m[7] === '-' ? -1 : 1) * (Number(m[8]) * 60 + Number(m[9]))
+  return new Date(Date.UTC(Number(m[3]), month, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6])) - offset * 60_000)
+}
 const fromBase64 = (value: string): string | null => {
   try {
     return utf8.decode(Uint8Array.from(atob(value.trim()), (c) => c.charCodeAt(0)))
@@ -115,6 +153,12 @@ export class ImapSession extends DurableObject<Env> {
   /** Where the literal already answered with "+" was announced, so it isn't answered twice. */
   private prompted = -1
   private bucket: string | null = null
+  /** Frames that arrived since the unread bytes were last looked at. */
+  private pieces: Uint8Array[] = []
+  private piecesSize = 0
+  /** Bytes the command being received needs in all before it can be read (0: not known to need more). */
+  private needed = 0
+  private awake: ReturnType<typeof setInterval> | null = null
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -150,15 +194,42 @@ export class ImapSession extends DurableObject<Env> {
       }
       return
     }
-    const state = ws.deserializeAttachment() as State
-    if (this.input === null) this.input = state.stored ? this.loadBlob('input') : new Uint8Array(0)
-    const bytes = new Uint8Array(message)
-    const joined = new Uint8Array(this.input.length + bytes.length)
-    joined.set(this.input)
-    joined.set(bytes, this.input.length)
-    this.input = joined
+    if (this.input === null) this.input = (ws.deserializeAttachment() as State).stored ? this.loadBlob('input') : new Uint8Array(0)
+    this.pieces.push(new Uint8Array(message))
+    this.piecesSize += message.byteLength
     if (this.busy) return
+    // A message being saved arrives in hundreds of frames: nothing is read until all of it is here.
+    if (this.input.length + this.piecesSize < this.needed) return this.stayAwake()
     await this.work(ws, (s) => this.read(ws, s))
+  }
+
+  /** Joins what has arrived since the last look onto the unread bytes, in one copy. */
+  private gather(): Uint8Array {
+    const input = this.input ?? new Uint8Array(0)
+    if (!this.piecesSize) return input
+    const joined = new Uint8Array(input.length + this.piecesSize)
+    joined.set(input)
+    let at = input.length
+    for (const piece of this.pieces) {
+      joined.set(piece, at)
+      at += piece.length
+    }
+    this.pieces = []
+    this.piecesSize = 0
+    this.input = joined
+    return joined
+  }
+
+  /** While a large literal is arriving it lives only in memory, so a timer keeps the object from going to sleep. */
+  private stayAwake() {
+    if (this.awake) return
+    const until = Date.now() + STALL_MS
+    this.awake = setInterval(() => {
+      if ((this.input?.length ?? 0) + this.piecesSize >= this.needed || Date.now() > until) {
+        clearInterval(this.awake!)
+        this.awake = null
+      }
+    }, 5000)
   }
 
   override async webSocketClose(ws: WebSocket) {
@@ -220,11 +291,14 @@ export class ImapSession extends DurableObject<Env> {
     }
     state.sent = this.sent
     state.acked = this.acked
-    // Half a command stays in storage, so it is still here if the object sleeps before the rest arrives.
-    const left = this.input ?? new Uint8Array(0)
-    if (left.length) this.saveBlob('input', left)
+    // Half a command stays in storage, so it is still here if the object sleeps before the rest arrives. A large
+    // one (a message being saved) is too big for that: the timer in stayAwake() keeps it in memory instead.
+    const left = this.gather()
+    const keep = left.length > 0 && left.length <= MAX_STORED_INPUT
+    if (keep) this.saveBlob('input', left)
     else if (state.stored) this.ctx.storage.sql.exec(`DELETE FROM kv WHERE key = 'input'`)
-    state.stored = left.length > 0
+    state.stored = keep
+    if (left.length > MAX_STORED_INPUT) this.stayAwake()
     ws.serializeAttachment(state)
     this.busy = false
   }
@@ -234,7 +308,8 @@ export class ImapSession extends DurableObject<Env> {
 
   private async read(ws: WebSocket, state: State) {
     for (;;) {
-      const input = this.input!
+      const input = this.gather()
+      this.needed = 0
       // Two moments when the next line is not a command: the answer to AUTHENTICATE, and DONE ending an IDLE.
       if (state.authTag || state.idleTag) {
         const end = input.indexOf(10)
@@ -254,17 +329,16 @@ export class ImapSession extends DurableObject<Env> {
         }
         continue
       }
-      const next = nextCommand(input)
-      if (next.kind === 'more') return
+      // Only someone who may change the mailbox may send a whole message (APPEND); otherwise a literal is a name.
+      const next = nextCommand(input, state.auth?.canWrite ? MAX_APPEND : undefined)
+      if (next.kind === 'more') {
+        if (this.piecesSize) continue
+        return
+      }
       if (next.kind === 'literal') {
+        this.needed = next.announcedAt + next.size
+        if (this.piecesSize) continue
         if (!next.sync || this.prompted === next.announcedAt) return
-        // Saving a message (APPEND) isn't available yet: refuse before the mail app sends it.
-        const head = latin1.decode(input.subarray(0, Math.min(next.announcedAt, 200))).split(' ')
-        if (head[1]?.toUpperCase() === 'APPEND') {
-          this.input = input.subarray(next.announcedAt)
-          await this.say(ws, `${head[0]} NO [CANNOT] Saving messages from a mail app isn't available yet`)
-          continue
-        }
         this.prompted = next.announcedAt
         await this.say(ws, '+ Ready')
         return
@@ -383,27 +457,60 @@ export class ImapSession extends DurableObject<Env> {
         if (opened.unprepared > ROWS_WITH_META) await queueImapPrepare(this.env, auth.mailboxId)
         if (args[1]?.t === 'list' && args[1].items.some((i) => text(i)?.toUpperCase() === 'CONDSTORE')) state.condstore = true
         this.setUids(Uint32Array.from(opened.uids))
-        state.selected = { folderId: opened.id, name: folderName(opened), uidValidity: opened.uidValidity, uidNext: opened.uidNext, modseq: opened.highestModseq, total: opened.uids.length }
+        // Read-only when asked (EXAMINE), and always for a shared mailbox this person can only read.
+        const readOnly = name === 'EXAMINE' || !auth.canWrite
+        state.selected = {
+          folderId: opened.id, name: folderName(opened), role: opened.role, readOnly,
+          uidValidity: opened.uidValidity, uidNext: opened.uidNext, modseq: opened.highestModseq, total: opened.uids.length,
+        }
         await this.say(
           ws,
           `* FLAGS (${FLAGS})`,
-          "* OK [PERMANENTFLAGS ()] Flags can't be changed from a mail app yet",
+          readOnly ? '* OK [PERMANENTFLAGS ()] Read-only' : `* OK [PERMANENTFLAGS (${FLAGS})] Flags that can be changed`,
           `* ${opened.uids.length} EXISTS`,
           '* 0 RECENT',
           `* OK [UIDVALIDITY ${opened.uidValidity}] UIDs valid`,
           `* OK [UIDNEXT ${opened.uidNext}] Next UID`,
           `* OK [HIGHESTMODSEQ ${opened.highestModseq}] Highest change number`,
         )
-        return ok(`[READ-ONLY] ${name} done`)
+        return ok(`[${readOnly ? 'READ-ONLY' : 'READ-WRITE'}] ${name} done`)
       }
       case 'SUBSCRIBE':
       case 'UNSUBSCRIBE':
         return ok(`${name} done`)
       case 'CREATE':
       case 'DELETE':
-      case 'RENAME':
+      case 'RENAME': {
+        if (!auth.canWrite) return no('[NOPERM] You can only read this mailbox')
+        // A name can end with the "/" that separates levels (mail apps send "Clients/" to make a parent).
+        const clean = (given: string | null) => (given === null ? '' : decodeName(given).replace(/\/+$/, '').trim())
+        const valid = (n: string) => n.length > 0 && n.length <= 200 && !/[\x00-\x1f\x7f]/.test(n) && !n.split('/').some((level) => !level.trim())
+        if (name === 'CREATE') {
+          const wanted = clean(text(args[0]))
+          if (!valid(wanted)) return no('[CANNOT] That name can\'t be used for a folder')
+          if (!(await stub.imapCreateFolder(wanted))) return no('[ALREADYEXISTS] A folder with that name already exists')
+          await this.tellApps(auth)
+          return ok('CREATE done')
+        }
+        const folder = await this.folder(stub, text(args[0]))
+        if (!folder) return no('[NONEXISTENT] No such folder')
+        if (folder.role) return no('[CANNOT] This folder is built in and can\'t be renamed or deleted')
+        if (name === 'RENAME') {
+          const wanted = clean(text(args[1]))
+          if (!valid(wanted)) return no('[CANNOT] That name can\'t be used for a folder')
+          if (!(await stub.imapRenameFolder(folder.id, wanted))) return no('[ALREADYEXISTS] A folder with that name already exists')
+        } else {
+          const gone = await stub.imapDeleteFolder(folder.id)
+          if (!gone) return no('[CANNOT] This folder can\'t be deleted')
+          // Its messages went to Trash; the search index hears where they are now.
+          if (gone.movedIds.length) await queueMailEvent(this.env, { kind: 'moved', mailboxId: auth.mailboxId, ids: gone.movedIds })
+          if (state.selected?.folderId === folder.id) this.forgetFolder(state)
+        }
+        await this.tellApps(auth)
+        return ok(`${name} done`)
+      }
       case 'APPEND':
-        return no(`[CANNOT] Changing folders and saving messages from a mail app isn't available yet`)
+        return this.append(ws, state, auth, c.tag, args)
     }
 
     const selected = state.selected
@@ -412,6 +519,11 @@ export class ImapSession extends DurableObject<Env> {
     switch (name) {
       case 'CLOSE':
       case 'UNSELECT':
+        // CLOSE also removes what is marked \\Deleted, without saying so; UNSELECT doesn't.
+        if (name === 'CLOSE' && !selected.readOnly) {
+          await this.expunge(auth, selected.folderId, null)
+          await this.tellApps(auth)
+        }
         this.forgetFolder(state)
         return ok(`${name} done`)
       case 'IDLE':
@@ -420,11 +532,61 @@ export class ImapSession extends DurableObject<Env> {
         await this.say(ws, '+ idling')
         // Anything that changed between the last command and now is told right away.
         return this.sync(ws, state)
-      case 'STORE':
+      case 'STORE': {
+        if (selected.readOnly) return no('[READ-ONLY] This folder is open read-only')
+        const set = parseSet(text(args[0]) ?? '')
+        // (UNCHANGEDSINCE n) may come before the flags: it isn't honoured, every change is applied.
+        const at = args[1]?.t === 'list' ? 2 : 1
+        const how = /^([+-]?)FLAGS(\.SILENT)?$/i.exec(text(args[at]) ?? '')
+        if (!set || !how) return bad('Use STORE <set> [+-]FLAGS (<flags>)')
+        const last = args[at + 1]
+        const names = (last?.t === 'list' ? last.items : args.slice(at + 1)).map((t) => text(t)?.toLowerCase() ?? '')
+        const wanted = byUid ? this.byUid(set) : this.bySequence(set)
+        const change: ImapFlagChange = {}
+        // FLAGS replaces every flag; +FLAGS and -FLAGS touch only the ones named.
+        if (how[1] === '') for (const [flag, key] of Object.entries(FLAG_NAMES)) change[key] = names.includes(flag)
+        else for (const flag of names) if (FLAG_NAMES[flag]) change[FLAG_NAMES[flag]!] = how[1] === '+'
+        const ranges = this.runs(wanted)
+        if (Object.keys(change).length) for (let i = 0; i < ranges.length; i += 200) await stub.imapStore(selected.folderId, ranges.slice(i, i + 200), change)
+        if (!how[2]) {
+          const items: Item[] = [...(byUid ? [{ kind: 'uid', label: 'UID' } as Item] : []), { kind: 'flags', label: 'FLAGS' }, { kind: 'modseq', label: 'MODSEQ' }]
+          await this.fetchMessages(ws, state, auth, selected, wanted, items, null)
+        }
+        // "Junk" and "Not junk" buttons in mail apps set these keywords: here they move the message, as the web app does.
+        const junk = how[1] !== '-' && names.includes('$junk') && selected.role !== 'junk' ? 'junk' : how[1] !== '-' && names.includes('$notjunk') && selected.role === 'junk' ? 'inbox' : null
+        if (junk) {
+          const target = (await stub.imapFolders()).find((f) => f.role === junk)
+          if (target) await this.placeIn(auth, selected.folderId, wanted, target.id, true)
+          await this.sync(ws, state)
+        }
+        await this.tellApps(auth)
+        return ok('STORE done')
+      }
       case 'COPY':
-      case 'MOVE':
-      case 'EXPUNGE':
-        return no("[READ-ONLY] Changes from a mail app aren't available yet")
+      case 'MOVE': {
+        const set = parseSet(text(args[0]) ?? '')
+        if (!set) return bad(`Use ${name} <set> <folder>`)
+        if (!auth.canWrite || (name === 'MOVE' && selected.readOnly)) return no('[READ-ONLY] You can only read this mailbox')
+        const target = await this.folder(stub, text(args[1]))
+        if (!target) return no('[TRYCREATE] No such folder')
+        const wanted = byUid ? this.byUid(set) : this.bySequence(set)
+        const pairs = await this.placeIn(auth, selected.folderId, wanted, target.id, name === 'MOVE')
+        const code = pairs.length ? `[COPYUID ${target.uidValidity} ${ranges(pairs.map((p) => p[0]))} ${ranges(pairs.map((p) => p[1]))}] ` : ''
+        await this.tellApps(auth)
+        if (name === 'COPY') return ok(`${code}COPY done`)
+        if (code) await this.say(ws, `* OK ${code}Moved`)
+        await this.sync(ws, state)
+        return ok('MOVE done')
+      }
+      case 'EXPUNGE': {
+        if (selected.readOnly) return no('[READ-ONLY] This folder is open read-only')
+        const set = byUid ? parseSet(text(args[0]) ?? '') : null
+        if (byUid && !set) return bad('Use UID EXPUNGE <set>')
+        await this.expunge(auth, selected.folderId, set ? this.runs(this.byUid(set)) : null)
+        await this.sync(ws, state)
+        await this.tellApps(auth)
+        return ok('EXPUNGE done')
+      }
       case 'SEARCH': {
         let criterion: Criterion
         try {
@@ -449,6 +611,12 @@ export class ImapSession extends DurableObject<Env> {
         }
         const wanted = byUid ? this.byUid(set) : this.bySequence(set)
         await this.fetchMessages(ws, state, auth, selected, wanted, items, since)
+        // Reading a message's body marks it read, unless the mail app asked with BODY.PEEK.
+        if (!selected.readOnly && wanted.length && items.some((i) => i.kind === 'body' && !i.peek)) {
+          const read = this.runs(wanted)
+          for (let i = 0; i < read.length; i += 200) await stub.imapStore(selected.folderId, read.slice(i, i + 200), { seen: true })
+          await this.tellApps(auth)
+        }
         return ok('FETCH done')
       }
       default:
@@ -606,6 +774,104 @@ export class ImapSession extends DurableObject<Env> {
   }
 
   // -------------------------------------------------------------------------------------------------------------
+  // Changes
+
+  /** UIDs of the open folder (ascending) as ranges that hold no other message of the folder. */
+  private runs(wanted: number[]): [number, number][] {
+    const out: [number, number][] = []
+    let previous = -2
+    for (const uid of wanted) {
+      const seq = this.sequenceOf(uid)
+      if (!seq) continue
+      if (seq === previous + 1) out[out.length - 1]![1] = uid
+      else out.push([uid, uid])
+      previous = seq
+    }
+    return out
+  }
+
+  /** Copies or moves messages to another folder, a few hundred at a time. Returns each UID here with its UID there. */
+  private async placeIn(auth: Auth, folderId: string, uids: number[], targetId: string, move: boolean): Promise<[number, number][]> {
+    const stub = await store(this.env, auth.mailboxId)
+    const pairs: [number, number][] = []
+    for (let i = 0; i < uids.length; i += 500) {
+      const done = await stub.imapPlace(folderId, uids.slice(i, i + 500), targetId, move)
+      if (!done) break
+      pairs.push(...(done.pairs as [number, number][]))
+      // The search index and the files of these messages hear where they are now (mailbox/events.ts).
+      if (done.ids.length) await queueMailEvent(this.env, { kind: 'moved', mailboxId: auth.mailboxId, ids: done.ids })
+    }
+    return pairs
+  }
+
+  /** Removes what is marked \\Deleted in a folder (the store decides: gone for good, or to Trash), and cleans up after. */
+  private async expunge(auth: Auth, folderId: string, within: [number, number][] | null) {
+    const stub = await store(this.env, auth.mailboxId)
+    const done = await stub.imapExpunge(folderId, within)
+    if (done.rawKeys.length) {
+      const bucket = await this.bucketOf(auth)
+      for (const key of done.rawKeys) await deleteObject(this.env, bucket, key).catch((err) => console.error(`imap: deleting ${key} failed`, err))
+    }
+    if (done.removedIds.length) await queueMailEvent(this.env, { kind: 'removed', mailboxId: auth.mailboxId, ids: done.removedIds })
+    if (done.movedIds.length) await queueMailEvent(this.env, { kind: 'moved', mailboxId: auth.mailboxId, ids: done.movedIds })
+  }
+
+  /** Tells the web and mobile apps of the people who can open the mailbox to reload it. Never fails the command. */
+  private async tellApps(auth: Auth) {
+    try {
+      const userIds = (await accessDb.listToNotify(this.env.DB, auth.mailboxId)).map((a) => a.user_id)
+      if (userIds.length) await announce(this.env, auth.organizationId, { type: 'mail', mailboxId: auth.mailboxId }, userIds)
+    } catch (err) {
+      console.warn('imap: telling the apps failed', err)
+    }
+  }
+
+  /**
+   * APPEND: a mail app saves a message into a folder (a draft, its own copy of what it sent, or mail brought over
+   * from another account). The message goes in as it is, like imported mail: no agents, no spam decision.
+   */
+  private async append(ws: WebSocket, state: State, auth: Auth, tag: string, args: Token[]): Promise<void> {
+    const no = (what: string) => this.say(ws, `${tag} NO ${what}`)
+    if (!auth.canWrite) return no('[NOPERM] You can only read this mailbox')
+    const stub = await store(this.env, auth.mailboxId)
+    const last = args[args.length - 1]
+    const raw = args.length >= 2 && last?.t === 'string' ? (last.raw ?? toBytes(last.v)) : null
+    if (!raw) return this.say(ws, `${tag} BAD Use APPEND <folder> [(<flags>)] [<date>] <message>`)
+    const folder = await this.folder(stub, text(args[0]))
+    if (!folder) return no('[TRYCREATE] No such folder')
+    if (!raw.length) return no('[CANNOT] The message is empty')
+    const flags = args.slice(1, -1).flatMap((a) => (a.t === 'list' ? a.items.map((i) => text(i)?.toLowerCase() ?? '') : []))
+    const dated = args.slice(1, -1).map((a) => (a.t === 'string' ? appendDate(a.v) : null)).find(Boolean)
+
+    // A mail app saves its own copy of what it sent. We already kept one when it went out over SMTP: answer with ours.
+    const messageId = readHeaders(raw, 0, raw.length).fields.find((f) => f.name === 'message-id')?.value.replace(/^<|>$/g, '')
+    if (folder.role === 'sent' && messageId) {
+      const ours = await stub.imapSentCopy(messageId, Math.floor(Date.now() / 1000) - 24 * 3600)
+      if (ours) return this.say(ws, `${tag} OK [APPENDUID ${folder.uidValidity} ${ours.uid}] APPEND done`)
+    }
+    try {
+      await requireStorageRoom(this.env, auth.organizationId, raw.length)
+    } catch (err) {
+      if (err instanceof ApiError) return no(`[OVERQUOTA] ${err.message.replace(/[\r\n]+/g, ' ')}`)
+      throw err
+    }
+    const mailbox = await mailboxesDb.find(this.env.DB, auth.mailboxId)
+    if (!mailbox) return this.end(ws, '* BYE This mailbox no longer exists')
+    const saved = await deliverMigrated(this.env, mailbox, raw, {
+      sourceKey: `imap.${ulid()}`,
+      receivedAt: (dated ?? new Date()).toISOString(),
+      folderIds: [folder.id],
+      role: folder.role,
+      // What the mailbox wrote itself is read already.
+      seen: flags.includes('\\seen') || folder.role === 'sent' || folder.role === 'drafts',
+      pinned: flags.includes('\\flagged'),
+    })
+    const uid = await stub.imapUidOf(folder.id, saved.id)
+    await this.tellApps(auth)
+    return this.say(ws, `${tag} OK ${uid ? `[APPENDUID ${folder.uidValidity} ${uid}] ` : ''}APPEND done`)
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
   // FETCH
 
   /** The data items of a FETCH: a list, one name, or a macro. null when they can't be read. */
@@ -621,12 +887,12 @@ export class ImapSession extends DurableObject<Env> {
     const out: Item[] = []
     for (const raw of expanded) {
       const upper = raw.toUpperCase()
-      const body = /^(?:BODY(?:\.PEEK)?)\[(.*)\](?:<(\d+)\.(\d+)>)?$/i.exec(raw)
+      const body = /^BODY(\.PEEK)?\[(.*)\](?:<(\d+)\.(\d+)>)?$/i.exec(raw)
       if (body) {
         // The label echoes the section as asked, keyword in capitals, without ".PEEK" and with the start of a partial.
-        const spec = body[1]!.replace(/^[^(]*/, (m) => m.toUpperCase())
-        const partial: [number, number] | null = body[2] !== undefined ? [Number(body[2]), Number(body[3])] : null
-        out.push({ kind: 'body', spec, partial, label: `BODY[${spec}]${partial ? `<${partial[0]}>` : ''}` })
+        const spec = body[2]!.replace(/^[^(]*/, (m) => m.toUpperCase())
+        const partial: [number, number] | null = body[3] !== undefined ? [Number(body[3]), Number(body[4])] : null
+        out.push({ kind: 'body', spec, partial, peek: !!body[1], label: `BODY[${spec}]${partial ? `<${partial[0]}>` : ''}` })
       } else if (upper === 'UID') out.push({ kind: 'uid', label: 'UID' })
       else if (upper === 'FLAGS') out.push({ kind: 'flags', label: 'FLAGS' })
       else if (upper === 'INTERNALDATE') out.push({ kind: 'internaldate', label: 'INTERNALDATE' })
@@ -634,9 +900,9 @@ export class ImapSession extends DurableObject<Env> {
       else if (upper === 'ENVELOPE') out.push({ kind: 'envelope', label: 'ENVELOPE' })
       else if (upper === 'BODY' || upper === 'BODYSTRUCTURE') out.push({ kind: 'structure', label: upper })
       else if (upper === 'MODSEQ') out.push({ kind: 'modseq', label: 'MODSEQ' })
-      else if (upper === 'RFC822') out.push({ kind: 'body', spec: '', partial: null, label: 'RFC822' })
-      else if (upper === 'RFC822.HEADER') out.push({ kind: 'body', spec: 'HEADER', partial: null, label: 'RFC822.HEADER' })
-      else if (upper === 'RFC822.TEXT') out.push({ kind: 'body', spec: 'TEXT', partial: null, label: 'RFC822.TEXT' })
+      else if (upper === 'RFC822') out.push({ kind: 'body', spec: '', partial: null, peek: false, label: 'RFC822' })
+      else if (upper === 'RFC822.HEADER') out.push({ kind: 'body', spec: 'HEADER', partial: null, peek: true, label: 'RFC822.HEADER' })
+      else if (upper === 'RFC822.TEXT') out.push({ kind: 'body', spec: 'TEXT', partial: null, peek: false, label: 'RFC822.TEXT' })
       else return null
     }
     // A UID FETCH always answers with the UID, asked for or not.
@@ -657,7 +923,7 @@ export class ImapSession extends DurableObject<Env> {
     const stub = await store(this.env, auth.mailboxId)
     const needMeta = items.some((i) => i.kind === 'envelope' || i.kind === 'structure' || i.kind === 'body')
     const step = needMeta ? ROWS_WITH_META : ROWS_PLAIN
-    const out = new Output(this, ws)
+    const out = new Output(this, ws, async (key, start, end) => (await getObjectRange(this.env, await this.bucketOf(auth), key, start, end - start)) ?? new Uint8Array(end - start))
     for (let at = 0; at < wanted.length; at += step) {
       const group = wanted.slice(at, at + step)
       let rows = await stub.imapRows(selected.folderId, group[0]!, group[group.length - 1]!, needMeta)
@@ -722,14 +988,14 @@ export class ImapSession extends DurableObject<Env> {
   }
 
   /** One message's answer: `* seq FETCH (...)`, as text and, for large sections, the bytes themselves. */
-  private async answer(auth: Auth, row: ImapRow, meta: ImapMeta | null, items: Item[], condstore: boolean): Promise<(string | Uint8Array)[]> {
-    const pieces: (string | Uint8Array)[] = [`* ${this.sequenceOf(row.uid)} FETCH (`]
+  private async answer(auth: Auth, row: ImapRow, meta: ImapMeta | null, items: Item[], condstore: boolean): Promise<Piece[]> {
+    const pieces: Piece[] = [`* ${this.sequenceOf(row.uid)} FETCH (`]
     let firstItem = true
-    const add = (label: string, value: string | Uint8Array) => {
+    const add = (label: string, value: Piece) => {
       pieces.push(`${firstItem ? '' : ' '}${label} `)
       firstItem = false
       if (typeof value === 'string') pieces.push(value)
-      else pieces.push(`{${value.length}}\r\n`, value)
+      else pieces.push(`{${value instanceof Uint8Array ? value.length : value.end - value.start}}\r\n`, value)
     }
     for (const item of items) {
       if (item.kind === 'uid') add('UID', String(row.uid))
@@ -758,7 +1024,7 @@ export class ImapSession extends DurableObject<Env> {
   }
 
   /** The bytes of one BODY[...] item. A section the message doesn't have is an empty string, as IMAP has it. */
-  private async sectionBytes(auth: Auth, row: ImapRow, meta: ImapMeta, item: Extract<Item, { kind: 'body' }>): Promise<Uint8Array | string> {
+  private async sectionBytes(auth: Auth, row: ImapRow, meta: ImapMeta, item: Extract<Item, { kind: 'body' }>): Promise<Piece> {
     const s = section(meta, item.spec)
     if (!s) return '""'
     const cut = (length: number): [number, number] => {
@@ -774,6 +1040,8 @@ export class ImapSession extends DurableObject<Env> {
     const [a, b] = cut(s.end - s.start)
     // The message's own header block is in the store already.
     if (s.end <= meta.bodyStart && meta.head !== null) return toBytes(meta.head.slice(s.start + a, s.start + b))
+    // A large section is read later, piece by piece, as it is sent (Output).
+    if (b - a > SMALL_SECTION && row.rawKey) return { key: row.rawKey, start: s.start + a, end: s.start + b }
     return this.range(auth, row, s.start + a, s.start + b)
   }
 
@@ -860,13 +1128,34 @@ export class ImapSession extends DurableObject<Env> {
 class Output {
   private parts: Uint8Array[] = []
   private size = 0
-  constructor(private session: ImapSession, private ws: WebSocket) {}
+  constructor(
+    private session: ImapSession,
+    private ws: WebSocket,
+    /** Bytes [start, end) of a raw message in R2. */
+    private read: (key: string, start: number, end: number) => Promise<Uint8Array>,
+  ) {}
 
-  async add(pieces: (string | Uint8Array)[]) {
+  async add(pieces: Piece[]) {
     for (const piece of pieces) {
-      const bytes = typeof piece === 'string' ? toBytes(piece) : piece
-      this.parts.push(bytes)
-      this.size += bytes.length
+      if (typeof piece === 'string' || piece instanceof Uint8Array) {
+        const bytes = typeof piece === 'string' ? toBytes(piece) : piece
+        this.parts.push(bytes)
+        this.size += bytes.length
+        continue
+      }
+      // A large stretch: what is collected goes first, then the stretch in pieces, each sent before the next is read.
+      // A piece that comes back short (the raw copy changed under us) is padded, so the literal keeps its promised length.
+      await this.flush()
+      for (let at = piece.start; at < piece.end; at += STREAM_PIECE) {
+        const end = Math.min(at + STREAM_PIECE, piece.end)
+        let bytes = await this.read(piece.key, at, end)
+        if (bytes.length !== end - at) {
+          const fixed = new Uint8Array(end - at)
+          fixed.set(bytes.subarray(0, end - at))
+          bytes = fixed
+        }
+        await this.session.send(this.ws, bytes)
+      }
     }
     if (this.size >= FRAME) await this.flush()
   }

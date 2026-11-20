@@ -15,7 +15,7 @@ import { EmailError } from '../mailserver/errors'
 import { MAX_ATTACHMENTS_BYTES, MAX_RECIPIENTS } from '../mailserver/messages'
 import { reserveSend } from '../mailserver/sending'
 import { organizationBucket } from '../storage/buckets'
-import { putObject } from '../storage/r2'
+import { deleteObject, putObject } from '../storage/r2'
 import { queueMailEvent } from './events'
 import { messageIds, previewOf, ulid } from './inbound'
 import { decodePart, locateParts } from './mime'
@@ -141,6 +141,20 @@ export async function sendRawFromStore(env: OutboundEnv, mailbox: MailboxRow, se
     verdicts: {},
   })
   raw = null
+  // The Message-ID the mail app gave it (SES sent it with another). The app may save its own copy to Sent over IMAP:
+  // one saved after this is matched to ours by this id, and one saved before is replaced by ours now.
+  if (parsed.messageId) {
+    await stub.setClientMessageId(id, parsed.messageId)
+    const theirs = await stub.imapSavedCopies(parsed.messageId)
+    if (theirs.length) {
+      const gone = await stub.remove(theirs)
+      for (const spare of gone.rawKeys) await deleteObject(env, bucket, spare).catch((err) => console.error(`smtp: deleting ${spare} failed`, err))
+      await queueMailEvent(env, { kind: 'removed', mailboxId: mailbox.id, ids: theirs })
+    }
+  }
+  // A reply: the message it answers gets its "answered" mark, as a reply written in the web app gives it.
+  const answered = messageIds(parsed.inReplyTo)[0]
+  if (answered) await stub.markAnswered(answered)
   await queueMailEvent(env, { kind: 'new', mailboxId: mailbox.id, ids: [id], direction: 'out' })
   // One line per recipient, like the receiving server's answers (jobs/ses-webhook.ts), so each can be looked up.
   const lines = [...to.map((address) => ({ address, as: 'to' })), ...cc.map((address) => ({ address, as: 'cc' })), ...bcc.map((address) => ({ address, as: 'bcc' }))]

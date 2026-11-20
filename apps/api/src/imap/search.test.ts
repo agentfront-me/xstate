@@ -12,7 +12,7 @@ test('dates', () => {
 
 test('what mail apps send', () => {
   assert.deepEqual(parse('UNSEEN'), { k: 'not', c: { k: 'flag', flag: 'seen' } })
-  assert.deepEqual(parse('UID 1:* NOT DELETED'), { k: 'and', list: [{ k: 'uid', set: [[1, Infinity]] }, { k: 'not', c: { k: 'none' } }] })
+  assert.deepEqual(parse('UID 1:* NOT DELETED'), { k: 'and', list: [{ k: 'uid', set: [[1, Infinity]] }, { k: 'not', c: { k: 'flag', flag: 'deleted' } }] })
   assert.deepEqual(parse('CHARSET UTF-8 OR FROM "ann" SUBJECT "invoice"'), {
     k: 'or',
     a: { k: 'text', field: 'from', value: 'ann' },

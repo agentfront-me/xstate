@@ -3,8 +3,8 @@
 
 export type Token =
   | { t: 'atom'; v: string }
-  /** A quoted string or a literal. */
-  | { t: 'string'; v: string }
+  /** A quoted string or a literal. A long literal (a message being saved) comes as `raw` only, with `v` empty. */
+  | { t: 'string'; v: string; raw?: Uint8Array }
   | { t: 'list'; items: Token[] }
 
 export type Command = { tag: string; name: string; args: Token[] }
@@ -19,16 +19,18 @@ export type Next =
   | { kind: 'bad'; tag: string; reason: string; consumed: number }
 
 export const MAX_LINE = 64 * 1024
-/** Phase 3 takes no messages in (APPEND comes later), so a literal is only ever a name or a search word. */
+/** The largest literal that is a name, a password or a search word. A message being saved may be larger. */
 export const MAX_LITERAL = 1024 * 1024
+/** Literals longer than this aren't decoded as text. */
+const TEXT_LITERAL = 64 * 1024
 
 const latin1 = new TextDecoder('latin1')
 const utf8 = new TextDecoder()
 
 type Segment = { text: string } | { literal: Uint8Array }
 
-/** The next command in `buf`, if it is all there. */
-export function nextCommand(buf: Uint8Array): Next {
+/** The next command in `buf`, if it is all there. `maxLiteral`: the largest literal taken (larger for APPEND). */
+export function nextCommand(buf: Uint8Array, maxLiteral: number = MAX_LITERAL): Next {
   const segments: Segment[] = []
   let pos = 0
   for (;;) {
@@ -52,7 +54,7 @@ export function nextCommand(buf: Uint8Array): Next {
     }
     const size = Number(announced[1])
     const first = segments.length ? '' : line
-    if (size > MAX_LITERAL) return { kind: 'bad', tag: tagOf(first), reason: 'Too large', consumed: end + 1 }
+    if (size > maxLiteral) return { kind: 'bad', tag: tagOf(first), reason: 'Too large', consumed: end + 1 }
     if (buf.length < end + 1 + size) return { kind: 'literal', size, sync: announced[2] !== '+', announcedAt: end + 1 }
     segments.push({ text: line.slice(0, announced.index) }, { literal: buf.subarray(end + 1, end + 1 + size) })
     pos = end + 1 + size
@@ -76,7 +78,8 @@ export function tokenize(segments: Segment[]): Token[] {
   const top = () => stack[stack.length - 1]!
   for (const segment of segments) {
     if ('literal' in segment) {
-      top().push({ t: 'string', v: utf8.decode(segment.literal) })
+      const long = segment.literal.length > TEXT_LITERAL
+      top().push({ t: 'string', v: long ? '' : utf8.decode(segment.literal), raw: segment.literal })
       continue
     }
     const s = segment.text
