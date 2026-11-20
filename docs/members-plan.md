@@ -345,3 +345,14 @@ which made every extra address a shared mailbox and had no way to add a person:
   (before: only outside production), so Settings → Add member shows the link too.
 - A return visit shows what exists. Onboarding puts the owner's own mailbox first in its list (several personal
   mailboxes are listed by address), so "your address is …" is right.
+
+#### Follow-up: mailboxes leave Settings → Domains (2026-11-20)
+
+- **Domains** lists only domains: name, what works ("Receiving and sending ready", "Receiving ready · sending
+  pending…", "Not receiving yet…"), the status badge, Check DNS / Check sending, remove, and the DNS records while
+  unverified. No mailbox list, count or "Add mailbox". Removing a domain still warns how many mailboxes stop.
+- **Shared mailboxes** are added from Members → Shared mailboxes → "Add shared mailbox" (address, domain, optional
+  display name), which then opens who can open it.
+- **Personal** mailboxes come from Add member; extra addresses from the member dialog. A second separate personal
+  mailbox for an existing member can no longer be made in the app (one inbox per person, §3.1).
+- **Agent** mailboxes can no longer be made in the app; nothing in the app used them. The API keeps the kind.

@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { Icon, type IconName } from '../components/Icon'
 import { RecordCell } from '../components/RecordCell'
 import { toast } from '../components/Toast'
-import { addDomain, createMailbox, isDemo, isOrgAdmin, mailboxesOf, removeDomain, useAccount, verifyDomain, type Account } from '../lib/account'
+import { addDomain, isDemo, isOrgAdmin, mailboxesOf, removeDomain, useAccount, verifyDomain, type Account } from '../lib/account'
 import {
   applyTheme,
   copyText,
@@ -28,7 +28,7 @@ import {
 import type { Member } from '../lib/sample'
 import { accessReminder, startNew as startNewMigration, summary as migrationSummary, type AccessReminder } from '../migration/api'
 import type { Stage as MigrationStage } from '../migration/types'
-import type { Domain, MailboxKind } from '../lib/types'
+import type { Domain } from '../lib/types'
 import { ConfirmDialog } from '../storage/dialogs'
 import { type ApiKeys, keysApi } from '../users/api'
 import { CodeBlock, snippetFor } from '../users/UsersPage'
@@ -40,7 +40,6 @@ import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
 import { PersonalTokens } from './PersonalTokens'
 import { setSettings, useSettingsData, type SettingsData } from './store'
-import { isLocalPart } from '../lib/local-part'
 
 type Section = {
   id: 'account' | 'members' | 'domains' | 'migration' | 'connected-apps' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
@@ -676,7 +675,7 @@ function DomainsSection({ account }: { account: Account }) {
 
   return (
     <div className="group">
-      <GroupHead title="Email domains" sub="Agents send and receive mail from mailboxes on verified domains." />
+      <GroupHead title="Email domains" sub="Mail is sent and received on verified domains. Mailboxes are added in Members." />
       {account.domains.length ? (
         <div className="card">
           {account.domains.map((d) => (
@@ -722,12 +721,13 @@ function DomainsSection({ account }: { account: Account }) {
   )
 }
 
-/** Whether mail from this domain can reach outside addresses yet (Amazon SES verification). */
-function sendingLabel(d: Domain): string {
-  if (d.sending === 'verified') return ' · Sending ready'
-  if (d.sending === 'failed') return ' · Sending failed: check the DKIM records'
-  if (d.sending === 'pending') return ' · Sending pending: waiting for DKIM records'
-  return ''
+/** What works on this domain: receiving (its DNS records) and sending to outside addresses (Amazon SES verification). */
+function statusLine(d: Domain): string {
+  if (d.status !== 'verified') return d.owned ? 'Not receiving yet: add the mail records when you switch' : 'Not receiving yet: add the DNS records below'
+  if (d.sending === 'verified') return 'Receiving and sending ready'
+  if (d.sending === 'failed') return 'Receiving ready · sending failed: check the DKIM records'
+  if (d.sending === 'pending') return 'Receiving ready · sending pending: waiting for DKIM records'
+  return 'Receiving ready'
 }
 
 function DomainRow({ account, domain: d }: { account: Account; domain: Domain }) {
@@ -773,10 +773,7 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
         </span>
         <div className="text">
           <span className="name">{d.name}</span>
-          <span className="sub">
-            {n} {n === 1 ? 'mailbox' : 'mailboxes'}
-            {sendingLabel(d)}
-          </span>
+          <span className="sub">{statusLine(d)}</span>
         </div>
         <span className="right">
           {verified ? (
@@ -853,155 +850,7 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
           </table>
         </div>
       )}
-      <DomainMailboxes account={account} domain={d} />
     </>
-  )
-}
-
-const KIND_LABEL: Record<MailboxKind, string> ={ personal: 'Personal', shared: 'Shared', agent: 'Agent' }
-const KIND_HINT: Record<MailboxKind, string> = {
-  personal: "An inbox for someone already in the organization. To add a new person with their own mailbox, use Members.",
-  shared: 'For addresses like hello@ or support@. You get access now, and can give it to others later.',
-  agent: 'For an AI agent, which reads and sends from it in xstate.',
-}
-
-/** The mailboxes on one domain, and (for admins) a form to add another. */
-function DomainMailboxes({ account, domain: d }: { account: Account; domain: Domain }) {
-  const mailboxes = mailboxesOf(account, d.id).sort((a, b) => a.address.localeCompare(b.address))
-  const admin = isOrgAdmin(account.org)
-  const [open, setOpen] = useState(false)
-  if (!mailboxes.length && !admin) return null
-
-  return (
-    <div className="domain-mailboxes">
-      {mailboxes.map((m) => (
-        <div className="mbx-row" key={m.id}>
-          <Icon name={m.kind === 'shared' ? 'users' : m.kind === 'agent' ? 'bot' : 'mail'} size={13} />
-          <span className="mbx-address">{m.address}</span>
-          {m.displayName && <span className="mbx-name">{m.displayName}</span>}
-          <span className="mbx-kind">{KIND_LABEL[m.kind]}</span>
-        </div>
-      ))}
-      {admin &&
-        (open ? (
-          <AddMailboxForm
-            account={account}
-            domain={d}
-            onClose={() => setOpen(false)}
-            onCreated={() => setOpen(false)}
-          />
-        ) : (
-          <button className="text-btn mbx-add" onClick={() => setOpen(true)}>
-            <Icon name="plus" size={12} />
-            Add mailbox
-          </button>
-        ))}
-    </div>
-  )
-}
-
-function AddMailboxForm({
-  account,
-  domain: d,
-  onClose,
-  onCreated,
-}: {
-  account: Account
-  domain: Domain
-  onClose: () => void
-  onCreated: () => void
-}) {
-  const client = useQueryClient()
-  const live = account.mode === 'live'
-  const members = useMembers(account.org.id, live)
-  const people: { id: string; label: string }[] = live
-    ? (members.data ?? []).map((m) => ({ id: m.id, label: `${m.name ?? m.email}${m.status === 'invited' ? ' (invited)' : ''}` }))
-    : [{ id: account.org.memberId ?? 'me', label: account.user.name ?? account.user.email }]
-  const [local, setLocal] = useState('')
-  // New people get their mailbox from Members → Add member; here it's mostly shared and agent addresses.
-  const [kind, setKind] = useState<MailboxKind>('shared')
-  const [owner, setOwner] = useState('')
-  const [name, setName] = useState('')
-  const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
-  const localRef = useRef<HTMLInputElement>(null)
-  useEffect(() => localRef.current?.focus(), [])
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    const localPart = local.trim().toLowerCase()
-    const address = `${localPart}@${d.name}`
-    if (!isLocalPart(localPart)) return setError('Use letters, numbers, dots, dashes and underscores, like jane or support.')
-    if (account.mailboxes.some((m) => m.address === address)) return setError(`${address} already exists.`)
-    if (kind === 'personal' && !owner) return setError('Choose whose inbox this is.')
-    setSaving(true)
-    setError('')
-    try {
-      await createMailbox(client, d.id, {
-        kind,
-        localPart,
-        ...(name.trim() && { displayName: name.trim() }),
-        ...(kind === 'personal' && { ownerMemberId: owner }),
-      })
-      toast(`${address} created`)
-      onCreated()
-    } catch (e) {
-      setError(errorMessage(e))
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form className="mbx-form" noValidate onSubmit={(e) => void submit(e)} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-      <div className="mbx-form-row">
-        <label className="mbx-local">
-          <input
-            ref={localRef}
-            className="text-input"
-            placeholder="jane"
-            aria-label="Address"
-            autoCapitalize="off"
-            autoComplete="off"
-            spellCheck={false}
-            value={local}
-            onChange={(e) => setLocal(e.target.value)}
-          />
-          <span className="mbx-at">@{d.name}</span>
-        </label>
-        <select className="select" aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value as MailboxKind)}>
-          <option value="personal">Personal</option>
-          <option value="shared">Shared</option>
-          <option value="agent">Agent</option>
-        </select>
-      </div>
-      <p className="mbx-hint">{KIND_HINT[kind]}</p>
-      <div className="mbx-form-row">
-        {kind === 'personal' && (
-          <select className="select" aria-label="Owner" value={owner} onChange={(e) => setOwner(e.target.value)} disabled={live && members.isLoading}>
-            <option value="">{live && members.isLoading ? 'Loading members…' : 'Whose inbox?'}</option>
-            {people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        )}
-        <input className="text-input" placeholder="Display name (optional)" aria-label="Display name" value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-      {error && (
-        <div className="form-error" role="alert">
-          {error}
-        </div>
-      )}
-      <div className="mbx-form-actions">
-        <button className="btn btn-primary" disabled={saving} aria-busy={saving}>
-          {saving ? 'Creating…' : 'Create mailbox'}
-        </button>
-        <button type="button" className="btn" onClick={onClose}>
-          Cancel
-        </button>
-      </div>
-    </form>
   )
 }
 

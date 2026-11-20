@@ -8,9 +8,9 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
-import { refreshAccount, type Account } from '../lib/account'
+import { createMailbox, refreshAccount, type Account } from '../lib/account'
 import { copyText, errorMessage, initials, isEmail } from '../lib/core'
-import { localOf, localPartFromName } from '../lib/local-part'
+import { isLocalPart, localOf, localPartFromName } from '../lib/local-part'
 import type { Domain } from '../lib/types'
 import { Modal } from '../storage/dialogs'
 import '../styles/storage.css'
@@ -908,14 +908,21 @@ export function SharedMailboxesSection({ account }: { account: Account }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const open = shared.find((mb) => mb.id === openId)
   const manage = account.org.role === 'owner' || account.org.role === 'admin'
+  const [adding, setAdding] = useState(false)
 
   return (
     <div className="group">
       <div className="group-head">
         <div className="text">
           <h2>Shared mailboxes</h2>
-          <p>One address that several members read and reply from. Owners and admins can open all of them. Add one from Domains.</p>
+          <p>One address that several members read and reply from. Owners and admins can open all of them.</p>
         </div>
+        {manage && account.domains.length > 0 && (
+          <button className="btn" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={14} />
+            Add shared mailbox
+          </button>
+        )}
       </div>
       <div className="card">
         {shared.length === 0 && (
@@ -943,7 +950,91 @@ export function SharedMailboxesSection({ account }: { account: Account }) {
         })}
       </div>
       {open && <SharedMailboxDialog account={account} mailbox={open} manage={manage} onClose={() => setOpenId(null)} />}
+      {adding && (
+        <AddSharedMailboxDialog
+          account={account}
+          onClose={() => setAdding(false)}
+          onCreated={(id) => {
+            setAdding(false)
+            // Straight to who can open it.
+            setOpenId(id)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** A new shared mailbox (hello@, support@) on one of the organization's domains. Whoever adds it can open it. */
+function AddSharedMailboxDialog({ account, onClose, onCreated }: { account: Account; onClose: () => void; onCreated: (mailboxId: string) => void }) {
+  const client = useQueryClient()
+  // Verified domains first: a mailbox on another one gets no mail until its DNS records are in place.
+  const domains = [...account.domains].sort((a, b) => Number(b.status === 'verified') - Number(a.status === 'verified') || a.name.localeCompare(b.name))
+  const [local, setLocal] = useState('')
+  const [domainId, setDomainId] = useState(domains[0]?.id ?? '')
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const domain = domains.find((d) => d.id === domainId)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const localPart = localOf(local)
+    if (!domain) return setError('Choose a domain.')
+    const address = `${localPart}@${domain.name}`
+    if (!isLocalPart(localPart)) return setError('Use letters, numbers, dots, dashes and underscores, like hello or support.')
+    if (account.mailboxes.some((m) => m.address === address)) return setError(`${address} already exists.`)
+    setError('')
+    setBusy(true)
+    try {
+      const { mailbox } = await createMailbox(client, domain.id, { kind: 'shared', localPart, ...(name.trim() && { displayName: name.trim() }) })
+      toast(`${address} created`)
+      onCreated(mailbox.id)
+    } catch (err) {
+      setError(errorMessage(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title="Add shared mailbox" onClose={onClose}>
+      <form noValidate onSubmit={(e) => void submit(e)}>
+        <div className="modal-body member-form">
+          <div className="field">
+            <span>Address</span>
+            <span className="inline-form">
+              <input className="text-input" autoFocus aria-label="Address name" placeholder="hello" autoCapitalize="off" autoComplete="off" spellCheck={false} value={local} onChange={(e) => setLocal(e.target.value)} />
+              <select className="select" aria-label="Domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+                {domains.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    @{d.name}
+                  </option>
+                ))}
+              </select>
+            </span>
+            {domain && domain.status !== 'verified' && <span className="hint">{domain.name} isn't verified yet, so this mailbox gets no mail until its DNS records are in place.</span>}
+          </div>
+          <label className="field">
+            Display name (optional)
+            <input className="text-input" placeholder="Support" value={name} onChange={(e) => setName(e.target.value)} />
+            <span className="hint">For addresses like hello@ or support@. Next you choose which members can open it.</span>
+          </label>
+        </div>
+        <div className="modal-foot">
+          <span className="err" role="alert">
+            {error}
+          </span>
+          <span className="row-gap">
+            <button type="button" className="btn btn-quiet" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={busy} aria-busy={busy || undefined}>
+              Create mailbox
+            </button>
+          </span>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
