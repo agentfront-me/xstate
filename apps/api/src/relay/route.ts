@@ -29,10 +29,8 @@ export async function handleRelay(c: Context<AppEnv>): Promise<Response> {
   return session.fetch(new Request(`https://relay/?${query}`, { headers: { Upgrade: 'websocket' } }))
 }
 
-/** POST /relay/poke/:id (phase 0 spike only): tells one session its mailbox changed, as the store will later. */
+/** POST /relay/poke/:id (testing only, bridge secret needed): tells one session its mailbox changed, as the store does. */
 export async function handleRelayPoke(c: Context<AppEnv>): Promise<Response> {
   if (!(await isBridge(c.env as RelayEnv, c.req.header('X-Relay-Secret')))) return notFound(c)
-  const session = c.env.IMAP_SESSION.get(c.env.IMAP_SESSION.idFromString(c.req.param('id')!))
-  if (c.req.query('peek')) return c.json({ state: await session.peek() })
-  return c.json({ told: await session.changed() })
+  return c.json({ told: await c.env.IMAP_SESSION.get(c.env.IMAP_SESSION.idFromString(c.req.param('id')!)).changed() })
 }

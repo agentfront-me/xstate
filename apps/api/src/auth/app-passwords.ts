@@ -17,7 +17,8 @@ import * as mailboxesDb from '../db/mailboxes'
 import * as membersDb from '../db/members'
 import * as usersDb from '../db/users'
 import { ApiError } from '../errors'
-import { isAdmin, loadMember, mailAccess } from '../mailserver/access'
+import { isAdmin, loadMember, mailAccess, readableMailboxes } from '../mailserver/access'
+import { queueImapPrepare } from '../imap/prepare'
 import { paragraph, systemMailHtml } from '../mailserver/mail-html'
 import { sendSystemEmail } from '../mailserver/system-mail'
 import { MAX_APP_PASSWORDS, formatAppPassword, hashAppPassword, newAppPassword, normalizeAppPassword } from './app-password-rules.ts'
@@ -104,6 +105,12 @@ export async function createAppPassword(
   }
   await db.insert(env.DB, row)
   console.log('app password created', JSON.stringify({ id: row.id, userId: actor.userId, organizationId }))
+  // The mail app will sync every mailbox this person can open: get their old mail ready meanwhile (imap/prepare.ts).
+  waitUntil(
+    readableMailboxes(env, actor, organizationId)
+      .then((mailboxes) => Promise.all(mailboxes.map((m) => queueImapPrepare(env, m.id))))
+      .catch((err) => console.error('app password: preparing mailboxes failed', err)),
+  )
   const user = await usersDb.findById(env.DB, actor.userId)
   if (user) {
     const lines = [`An app password named "${row.name}" was just created on your xstate account. A mail or calendar app can use it to read and send your mail.`]
@@ -200,6 +207,25 @@ export async function authenticateApp(env: SignInEnv, address: string, password:
     address: mailbox.address,
     canWrite: access.write,
   }
+}
+
+/**
+ * What a session that signed in earlier may do now: 'write', 'read', or null when it must end (the app password
+ * was revoked, its owner left or was suspended, mail apps were turned off, or the mailbox was taken away or
+ * deleted). IMAP sessions ask every time a folder is opened, so a change in the app takes effect at once.
+ */
+export async function appAccess(
+  env: Pick<Env, 'DB' | 'MAIL_APPS'>,
+  session: { passwordId: string; userId: string; organizationId: string; mailboxId: string },
+): Promise<'write' | 'read' | null> {
+  const row = await db.find(env.DB, session.organizationId, session.passwordId)
+  if (!row || row.revoked_at || !mailAppsAvailable(env, session.organizationId)) return null
+  const member = await membersDb.find(env.DB, session.organizationId, session.userId)
+  if (!member || (await db.appsDisabled(env.DB, session.organizationId))) return null
+  const mailbox = await mailboxesDb.find(env.DB, session.mailboxId)
+  if (!mailbox) return null
+  const access = mailAccess(member, mailbox, (await mailboxAccessDb.find(env.DB, mailbox.id, member.id))?.access)
+  return access.write ? 'write' : access.read ? 'read' : null
 }
 
 // ---------------------------------------------------------------------------------------------------------------

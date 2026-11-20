@@ -4,6 +4,8 @@ Status: **draft, 2026-11-20.** The four open questions were answered the same da
 changed the plan in 13 places (§13). **Phases 0, 1 and 2 are built and deployed (2026-11-20; §14–§16), and
 tested in production through deepo (§17).** Mail apps are released to the main organization only (`MAIL_APPS`). Not
 done yet: the mail ports aren't open to the internet and the bridge has a temporary self-signed certificate (§17).
+**Phase 3 (reading mail over IMAP) is built and tested locally (2026-11-20; §18), committed but not pushed:** pushing
+would replace the session code under the 12-hour idle test that is running until 20:57 UTC.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -527,4 +529,66 @@ every 25 minutes), started 08:57 UTC, ending 20:57 UTC. Read it with
 4. Read the cost of the idle test's Durable Object from Cloudflare's analytics and write the cost per connection
    into `pricing-plan.md`.
 5. Revoke the app password "Production test (temporary)" once the idle test has ended.
+
+## 18. Phase 3 as built (2026-11-20)
+
+Reading mail over IMAP. Every folder opens read-only; flags, moves, deletes and saving messages are phase 4.
+
+**Code**
+- `imap/syntax.ts`: cuts the byte stream into commands (literals included) and commands into tokens; sequence sets.
+- `imap/message.ts`: a raw message as IMAP describes it: ENVELOPE, BODYSTRUCTURE, and where every numbered section
+  is in the bytes (`describe`), kept per message as `imap_meta`.
+- `imap/search.ts`: SEARCH keys as a tree, and the tree as SQL over the store's tables.
+- `imap/names.ts`: folder names in modified UTF-7, and LIST patterns.
+- `imap/prepare.ts`: makes a mailbox's old mail ready in the background (batches of 120 on the mail-events queue).
+- `relay/imap-session.ts`: the real session, replacing the phase 0 spike.
+- `mailbox/store.ts`: the `placements (folder_id, uid)` index, the `imap_meta` column, the `watchers` table, and the
+  methods `imapFolders`, `imapOpen`, `imapRows`, `imapSearch`, `imapSetMeta`, `imapMissingMeta`, `watch`, `unwatch`.
+- `auth/app-passwords.ts`: `appAccess`, the live check a session makes each time a folder is opened.
+
+**What a mail app can do**
+- Sign in with LOGIN or AUTHENTICATE PLAIN (an app password).
+- LIST, LSUB, STATUS, NAMESPACE, ID, ENABLE, CAPABILITY.
+- SELECT and EXAMINE (both read-only for now), CLOSE, UNSELECT, NOOP, CHECK.
+- FETCH and UID FETCH: FLAGS, UID, INTERNALDATE, RFC822.SIZE, ENVELOPE, BODY, BODYSTRUCTURE, MODSEQ, RFC822 and its
+  parts, and `BODY[...]` / `BODY.PEEK[...]` for any section, with partial ranges and `CHANGEDSINCE`.
+- SEARCH and UID SEARCH: flags, dates, sizes, FROM, TO, CC, BCC, SUBJECT, BODY, TEXT, HEADER, UID, MODSEQ, NOT, OR.
+- IDLE, with new mail, removals and flag changes pushed as they happen.
+- Refused for now, with a reason: STORE, COPY, MOVE, EXPUNGE, APPEND, CREATE, DELETE, RENAME.
+
+**How it holds together**
+- **UID list:** kept in the session's storage as one compact row per 262,144 UIDs, not a row per message, so opening
+  a 53,000-message folder writes one row.
+- **Headers:** `imap_meta` holds each message's whole header block (up to 32 KB), its structure and its section
+  map. Header fetches, ENVELOPE and BODYSTRUCTURE need no R2 read. Bodies and attachments are ranged R2 reads.
+- **Old mail** is made ready in the background when an app password is created and when a mail app opens a folder
+  with more than 100 messages still to do. Anything not ready yet is made on demand at FETCH.
+- **Order and flow control:** one command at a time; answers are sent at most 1 MB ahead of what the mail app has
+  taken, with a timer keeping the session awake while it waits.
+- **Changes** reach an idle session through the store's `watchers`: every change calls the waiting sessions, once
+  per burst.
+- **Access** is checked again at every SELECT; lost access ends the session with BYE.
+
+**Changed from the plan**
+- **The whole header block is kept**, not about 1 KB of chosen headers: Apple Mail asks for many headers by name,
+  and each missing one would cost an R2 read per message. At about 5 KB a message that is roughly 265 MB for 53,000
+  messages, well inside the store's limits.
+- **Search is close, not exact,** where the store can't be: body words match by stem, the sent date is the received
+  date, and CC, BCC and unusual headers are looked for anywhere in the header block.
+- **`\Recent` is never set and `BODY` answers like `BODYSTRUCTURE`.** Mail apps don't depend on either.
+- **Not built yet:** the cap of about 15 connections per mailbox, and LITERAL+.
+
+**Tested locally** (`apps/api/scripts/imap-test.py`: Python's imaplib as the mail app, 35 checks, all passing; plus
+unit tests for the four `imap/` modules, 21 tests):
+- Sign-in, folder list with roles, STATUS, opening a folder, UIDs for every message.
+- Header fields as written; ENVELOPE; BODYSTRUCTURE; the whole message at exactly the size RFC822.SIZE promised;
+  each part, a part's own headers, TEXT, a partial range, a part that doesn't exist.
+- An attachment comes back byte for byte. A 24.6 MB message downloads whole in about 3 seconds.
+- SEARCH by subject, by body words with a date, for nothing, and with an unknown key.
+- After the session sleeps, sequence numbers still map to the same UIDs.
+- IDLE: a new message arrives as `EXISTS`; a flag changed in the web app arrives as a `FETCH`; NOOP reports the next.
+- STORE, COPY and CREATE are refused.
+
+**Still to check in production:** a first sync of the 53,000-message mailbox (time, and the cost of the
+background preparation), then Apple Mail, Thunderbird and Outlook once the ports are open.
 

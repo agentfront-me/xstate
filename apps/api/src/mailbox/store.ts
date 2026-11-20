@@ -25,6 +25,7 @@ import {
 } from './query'
 import { subjectKey, ulid } from './inbound'
 import { planUpdate, type StoreUpdate } from './actions'
+import { searchSql, type Criterion } from '../imap/search.ts'
 import type { ScanState } from './scan-state'
 
 /** Where the copy from the mail server stands. */
@@ -38,6 +39,35 @@ export type StoreSync = {
 }
 
 export type FolderCount = { folderId: string; total: number; unread: number }
+
+/** A folder as a mail app sees it over IMAP. */
+export type ImapFolder = {
+  id: string
+  role: StoreFolderRole | null
+  name: string
+  uidValidity: number
+  uidNext: number
+  highestModseq: number
+  total: number
+  unseen: number
+}
+
+/** A message in a folder, for IMAP FETCH. `meta` is imap/message.ts's ImapMeta as JSON, or null until it is made. */
+export type ImapRow = {
+  uid: number
+  n: number
+  id: string
+  seen: number
+  pinned: number
+  answered: number
+  forwarded: number
+  draft: number
+  receivedS: number
+  size: number
+  rawKey: string | null
+  modseq: number
+  meta: string | null
+}
 
 /** Where one attachment sits inside its raw message. */
 export type StoreAttachment = {
@@ -273,6 +303,13 @@ export class MailboxStore extends Agent<Env> {
     const textIndex = [...sql.exec(`SELECT sql FROM sqlite_master WHERE name = 'text_fts'`)][0]?.sql as string | undefined
     if (textIndex && !textIndex.includes('porter')) sql.exec(`DROP TABLE text_fts`)
     sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5(subject, body, tokenize='porter unicode61 remove_diacritics 2', detail='none', content='', contentless_delete=1)`)
+    // Mail apps (docs/imap-smtp-relay-plan.md §6): IMAP looks messages up by UID all the time; each message's
+    // envelope, structure and header block as IMAP reports them (imap/message.ts), worked out once; and the IMAP
+    // sessions sitting in IDLE on this mailbox, to be told when it changes.
+    sql.exec(`CREATE INDEX IF NOT EXISTS placements_uid ON placements (folder_id, uid)`)
+    addColumns('messages', ['imap_meta TEXT'])
+    sql.exec(`CREATE INDEX IF NOT EXISTS messages_no_imap_meta ON messages (n) WHERE imap_meta IS NULL`)
+    sql.exec(`CREATE TABLE IF NOT EXISTS watchers (session TEXT PRIMARY KEY, at_s INTEGER NOT NULL) WITHOUT ROWID`)
   }
 
   private get db() {
@@ -452,6 +489,7 @@ export class MailboxStore extends Agent<Env> {
         removed++
       }
     })
+    if (removed) this.notifyWatchers()
     return { removed, rawKeys }
   }
 
@@ -659,6 +697,7 @@ export class MailboxStore extends Agent<Env> {
   private nextModseq(): number {
     const next = Number(this.meta('modseq') ?? '0') + 1
     this.setMeta('modseq', String(next))
+    this.notifyWatchers()
     return next
   }
 
@@ -1063,6 +1102,112 @@ export class MailboxStore extends Agent<Env> {
       }
       return { roles, named }
     })
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Mail apps over IMAP (docs/imap-smtp-relay-plan.md §6; the sessions are relay/imap-session.ts)
+
+  /** Folders as IMAP lists them. HIGHESTMODSEQ is the mailbox-wide change counter: never behind any message's. */
+  imapFolders(): ImapFolder[] {
+    this.ensureOwned()
+    const highest = Number(this.meta('modseq') ?? '0')
+    const rows = [...this.db.exec(
+      `SELECT f.id, f.role, f.name, f.uid_validity, f.uid_next, COUNT(p.n) AS total, COALESCE(SUM(p.seen = 0), 0) AS unseen
+        FROM folders f LEFT JOIN placements p ON p.folder_id = f.id GROUP BY f.id ORDER BY f.rowid`,
+    )] as unknown as { id: string; role: StoreFolderRole | null; name: string; uid_validity: number | null; uid_next: number | null; total: number; unseen: number }[]
+    return rows.map((r) => ({ id: r.id, role: r.role, name: r.name, uidValidity: r.uid_validity ?? 1, uidNext: r.uid_next ?? 1, highestModseq: highest, total: r.total, unseen: r.unseen }))
+  }
+
+  /**
+   * Opens a folder for a mail app: its numbers and every UID in it, ascending. A message without a UID yet (copied
+   * in before numbering) gets the next one here, oldest first.
+   */
+  imapOpen(folderId: string): (ImapFolder & { uids: number[]; unprepared: number }) | null {
+    return this.ctx.storage.transactionSync(() => {
+      const unnumbered = [...this.db.exec(`SELECT n FROM placements WHERE folder_id = ? AND uid IS NULL ORDER BY received_s, n`, folderId)] as { n: number }[]
+      if (unnumbered.length) {
+        const folder = [...this.db.exec(`SELECT uid_validity, uid_next FROM folders WHERE id = ?`, folderId)][0] as { uid_validity: number | null; uid_next: number | null } | undefined
+        if (!folder) return null
+        let next = folder.uid_next ?? 1
+        for (const row of unnumbered) this.db.exec(`UPDATE placements SET uid = ? WHERE folder_id = ? AND n = ?`, next++, folderId, row.n)
+        const validity = folder.uid_validity ?? (crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff || 1)
+        this.db.exec(`UPDATE folders SET uid_next = ?, uid_validity = ? WHERE id = ?`, next, validity, folderId)
+      }
+      const folder = this.imapFolders().find((f) => f.id === folderId)
+      if (!folder) return null
+      const uids = ([...this.db.exec(`SELECT uid FROM placements WHERE folder_id = ? ORDER BY uid`, folderId)] as { uid: number }[]).map((r) => r.uid)
+      // Messages, in any folder, that mail apps would have to wait for (imap/prepare.ts does them in the background).
+      const unprepared = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages WHERE imap_meta IS NULL AND raw_key IS NOT NULL AND raw_key != ''`)][0]!.c as number
+      return { ...folder, uids, unprepared }
+    })
+  }
+
+  /**
+   * The messages of a folder with UIDs from `lo` to `hi`, in UID order: flags, size and dates, and with `withMeta`
+   * what IMAP reports of the message itself (null until it has been worked out).
+   */
+  imapRows(folderId: string, lo: number, hi: number, withMeta: boolean): ImapRow[] {
+    const rows = this.db.exec(
+      `SELECT p.uid, m.n, m.id, m.seen, m.pinned, COALESCE(m.answered, 0) AS answered, COALESCE(m.forwarded, 0) AS forwarded,
+        COALESCE(m.is_draft, 0) AS draft, m.received_s AS receivedS, COALESCE(m.raw_size, m.size) AS size, m.raw_key AS rawKey,
+        COALESCE(m.modseq, 0) AS modseq, ${withMeta ? 'm.imap_meta' : 'NULL'} AS meta
+        FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND p.uid BETWEEN ? AND ? ORDER BY p.uid`,
+      folderId, lo, hi,
+    )
+    return [...rows] as unknown as ImapRow[]
+  }
+
+  /** Keeps what was worked out about messages (imap/message.ts), by row number. */
+  imapSetMeta(items: { n: number; meta: string }[]) {
+    for (const item of items) this.db.exec(`UPDATE messages SET imap_meta = ? WHERE n = ?`, item.meta, item.n)
+  }
+
+  /** Messages that have a raw copy and nothing worked out yet, newest first; and how many there are in all. */
+  imapMissingMeta(limit: number): { left: number; rows: { n: number; rawKey: string }[] } {
+    const left = [...this.db.exec(`SELECT COUNT(*) AS c FROM messages WHERE imap_meta IS NULL AND raw_key IS NOT NULL AND raw_key != ''`)][0]!.c as number
+    const rows = [...this.db.exec(`SELECT n, raw_key AS rawKey FROM messages WHERE imap_meta IS NULL AND raw_key IS NOT NULL AND raw_key != '' ORDER BY n DESC LIMIT ?`, limit)]
+    return { left, rows: rows as unknown as { n: number; rawKey: string }[] }
+  }
+
+  /** The UIDs in a folder that match a search (imap/search.ts), ascending. */
+  imapSearch(folderId: string, criterion: Criterion): number[] {
+    const where = searchSql(criterion)
+    const rows = this.db.exec(`SELECT p.uid FROM placements p JOIN messages m ON m.n = p.n WHERE p.folder_id = ? AND (${where.sql}) ORDER BY p.uid`, folderId, ...where.params)
+    return ([...rows] as { uid: number }[]).map((r) => r.uid)
+  }
+
+  /** An IMAP session starts waiting for news of this mailbox (IDLE); it is called when anything changes. */
+  watch(session: string) {
+    this.db.exec(`INSERT OR REPLACE INTO watchers (session, at_s) VALUES (?, ?)`, session, Math.floor(Date.now() / 1000))
+  }
+
+  unwatch(session: string) {
+    this.db.exec(`DELETE FROM watchers WHERE session = ?`, session)
+  }
+
+  private notifying = false
+
+  /**
+   * Tells the waiting IMAP sessions that something changed, once for a burst of changes. A session that is gone, or
+   * says it no longer waits, is dropped from the list.
+   */
+  private notifyWatchers() {
+    if (this.notifying) return
+    if (![...this.db.exec(`SELECT 1 FROM watchers LIMIT 1`)].length) return
+    this.notifying = true
+    this.ctx.waitUntil(
+      (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        this.notifying = false
+        const sessions = ([...this.db.exec(`SELECT session FROM watchers`)] as { session: string }[]).map((r) => r.session)
+        await Promise.all(
+          sessions.map(async (session) => {
+            const waiting = await this.env.IMAP_SESSION.get(this.env.IMAP_SESSION.idFromString(session)).changed().catch(() => false)
+            if (!waiting) this.unwatch(session)
+          }),
+        )
+      })(),
+    )
   }
 
   /** Folders with their counts, for a mailbox whose mail the store holds (email_list_folders). */

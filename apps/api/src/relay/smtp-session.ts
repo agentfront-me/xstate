@@ -164,7 +164,7 @@ export class SmtpSession extends DurableObject<Env> {
         const m = /^FROM/i.test(rest) ? path(rest.slice(4)) : null
         if (!m) return this.say(ws, '501 5.5.4 Use MAIL FROM:<address>')
         if (!state.mailboxId) return this.say(ws, '530 5.7.0 Sign in first')
-        if (!state.canWrite) return this.say(ws, '550 5.7.1 You can only read this mailbox, so you can’t send from it')
+        if (!state.canWrite) return this.say(ws, "550 5.7.1 You can only read this mailbox, so you can't send from it")
         if (state.mailFrom !== null) return this.say(ws, '503 5.5.1 MAIL was already given; send RSET to start again')
         const from = m[1]!.trim().toLowerCase()
         if (!state.addresses.includes(from)) return this.say(ws, `550 5.7.1 This mailbox may not send from that address. Use ${state.address}.`)
@@ -178,7 +178,7 @@ export class SmtpSession extends DurableObject<Env> {
         if (!m) return this.say(ws, '501 5.5.4 Use RCPT TO:<address>')
         if (state.mailFrom === null) return this.say(ws, '503 5.5.1 Send MAIL FROM first')
         const to = m[1]!.trim().toLowerCase()
-        if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to) || to.length > 320) return this.say(ws, '553 5.1.3 That isn’t an email address')
+        if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to) || to.length > 320) return this.say(ws, "553 5.1.3 That isn't an email address")
         if (this.recipients().length >= MAX_RECIPIENTS && !this.recipients().includes(to)) {
           return this.say(ws, `452 4.5.3 A message can have at most ${MAX_RECIPIENTS} recipients`)
         }
@@ -208,7 +208,7 @@ export class SmtpSession extends DurableObject<Env> {
     if (line === '*') return this.say(ws, '501 5.7.0 Sign-in cancelled')
     if (auth.step === 'plain') return this.signInPlain(ws, state, line)
     const value = fromBase64(line)
-    if (value === null) return this.say(ws, '501 5.5.2 That isn’t base64')
+    if (value === null) return this.say(ws, "501 5.5.2 That isn't base64")
     if (auth.step === 'user') {
       state.auth = { step: 'password', user: value }
       return this.say(ws, '334 UGFzc3dvcmQ6')
@@ -219,7 +219,7 @@ export class SmtpSession extends DurableObject<Env> {
   private signInPlain(ws: WebSocket, state: State, encoded: string) {
     // authorization-id NUL username NUL password; the first is ignored (it would be the same address).
     const parts = fromBase64(encoded)?.split('\0')
-    if (!parts || parts.length !== 3) return this.say(ws, '501 5.5.2 That isn’t an AUTH PLAIN answer')
+    if (!parts || parts.length !== 3) return this.say(ws, "501 5.5.2 That isn't an AUTH PLAIN answer")
     return this.signIn(ws, state, parts[1]!, parts[2]!)
   }
 
@@ -333,7 +333,7 @@ export class SmtpSession extends DurableObject<Env> {
   private refusal(err: unknown): string {
     if (!(err instanceof ApiError)) {
       console.error('smtp: send failed', err)
-      return '451 4.3.0 The message couldn’t be sent right now. Try again in a few minutes.'
+      return "451 4.3.0 The message couldn't be sent right now. Try again in a few minutes."
     }
     const text = err.message.replace(/[\r\n]+/g, ' ')
     if (err.code === 'message_too_large' || err.code === 'attachments_too_large') return `552 5.3.4 ${text}`

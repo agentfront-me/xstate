@@ -21,6 +21,7 @@ import { fileParts, parseRaw, partName, type ParsedMessage } from './parse'
 import type { StoreEventRow } from './store'
 import { store } from './stub'
 import { triggerEmailOf } from './trigger-email'
+import { prepareForImap, type ImapPrepareJob } from '../imap/prepare'
 
 /**
  * A change to messages of one store-held mailbox. `direction` says whether `new` mail came in or was sent;
@@ -29,6 +30,9 @@ import { triggerEmailOf } from './trigger-email'
 export type MailEvent =
   | { kind: 'new'; mailboxId: string; ids: string[]; direction: 'in' | 'out'; offer?: boolean }
   | { kind: 'moved' | 'removed'; mailboxId: string; ids: string[] }
+
+/** Everything that travels on the mail-events queue: the events above, and jobs that ready a mailbox for mail apps. */
+type MailJob = MailEvent | ImapPrepareJob
 
 /** Messages per event: a `new` event reads each message's raw copy. */
 const PER_EVENT = 10
@@ -47,7 +51,7 @@ export async function queueMailEvent(env: Pick<Env, 'MAIL_EVENTS'>, event: MailE
   }
 }
 
-export async function consumeMailEvents(batch: MessageBatch<MailEvent>, env: Env): Promise<void> {
+export async function consumeMailEvents(batch: MessageBatch<MailJob>, env: Env): Promise<void> {
   for (const message of batch.messages) {
     try {
       const result = await handle(env, message.body)
@@ -60,9 +64,10 @@ export async function consumeMailEvents(batch: MessageBatch<MailEvent>, env: Env
   }
 }
 
-async function handle(env: Env, event: MailEvent) {
+async function handle(env: Env, event: MailJob) {
   const mailbox = await mailboxesDb.find(env.DB, event.mailboxId)
   if (!mailbox || mailbox.backend !== 'store') return null
+  if (event.kind === 'imap-meta') return prepareForImap(env, mailbox)
   if (event.kind === 'moved') return { kind: event.kind, mailboxId: mailbox.id, moved: await refreshEmailFolders(env, mailbox.id, event.ids) }
   if (event.kind === 'removed') {
     const { meta } = await filesDb.markDeletedForEmails(env.DB, mailbox.id, event.ids, new Date().toISOString()).run()
