@@ -156,6 +156,11 @@ export type StoreEventRow = {
 /** A step a message took, for the delivery log (`logDelivery`): what support reads to answer "where is my email". */
 export type StoreCalendar = { id: string; name: string; color: string | null; isDefault: boolean; sortOrder: number }
 export type StoreEventJson = { id: string; json: string }
+/** An event as a calendar app lists it: its file name and its change number (the ETag). */
+export type DavEntry = { id: string; name: string; modseq: number }
+/** An event's file name for calendar apps: the one an app gave it, else its uid (or id) with ".ics". */
+const NAME_OF = `COALESCE(dav_name, COALESCE(uid, id) || '.ics')`
+const DAV_NAME = `${NAME_OF} AS name`
 export type StoreEventPut = { id: string; calendarId: string; uid: string | null; json: string; startUtc: string; endUtc: string | null; recurring: boolean }
 
 export type DeliveryStep = 'delivered' | 'refused' | 'scanned' | 'sent' | 'ses_delivered' | 'bounced' | 'complained' | 'calendar'
@@ -283,6 +288,12 @@ export class MailboxStore extends Agent<Env> {
       id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, uid TEXT, json TEXT NOT NULL,
       start_utc TEXT NOT NULL, end_utc TEXT, recurring INTEGER NOT NULL, updated_at TEXT NOT NULL)`)
     sql.exec(`CREATE INDEX IF NOT EXISTS events_uid ON events (uid) WHERE uid IS NOT NULL`)
+    // Calendar apps (CalDAV, docs/imap-smtp-relay-plan.md §7): each event's file name in its calendar (null: its uid
+    // or id + ".ics"), and a calendar-wide change number for each event's ETag and for "what changed since". Deleted
+    // events leave a short-lived record so a calendar app syncing later hears they are gone.
+    addColumns('events', ['dav_name TEXT', 'cal_modseq INTEGER'])
+    sql.exec(`CREATE INDEX IF NOT EXISTS events_calendar ON events (calendar_id, cal_modseq)`)
+    sql.exec(`CREATE TABLE IF NOT EXISTS event_tombstones (calendar_id TEXT NOT NULL, name TEXT NOT NULL, cal_modseq INTEGER NOT NULL, at_s INTEGER NOT NULL, PRIMARY KEY (calendar_id, name)) WITHOUT ROWID`)
     sql.exec(`CREATE INDEX IF NOT EXISTS events_time ON events (recurring, start_utc)`)
     // Sent mail from before the table existed, once.
     if (this.meta('owner') === 'store' && this.meta('correspondents_filled') !== '1') {
@@ -1045,16 +1056,108 @@ export class MailboxStore extends Agent<Env> {
     const now = new Date().toISOString()
     this.ctx.storage.transactionSync(() => {
       for (const e of rows) {
+        // The file name a calendar app knows it by stays, whatever the change.
+        const name = ([...this.db.exec(`SELECT dav_name FROM events WHERE id = ?`, e.id)][0]?.dav_name as string | null | undefined) ?? null
         this.db.exec(
-          `INSERT OR REPLACE INTO events (id, calendar_id, uid, json, start_utc, end_utc, recurring, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          e.id, e.calendarId, e.uid, e.json, e.startUtc, e.endUtc, e.recurring ? 1 : 0, now,
+          `INSERT OR REPLACE INTO events (id, calendar_id, uid, json, start_utc, end_utc, recurring, updated_at, dav_name, cal_modseq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          e.id, e.calendarId, e.uid, e.json, e.startUtc, e.endUtc, e.recurring ? 1 : 0, now, name, this.nextCalModseq(),
         )
       }
     })
   }
 
   deleteEvent(id: string): boolean {
-    return [...this.db.exec(`DELETE FROM events WHERE id = ? RETURNING id`, id)].length > 0
+    const gone = [...this.db.exec(`DELETE FROM events WHERE id = ? RETURNING calendar_id, ${DAV_NAME}`, id)][0] as { calendar_id: string; name: string } | undefined
+    if (!gone) return false
+    this.db.exec(
+      `INSERT OR REPLACE INTO event_tombstones (calendar_id, name, cal_modseq, at_s) VALUES (?, ?, ?, ?)`,
+      gone.calendar_id, gone.name, this.nextCalModseq(), Math.floor(Date.now() / 1000),
+    )
+    return true
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Calendar apps over CalDAV (docs/imap-smtp-relay-plan.md §7; the routes are dav/caldav.ts)
+
+  private nextCalModseq(): number {
+    const next = Number(this.meta('cal_modseq') ?? '0') + 1
+    this.setMeta('cal_modseq', String(next))
+    return next
+  }
+
+  /** The calendars' change number: a calendar app's sync token, and its "ctag". */
+  davState(): number {
+    return Number(this.meta('cal_modseq') ?? '0')
+  }
+
+  /** Every event of a calendar: its id, file name and change number (the ETag). */
+  davList(calendarId: string): DavEntry[] {
+    return [...this.db.exec(`SELECT id, ${DAV_NAME}, COALESCE(cal_modseq, 0) AS modseq FROM events WHERE calendar_id = ?`, calendarId)] as unknown as DavEntry[]
+  }
+
+  /**
+   * What changed in a calendar since a change number: events added or changed, and the names of those deleted.
+   * `complete` is false when the token is older than the deletion records kept, and the app must start over.
+   */
+  davChanges(calendarId: string, since: number): { changed: DavEntry[]; deleted: string[]; complete: boolean } {
+    const oldest = Number(this.meta('cal_tombstones_from') ?? '0')
+    const changed = [...this.db.exec(
+      `SELECT id, ${DAV_NAME}, COALESCE(cal_modseq, 0) AS modseq FROM events WHERE calendar_id = ? AND COALESCE(cal_modseq, 0) > ?`,
+      calendarId, since,
+    )] as unknown as DavEntry[]
+    const deleted = ([...this.db.exec(`SELECT name FROM event_tombstones WHERE calendar_id = ? AND cal_modseq > ?`, calendarId, since)] as { name: string }[]).map((r) => r.name)
+    return { changed, deleted, complete: since >= oldest }
+  }
+
+  /** An event by its file name in a calendar, with its JSON. */
+  davGet(calendarId: string, name: string): (DavEntry & { json: string }) | null {
+    const row = [...this.db.exec(
+      `SELECT id, ${DAV_NAME}, COALESCE(cal_modseq, 0) AS modseq, json FROM events WHERE calendar_id = ? AND ${NAME_OF} = ?`,
+      calendarId, name,
+    )][0]
+    return (row as unknown as (DavEntry & { json: string }) | undefined) ?? null
+  }
+
+  /** Remembers the file name a calendar app gave an event, and moves it to another calendar when asked. */
+  davPlace(id: string, calendarId: string, name: string) {
+    this.ctx.storage.transactionSync(() => {
+      const before = [...this.db.exec(`SELECT calendar_id, ${DAV_NAME} FROM events WHERE id = ?`, id)][0] as { calendar_id: string; name: string } | undefined
+      if (!before) return
+      const moved = before.calendar_id !== calendarId
+      if (moved || before.name !== name) {
+        this.db.exec(
+          `INSERT OR REPLACE INTO event_tombstones (calendar_id, name, cal_modseq, at_s) VALUES (?, ?, ?, ?)`,
+          before.calendar_id, before.name, this.nextCalModseq(), Math.floor(Date.now() / 1000),
+        )
+      }
+      if (moved) {
+        // The event's JSON names its calendar too.
+        const json = JSON.parse(([...this.db.exec(`SELECT json FROM events WHERE id = ?`, id)][0]!.json as string)) as Record<string, unknown>
+        json.calendarIds = { [calendarId]: true }
+        this.db.exec(`UPDATE events SET calendar_id = ?, json = ? WHERE id = ?`, calendarId, JSON.stringify(json), id)
+      }
+      this.db.exec(`UPDATE events SET dav_name = ?, cal_modseq = ? WHERE id = ?`, name, this.nextCalModseq(), id)
+      this.db.exec(`DELETE FROM event_tombstones WHERE calendar_id = ? AND name = ?`, calendarId, name)
+    })
+  }
+
+  /** Deletes a calendar that isn't the default, and its events. False when it can't be deleted. */
+  davDeleteCalendar(calendarId: string): boolean {
+    const row = [...this.db.exec(`SELECT is_default FROM calendars WHERE id = ?`, calendarId)][0] as { is_default: number } | undefined
+    if (!row || row.is_default) return false
+    this.ctx.storage.transactionSync(() => {
+      this.db.exec(`DELETE FROM events WHERE calendar_id = ?`, calendarId)
+      this.db.exec(`DELETE FROM event_tombstones WHERE calendar_id = ?`, calendarId)
+      this.db.exec(`DELETE FROM calendars WHERE id = ?`, calendarId)
+      this.nextCalModseq()
+    })
+    return true
+  }
+
+  /** Drops deletion records older than `before` (seconds). A calendar app last synced before then starts over. */
+  purgeTombstones(before: number) {
+    const gone = [...this.db.exec(`DELETE FROM event_tombstones WHERE at_s < ? RETURNING cal_modseq`, before)] as { cal_modseq: number }[]
+    if (gone.length) this.setMeta('cal_tombstones_from', String(Math.max(...gone.map((g) => g.cal_modseq), Number(this.meta('cal_tombstones_from') ?? '0'))))
   }
 
   /**

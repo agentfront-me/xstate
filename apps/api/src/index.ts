@@ -26,6 +26,7 @@ import { emailsHourly } from './emails/service'
 import { requireAuth, requireToken } from './auth/middleware'
 import { handleLive } from './live/route'
 import { handleRelay, handleRelayPoke } from './relay/route'
+import { handleDav } from './dav/caldav'
 import { handleGetEmail, handleListEmails, handleSendEmail } from './http/emails'
 import { handleStorageSave, handleStorageUpload } from './http/storage-uploads'
 import { handleAttachmentUpload } from './http/uploads'
@@ -92,6 +93,10 @@ app.post('/hooks/:triggerId/:token', handleWebhook)
 // Connectors' OAuth sign-in comes back here, then on to Settings → Agent setup → Connectors (agents/connectors.ts).
 app.get('/connectors/oauth/callback', handleOAuthCallback)
 
+// Calendar apps over CalDAV (dav/caldav.ts), at dav.xstate.com; signed in with an app password.
+app.all('/.well-known/caldav', handleDav)
+app.all('/dav', handleDav)
+app.all('/dav/*', handleDav)
 // Mail apps: the mail bridge hands each IMAP or SMTP connection over as a WebSocket (relay/route.ts). Bridge only.
 app.get('/relay/:protocol', handleRelay)
 app.post('/relay/poke/:id', handleRelayPoke)

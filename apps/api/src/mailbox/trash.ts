@@ -34,6 +34,8 @@ export async function purgeHeldTrash(
     for (const key of rawKeys) await deleteObject(env, bucket, key).catch((err) => console.error(`trash: deleting ${key} failed`, err))
     result.uploads += await purgeUploads(env, bucket, mailbox.id)
     result.logLines += await stub.purgeDeliveryLog(now - DELIVERY_LOG_DAYS * 24 * 3600)
+    // Calendar apps that last synced over 30 days ago start over (dav/caldav.ts).
+    await stub.purgeTombstones(now - 30 * 24 * 3600)
   }
   return result
 }
