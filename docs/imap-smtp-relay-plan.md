@@ -6,7 +6,8 @@ tested in production through deepo (§17).** Mail apps are released to the main 
 done yet: real mail apps (Apple Mail, Thunderbird, Outlook) haven't been tried. `mail.xstate.com` answers on 993, 465 and 587
 from the internet with its real certificate (§17).
 **Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
-§18).** A 12-hour idle test is running on deepo until 21:26 UTC.
+§18).** **Phase 4 (changes from mail apps) is built, deployed (ab85752) and tested in production (2026-11-20; §19).**
+A 12-hour idle test is running on deepo until 21:26 UTC.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -625,4 +626,51 @@ asif@hireninja.com; read-only):
 
 **Still to check:** how long the background preparation takes for the whole 53,000 messages and what it costs,
 then Apple Mail, Thunderbird and Outlook once the ports are open.
+
+## 19. Phase 4 as built (2026-11-20)
+
+Mail apps can now change mail, not only read it.
+
+**What a mail app can do now**
+- **Flags:** STORE with FLAGS, +FLAGS and -FLAGS (and .SILENT) for `\Seen`, `\Flagged`, `\Answered`, `\Draft`,
+  `\Deleted` and `$Forwarded`. Reading a body without PEEK marks the message read, as IMAP requires.
+- **Junk buttons:** `$Junk` moves a message to Junk and `$NotJunk` back to the Inbox, teaching the spam filter
+  exactly as the web app's buttons do.
+- **Copy and move:** COPY, MOVE and their UID forms, answering with COPYUID (UIDPLUS). A copy is the same message in
+  two folders, sharing its flags.
+- **Deleting:** `\Deleted` then EXPUNGE, UID EXPUNGE or CLOSE, with the rules in 6.4: gone for good in Trash and
+  Drafts, just leaves the folder when another copy exists, otherwise moves to Trash.
+- **Saving:** APPEND with flags and a date, answering with APPENDUID. A saved message goes in like imported mail
+  (no agents, no spam decision), and counts against storage (refused with OVERQUOTA when the plan is full).
+- **Folders:** CREATE, RENAME (folders inside move with it) and DELETE (its mail moves to Trash). Built-in folders
+  can't be renamed or deleted.
+- **Read-only** stays read-only: EXAMINE, and every folder of a shared mailbox the person can only read.
+- **The web and mobile apps** hear of every change and reload.
+
+**SMTP side**
+- A mail app's own Sent copy is matched to ours by its Message-ID (`client_message_id`), whichever arrives first,
+  so nothing shows twice.
+- A reply sent from a mail app marks the message it answers `\Answered`.
+
+**A fix found while testing: large downloads.** A message over about 20 MB never finished downloading, because the
+session held it whole in memory several times (phase 3 had this too). Large sections are now read from R2 and sent
+in 2 MB pieces, so a download's memory stays small whatever its size.
+
+**Tested locally:** `imap-write-test.py` (34 checks), `imap-test.py` (32), `smtp-test.py` (18) and the unit tests
+(503), all passing. Large downloads can't be checked locally: the dev server reads the real R2 bucket over the
+internet, which was too slow that day (13.5 seconds for one 2 MB piece). `imap-test.py` checks them only with
+`LARGE=1`.
+
+**Tested in production** (straight to `mail.xstate.com`): five downloads of 10 to 17 MB from the 52,000-message
+mailbox came back whole, most in 2.5 to 5 seconds (one not yet prepared took 18 seconds). On a throwaway folder in
+asif@xstate.com: create, save a message, flag and mark read, read back, delete (it went to Trash, which in that
+mailbox is named "Deleted Items", carried over from Stalwart; mail apps find it by its role), delete from Trash for
+good, delete the folder. All passed, and the test folder and messages were removed.
+
+**Seen once, not explained:** in the first minutes after the deploy, two large downloads failed (one stalled, one
+sent a wrong length). Neither came back in eight later downloads. The likeliest cause is Cloudflare still running
+the previous code during the rollout, but that isn't confirmed. Watch for it after the next deploy.
+
+**Not built yet:** the cap of about 15 connections per mailbox, QRESYNC, LITERAL+, and honouring UNCHANGEDSINCE
+(changes are applied regardless).
 
