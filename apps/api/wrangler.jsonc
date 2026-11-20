@@ -27,6 +27,9 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
+    // Mail and calendar apps (docs/imap-smtp-relay-plan.md): who can create app passwords and sign in with them while
+    // IMAP, SMTP and CalDAV are being built. "off" nobody, "on" everybody, or organization ids separated by commas.
+    "MAIL_APPS": "off",
     // Browser origins allowed to call the API (comma-separated): the dashboard and sign-up pages (go.xstate.com),
     // and the desktop app, which serves the dashboard from app://xstate. xstate.com stays listed because Domain
     // Connect returns there (a redirect_uri is only signed when it's on one of these origins).
@@ -153,7 +156,11 @@
     { "name": "TOKEN_FAIL_RATE", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } },
     // EMAILS_RATE: calls to /v1/emails, 300 a minute per personal API token. Sending itself is held by the caps in
     // mailserver/sending.ts; this keeps a loop that only reads the send log from hammering D1.
-    { "name": "EMAILS_RATE", "namespace_id": "1009", "simple": { "limit": 300, "period": 60 } }
+    { "name": "EMAILS_RATE", "namespace_id": "1009", "simple": { "limit": 300, "period": 60 } },
+    // Mail and calendar apps signing in with an app password (auth/app-passwords.ts): 10 tries a minute per address,
+    // and a loose 300 a minute per IP, because some apps connect from their maker's servers.
+    { "name": "APP_LOGIN_ADDRESS_RATE", "namespace_id": "1010", "simple": { "limit": 10, "period": 60 } },
+    { "name": "APP_LOGIN_IP_RATE", "namespace_id": "1011", "simple": { "limit": 300, "period": 60 } }
   ],
   // Audience (the Users section): one Durable Object per organization, with its own SQLite database of people,
   // events and segments (audience/store.ts). Kept out of D1 so website tracking can't slow sign-in or mail.
@@ -203,7 +210,7 @@
   // and deploys work without it.
   // RELAY_SECRET (optional; without it /relay/* does not exist): the secret the mail bridge on deepo sends when it
   // hands over a mail app's connection (relay/route.ts). Any long random string; the same value goes in the
-  // bridge's secret file. RELAY_SPIKE_LOGIN (phase 0 only): "user:password", the one login the spike session accepts.
+  // bridge's secret file.
   // STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET (billing/stripe.ts): the Stripe secret key (sk_live_… in production) and
   // the signing secret (whsec_…) of the endpoint https://api.xstate.com/webhooks/billing/stripe. Required, because
   // wrangler dev only loads required secrets from .dev.vars; until live keys exist, set both to "off" and billing

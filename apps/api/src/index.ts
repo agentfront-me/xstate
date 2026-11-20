@@ -20,6 +20,7 @@ import { consumeInbound } from './mailbox/receive'
 import { consumeMailEvents, type MailEvent } from './mailbox/events'
 import { cors } from 'hono/cors'
 import { tokensHourly } from './auth/api-tokens'
+import { appPasswordsHourly } from './auth/app-passwords'
 import { membersHourly } from './members/deletion'
 import { emailsHourly } from './emails/service'
 import { requireAuth, requireToken } from './auth/middleware'
@@ -145,6 +146,7 @@ export default {
         sendingHourly(env).catch((err) => console.error('sending-hourly failed', err)),
         // Personal API tokens: the "ends in a week" email, and removal of long-ended ones.
         tokensHourly(env).catch((err) => console.error('tokens-hourly failed', err)),
+        appPasswordsHourly(env).catch((err) => console.error('app-passwords-hourly failed', err)),
         // Members whose deletion was started over 30 days ago (members/deletion.ts).
         membersHourly(env).catch((err) => console.error('members-hourly failed', err)),
         // The send log of POST /v1/emails: messages older than 30 days.

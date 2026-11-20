@@ -1,7 +1,9 @@
 # Plan: mail apps and calendar apps (IMAP, SMTP, CalDAV)
 
 Status: **draft, 2026-11-20.** The four open questions were answered the same day (§12), and a review the same day
-changed the plan in 13 places (§13). Nothing is built yet.
+changed the plan in 13 places (§13). **Phase 0 built and tested locally 2026-11-20; its production half (the bridge
+on deepo, the overnight test) is waiting (§14). Phase 1 built and tested locally 2026-11-20 (§15).** Work is on the
+`mail-apps` branch, not pushed.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -373,4 +375,71 @@ Checked against the store code and Cloudflare's docs. What changed:
 | 11 | "A few MB per connection" was wrong | Tens of KB; ceiling measured in phase 0 (3.1) |
 | 12 | Autoconfig on customer domains needs per-domain DNS and certificates | Moved to later (§8) |
 | 13 | Sent-copy matching missed apps that save before sending | Matches in both directions (6.7) |
+
+## 14. Phase 0 as built (2026-11-20)
+
+**Built**
+- `services/mail-bridge/` (Go, one static binary): ports 993, 465 and 587, TLS with certificate reload, the STARTTLS
+  lines on 587, one WebSocket per connection, flow-control acks every 256 KB, pings every 50 seconds, connection
+  caps, a `stats` log line every minute. `mail-bridge.service` is the sandboxed systemd unit; `README.md` has the
+  install steps.
+- `apps/api/src/relay/route.ts`: `GET /relay/imap` (and `/relay/smtp` from phase 2), refused with 404 unless the
+  caller sends `RELAY_SECRET`. `POST /relay/poke/:id` is a spike-only hook to wake or inspect one session.
+- `apps/api/src/relay/imap-session.ts`: the `ImapSession` Durable Object, a spike that speaks just enough IMAP to
+  test the design (CAPABILITY, LOGIN, SELECT, IDLE, NOOP, LOGOUT, and two test commands). Phase 3 replaces its
+  command handling.
+- DNS: `mail.xstate.com` A → 3.130.37.150 (deepo), DNS only, added 2026-11-20.
+
+**Tested locally** (`apps/api/scripts/relay-spike-test.mjs`: this script as the mail app → bridge with a self-signed
+certificate → `wrangler dev`), all passing:
+- The session hibernates during IDLE (memory reset, socket kept) and its UID list is still in storage afterwards.
+- A call from outside reaches the idle session and the mail app gets `* 5001 EXISTS`.
+- Flow control: with the mail app reading nothing, a 30 MB download stops at exactly 1 MB ahead of the last ack,
+  then finishes when reading resumes.
+- Logout closes the connection and the session's storage is deleted.
+- Port 587: plain-text commands other than EHLO, STARTTLS, NOOP, RSET and QUIT are refused; TLS 1.3 after STARTTLS.
+
+**Found on deepo** (read only, nothing changed there): x86_64, Amazon Linux 2023, 916 MB memory with about 430 MB
+available; ports 993, 465 and 587 are free; certbot is installed with no certificates yet; Go isn't needed (static
+binary). Its public IP is 3.130.37.150, the same as on 2026-11-18, before and after the resize.
+
+**Still to do for phase 0** (needs a production deploy and AWS access):
+1. Push the branch so the Worker has `/relay/imap` and the `ImapSession` class; set the `RELAY_SECRET` secret.
+2. `aws login`, then confirm 3.130.37.150 is an Elastic IP and open 993, 465 and 587 in deepo's security group.
+3. Install the bridge on deepo (`services/mail-bridge/README.md`): certificate, user, unit.
+4. Run the spike test against `mail.xstate.com`, leave one IDLE connection open for 12 hours, and open test
+   connections until memory runs short. Write the measured cost per connection into `pricing-plan.md`.
+
+## 15. Phase 1 as built (2026-11-20)
+
+- **Table** `app_passwords` and `organizations.mail_apps_disabled` (migration 0047).
+- **Code:** `auth/app-password-rules.ts` (16 letters, shown as four groups; typed with or without dashes, spaces or
+  capitals), `db/app-passwords.ts`, `auth/app-passwords.ts`, `operations/app-passwords.ts` (list, create, revoke,
+  the organization switch; none of them on MCP).
+- **Sign-in** is `authenticateApp(env, address, password, ip)`: 10 tries a minute per address and 300 per IP (new
+  rate limiters), then the checks in §4. It answers with the mailbox and whether it may be changed. The spike IMAP
+  session already signs in with it.
+- **Screen:** Settings → Apps and API → App passwords (`apps/app/src/settings/AppPasswords.tsx`): your app
+  passwords, the server settings to type into a mail app, and for owners and admins everyone's app passwords and
+  the "Allow mail and calendar apps" switch.
+- **Housekeeping:** revoked when a member is removed or deleted; revoked ones are purged after 30 days (hourly job);
+  an email to the owner when one is created.
+
+**Changed from the plan**
+- **An app password isn't limited to chosen mailboxes.** It works for every mailbox its owner can open, at their
+  access level at that moment. The address typed as the username picks the mailbox. This keeps the create dialog to
+  one field, and matches how Fastmail and Google do it.
+- **A release switch, `MAIL_APPS`** (a Worker var: `off`, `on`, or organization ids). It is `off` in production, so
+  the App passwords tab is hidden and no app password works until mail apps are ready. Set it to the main
+  organization's id to test in production.
+- **Ending open sessions when the switch goes off** comes with the real IMAP session in phase 3 (each session
+  re-checks access on SELECT).
+- `security.md` and `privacy.md` are unchanged for now: nothing is released while `MAIL_APPS` is `off`. They change
+  at launch (phase 6).
+
+**Tested locally** (`apps/api/scripts/app-password-test.mjs`, 21 checks, all passing): create, list (never the
+password), sign in to an own mailbox, a read-only shared mailbox (signs in read-only) and someone else's (refused);
+wrong password; typed in capitals without dashes; last-used; the organization switch (member refused, owner allowed,
+sign-ins refused while off); owner sees everyone's; revoke; throttling after 10 tries. The Settings screen was
+checked in the browser: create, copy dialog, revoke.
 

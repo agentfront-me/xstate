@@ -13,6 +13,7 @@ import { memberOperations } from './members'
 import { migrationOperations } from './migration'
 import { storageOperations } from './storage'
 import { tokenOperations } from './tokens'
+import { appPasswordOperations } from './app-passwords'
 
 export const operations: readonly AnyOperation[] = [
   ...authOperations,
@@ -27,4 +28,5 @@ export const operations: readonly AnyOperation[] = [
   ...connectionOperations,
   ...billingOperations,
   ...tokenOperations,
+  ...appPasswordOperations,
 ]

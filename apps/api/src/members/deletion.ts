@@ -12,6 +12,7 @@
 // (and the account, when it's in no other organization) is removed.
 
 import { revokeTokensOfMember } from '../auth/api-tokens'
+import { revokeAppPasswordsOfMember } from '../auth/app-passwords'
 import type { Actor } from '../auth/types'
 import * as mailboxAccessDb from '../db/mailbox-access'
 import * as membersDb from '../db/members'
@@ -207,5 +208,6 @@ export async function finishDeletion(env: Env, memberId: string): Promise<void> 
   await revokeTokensOfMember(env, target.organization_id, { userId: target.user_id, name: target.name, email: target.email }, null).catch((err) =>
     console.error('revoking api tokens failed', err),
   )
+  await revokeAppPasswordsOfMember(env, target.organization_id, target.user_id, null).catch((err) => console.error('revoking app passwords failed', err))
   console.log('member deleted', JSON.stringify({ memberId, organizationId: target.organization_id, mail: target.delete_mail }))
 }

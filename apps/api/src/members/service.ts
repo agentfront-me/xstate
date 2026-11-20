@@ -11,6 +11,7 @@
 
 import { requireRoom } from '../limits'
 import { revokeTokensOfMember } from '../auth/api-tokens'
+import { revokeAppPasswordsOfMember } from '../auth/app-passwords'
 import { hashPassword } from '../auth/password'
 import { issueToken } from '../auth/token'
 import type { Actor } from '../auth/types'
@@ -220,6 +221,8 @@ export async function removeMember(env: MembersEnv, actor: Actor, memberId: stri
       (err) => console.error('revoking api tokens failed', err),
     )
   }
+  // So do their app passwords: their mail and calendar apps are refused from the next sign-in.
+  await revokeAppPasswordsOfMember(env, target.organization_id, target.user_id, actor.userId).catch((err) => console.error('revoking app passwords failed', err))
   // Invited and never accepted: the placeholder account goes too, or they could never sign up on their own.
   if (target.status === 'invited') await usersDb.removeIfUnclaimed(env.DB, target.user_id).run()
   // Churn of a person who had joined; a cancelled invite isn't. Recorded for the person who removed them.

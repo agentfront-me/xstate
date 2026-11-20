@@ -1,4 +1,5 @@
-// Phase 0 local test: mail app (this script) → bridge (TLS) → wrangler dev → ImapSession.
+// Phase 0 test: mail app (this script) → bridge (TLS) → Worker → ImapSession. Locally: the `api-relay` dev server and
+// the bridge on 127.0.0.1:1993. LOGIN is "<mailbox address> <app password>" (create one in Settings → App passwords).
 import tls from 'node:tls'
 const PORT = Number(process.env.PORT ?? 1993), API = process.env.API ?? 'http://localhost:8826'
 const SECRET = process.env.SECRET ?? 'local-relay-secret', LOGIN = process.env.LOGIN ?? 'spike@xstate.test local-spike-password'

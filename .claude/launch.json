@@ -289,14 +289,32 @@
         "8826",
         "--inspector-port",
         "9266",
-        "--persist-to",
-        ".wrangler/relay-test",
         "--var",
         "RELAY_SECRET:local-relay-secret",
         "--var",
-        "RELAY_SPIKE_LOGIN:spike@xstate.test:local-spike-password"
+        "MAIL_APPS:on",
+        "--var",
+        "APP_ORIGINS:http://localhost:8827",
+        "--var",
+        "APP_URL:http://localhost:8827"
       ],
       "port": 8826
+    },
+    {
+      "name": "app-relay",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:8826/v1",
+        "pnpm",
+        "--filter",
+        "@xstate/app",
+        "exec",
+        "vite",
+        "--port",
+        "8827",
+        "--strictPort"
+      ],
+      "port": 8827
     },
     {
       "name": "api-analytics",

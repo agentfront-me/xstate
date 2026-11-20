@@ -8,10 +8,11 @@
 //   - a large download is sent with flow control, at most WINDOW bytes ahead of what the mail app has taken;
 //   - something outside can wake an idling session (changed(), as the mailbox store will);
 //   - storage is deleted when the connection closes, or by an alarm if the bridge dies without closing.
-// Phase 3 replaces the command handling with real IMAP against the mailbox store. Sign-in here is one test login,
-// RELAY_SPIKE_LOGIN ("user:password"); without it every LOGIN is refused.
+// Phase 3 replaces the command handling with real IMAP against the mailbox store. Sign-in is real: a mailbox address
+// and an app password (auth/app-passwords.ts).
 
 import { DurableObject } from 'cloudflare:workers'
+import { authenticateApp } from '../auth/app-passwords'
 
 const FRAME = 64 * 1024
 /** Most bytes sent ahead of the bridge's last ack. The bridge acks every 256 KB, so this can't stall. */
@@ -24,7 +25,10 @@ const SPIKE_MESSAGES = 5000
 /** What survives hibernation with the socket (at most 16 KB): everything about the session except the UID list. */
 type State = {
   ip: string
+  /** The signed-in mailbox's address, and whether its mail may be changed (false: read-only shared access). */
   user: string | null
+  mailboxId: string | null
+  canWrite: boolean
   folder: string | null
   /** The tag of the IDLE command the session is in, or null. */
   idleTag: string | null
@@ -39,8 +43,6 @@ type State = {
   /** Commands handled, counted here so it survives hibernation (compare with `this.inMemory`). */
   commands: number
 }
-
-type SpikeEnv = { RELAY_SPIKE_LOGIN?: string }
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -61,7 +63,7 @@ export class ImapSession extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server)
     const state: State = {
       ip: new URL(request.url).searchParams.get('ip') ?? '',
-      user: null, folder: null, idleTag: null, sent: 0, acked: 0, blobLeft: 0, blobTag: null, partial: '', commands: 0,
+      user: null, mailboxId: null, canWrite: false, folder: null, idleTag: null, sent: 0, acked: 0, blobLeft: 0, blobTag: null, partial: '', commands: 0,
     }
     this.write(server, state, '* OK [CAPABILITY IMAP4rev1 IDLE] xstate ready\r\n')
     server.serializeAttachment(state)
@@ -86,7 +88,7 @@ export class ImapSession extends DurableObject<Env> {
         return
       }
       for (const line of lines) {
-        if (this.command(ws, state, line) === 'end') return
+        if ((await this.command(ws, state, line)) === 'end') return
       }
     }
     ws.serializeAttachment(state)
@@ -127,7 +129,7 @@ export class ImapSession extends DurableObject<Env> {
     return { sent, acked, blobLeft, inMemory: this.inMemory }
   }
 
-  private command(ws: WebSocket, state: State, line: string): 'end' | void {
+  private async command(ws: WebSocket, state: State, line: string): Promise<'end' | void> {
     state.commands++
     this.inMemory++
     if (state.idleTag) {
@@ -147,11 +149,18 @@ export class ImapSession extends DurableObject<Env> {
       case 'NOOP':
         return ok('NOOP done')
       case 'LOGIN': {
-        const [user, password] = args.map((a) => a.replace(/^"(.*)"$/, '$1'))
-        const allowed = (this.env as SpikeEnv).RELAY_SPIKE_LOGIN
-        if (!allowed || `${user}:${password}` !== allowed) return no('[AUTHENTICATIONFAILED] Wrong address or password')
-        state.user = user ?? null
-        return ok('LOGIN done')
+        // Spike parsing: two atoms or quoted strings. Phase 3 brings literals and AUTHENTICATE PLAIN.
+        const [user = '', password = ''] = [...args.join(' ').matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((m) => (m[1] ?? m[2] ?? '').replace(/\\(.)/g, '$1'))
+        const signIn = await authenticateApp(this.env, user, password, state.ip || undefined)
+        if (!signIn.ok) {
+          if (signIn.reason === 'throttled') return no('[UNAVAILABLE] Too many sign-in attempts. Wait a minute and try again.')
+          if (signIn.reason === 'disabled') return no('[AUTHORIZATIONFAILED] Mail apps are turned off for this organization')
+          return no('[AUTHENTICATIONFAILED] Wrong address or app password')
+        }
+        state.user = signIn.address
+        state.mailboxId = signIn.mailboxId
+        state.canWrite = signIn.canWrite
+        return ok(`LOGIN done`)
       }
       case 'SELECT': {
         if (!state.user) return no('Log in first')
@@ -169,7 +178,7 @@ export class ImapSession extends DurableObject<Env> {
       case 'XSTATE': {
         // Spike only: shows whether memory was reset (in-memory lower than stored) while storage and the socket stayed.
         const last = [...this.ctx.storage.sql.exec(`SELECT uid FROM uids ORDER BY seq DESC LIMIT 1`)][0] as { uid: number } | undefined
-        this.write(ws, state, `* XSTATE id=${this.ctx.id.toString()} commands=${state.commands} in-memory=${this.inMemory} uids=${this.count()} last-uid=${last?.uid ?? 0} sent=${state.sent} acked=${state.acked} ip=${state.ip}\r\n`)
+        this.write(ws, state, `* XSTATE id=${this.ctx.id.toString()} user=${state.user ?? '-'} can-write=${state.canWrite} commands=${state.commands} in-memory=${this.inMemory} uids=${this.count()} last-uid=${last?.uid ?? 0} sent=${state.sent} acked=${state.acked} ip=${state.ip}\r\n`)
         return ok('XSTATE done')
       }
       case 'XBLOB': {

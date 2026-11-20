@@ -39,6 +39,7 @@ import { BillingSection as LiveBillingSection } from './Billing'
 import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
 import { PersonalTokens } from './PersonalTokens'
+import { AppPasswords, useMailAppsAvailable } from './AppPasswords'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
@@ -98,6 +99,8 @@ const TABS: Partial<Record<Section['id'], { id: string; label: string; admins?: 
     { id: 'connected-apps', label: 'Connected apps' },
     { id: 'org-keys', label: 'Organization keys', admins: true },
     { id: 'tokens', label: 'Personal tokens' },
+    // Shown once mail apps are released to the organization (the API's MAIL_APPS setting).
+    { id: 'app-passwords', label: 'App passwords' },
   ],
   'agent-setup': [
     { id: 'ai-providers', label: 'AI providers' },
@@ -115,6 +118,8 @@ const MOVED: Record<string, { to: Section['id']; tab?: string; part?: string }> 
   'connected-apps': { to: 'access', tab: 'connected-apps' },
   // Emails about personal tokens link to api-keys.
   'api-keys': { to: 'access', tab: 'tokens' },
+  // Emails about app passwords link here.
+  'app-passwords': { to: 'access', tab: 'app-passwords' },
   'org-keys': { to: 'access', tab: 'org-keys' },
   'ai-providers': { to: 'agent-setup', tab: 'ai-providers' },
   connectors: { to: 'agent-setup', tab: 'connectors' },
@@ -133,7 +138,8 @@ export function SettingsPage({ section, tab: wantedTab }: { section: string; tab
     if (part) document.getElementById(part)?.scrollIntoView({ block: 'start' })
   }, [part])
   // The page's tabs this person may see, and the open one: from an old address, else the address's ?tab=, else the first.
-  const tabs = (TABS[s.id] ?? []).filter((t) => !t.admins || isOrgAdmin(account.org))
+  const mailApps = useMailAppsAvailable(account.org.id, account.mode === 'live' && s.id === 'access')
+  const tabs = (TABS[s.id] ?? []).filter((t) => (!t.admins || isOrgAdmin(account.org)) && (t.id !== 'app-passwords' || mailApps))
   const tab = tabs.find((t) => t.id === (moved?.tab ?? wantedTab))?.id ?? tabs[0]?.id
   const members = useMembers(account.org.id, account.mode === 'live').data
 
@@ -206,6 +212,7 @@ export function SettingsPage({ section, tab: wantedTab }: { section: string; tab
                 {tab === 'org-keys' && <OrgKeys account={account} />}
                 {tab === 'tokens' &&
                   (account.mode === 'live' ? <PersonalTokens orgId={account.org.id} admin={isOrgAdmin(account.org)} /> : <p className="muted">Sign in to see your personal tokens.</p>)}
+                {tab === 'app-passwords' && <AppPasswords orgId={account.org.id} admin={isOrgAdmin(account.org)} />}
                 {tab === 'ai-providers' && <AiProvidersSection account={account} />}
                 {tab === 'connectors' && (account.mode === 'live' ? <ConnectorsSection account={account} /> : <IntegrationsSection data={data} />)}
                 {tab === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
