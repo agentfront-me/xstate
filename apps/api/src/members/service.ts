@@ -93,7 +93,7 @@ async function extrasFor(env: MembersEnv, organizationId: string, me: Member, me
 
 const canManage = (me: Member) => isAdmin(me) || me.permissions.org.includes('members.manage')
 
-/** Whether the invite email went out. Outside production the link comes back too, since local mail goes nowhere. */
+/** Whether the invite email went out. The link comes back when it didn't, and always outside production. */
 export type Delivery = { sent: boolean; reason?: string; inviteUrl?: string }
 
 function toMember(row: MemberRow, actor: Actor, extras?: Extras): OrgMember {
@@ -433,7 +433,9 @@ async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: s
   const [target, inviter] = await Promise.all([membersDb.findById(env.DB, memberId), usersDb.findById(env.DB, actor.userId)])
   const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(target!.organization_id).first<{ name: string }>()
   const url = inviteUrl(env, token)
-  // The link is only handed back outside production: there it's how you test, since local mail goes nowhere.
+  // The link is handed back outside production, where it's how you test since local mail goes nowhere, and whenever
+  // the email didn't go out, so the person adding them can pass it on another way. They can manage members, which
+  // already lets them set this person's password, so the link gives them nothing new.
   const devUrl = env.ENVIRONMENT === 'production' ? {} : { inviteUrl: url }
 
   const message = inviteEmail({
@@ -452,11 +454,11 @@ async function deliver(env: MembersEnv, actor: Actor, memberId: string, token: s
     })
     if (!result.sent) {
       console.warn('invite not sent:', result.reason)
-      return { sent: false, reason: "xstate's own mail isn't set up on this server", ...devUrl }
+      return { sent: false, reason: "xstate's own mail isn't set up on this server", inviteUrl: url }
     }
   } catch (err) {
     console.error('invite email failed', err)
-    return { sent: false, reason: "The invite email couldn't be sent. Try again.", ...devUrl }
+    return { sent: false, reason: "The invite email couldn't be sent. Try again.", inviteUrl: url }
   }
   await invitationsDb.markSent(env.DB, memberId, new Date().toISOString()).run()
   return { sent: true, ...devUrl }

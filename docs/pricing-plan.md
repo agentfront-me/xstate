@@ -1,54 +1,42 @@
 # Plan: xstate pricing
 
-Status: **plans decided 2026-11-16** (§8). Paddle billing built 2026-11-16 (§7); usage limits not built yet.
-Costs refreshed 2026-11-19 after Stalwart was removed (§2–§3, §5); analytics event limits proposed, not decided (§3a).
-**New direction 2026-11-19:** price by monthly active audience, Loops-style (§8a). The metric is decided; tiers and
-limits are open. §1 and §8 still describe the per-person plans built in Paddle.
+Status: **built 2026-11-19.** Plans are priced by the monthly active audience: Free, Growth and Custom (§1, §8a).
+Billing runs on Stripe and the plan limits are enforced (§7; build notes and status in
+`docs/billing-limits-plan.md`). **There is no charge per person, seat or mailbox.** The code is
+`apps/api/src/billing/plans.ts` (plans, prices, limits) and `apps/api/src/limits/` (the checks).
+Costs refreshed 2026-11-19 after Stalwart was removed (§2–§3). Analytics event limits are proposed, not built (§3a).
 The dedicated-server question is postponed.
 
-Each plan below says what it includes, its limits, its price and its margin. The margins come from what xstate
-pays to run (§2–§4). Prices were read from the providers' pricing pages on 2026-11-16 (§9). Usage figures are
-measured on production where possible.
+The margins come from what xstate pays to run (§2–§4). Usage figures are measured on production where possible.
 
 ---
 
-## 1. Summary of the recommendation
+## 1. The plans
 
-| | **Free** | **Pro** | **Team** |
+| | **Free** | **Growth** | **Custom** |
 |---|---|---|---|
-| Price | $0 | **$6** per person a month, or **$5** billed yearly | **$12** per person a month, or **$10** billed yearly |
-| People (mailboxes that sign in) | up to 5 | unlimited | unlimited |
-| Domains | 1 | 10 | unlimited |
-| Shared addresses (hello@, support@) and aliases | 5 | unlimited, no seat charge | unlimited, no seat charge |
-| Storage (mail plus files) | 5 GB per person, and 5 GB of org files | 30 GB per person, pooled | 200 GB per person, pooled |
-| Mail that AI search covers | **last 90 days** | all mail, up to **50,000 emails per person**, pooled | up to **200,000 emails per person**, pooled |
-| Connected AI apps (MCP) | yes, 200 tool calls a day per person | 2,000 a day per person | 10,000 a day per person |
-| Agents (on your own AI key) | **no** | 10 agents, 500 runs a month per person, pooled | unlimited agents, 2,000 runs a month per person, pooled |
-| Outside recipients a day | 100 per mailbox, 300 per org | 500 per mailbox, 2,000 per org (today's limits) | 1,000 per mailbox, 10,000 per org |
-| Google Workspace import | yes (search covers the last 90 days) | yes, fully indexed | yes, fully indexed |
-| File version history | 5 versions × 30 days (today) | 5 × 30 days | 100 versions × 1 year |
-| Website analytics events a month (proposed) | 10,000 per org | 25,000 per person, pooled | 100,000 per person, pooled |
-| Extra storage | – | $5 per 100 GB a month | $5 per 100 GB a month |
-| Extra analytics events (proposed) | – | $5 per 100,000 a month | $5 per 100,000 a month |
-| Support | docs | email, 1 business day | email, 4 hours |
-| **Gross margin, typical person** | costs about $0.19 a month | **about 78%** | **about 84%** |
-| **Gross margin, heaviest person at the caps** | costs up to about $1.00 a month | **about 45%** (37% yearly) | about 15% (pooling makes this rare) |
+| Active audience a month (§8a) | 1,000 | 5,000, then +100 at a time up to 1,000,000 | over 1,000,000 |
+| Price | $0 | **$49 a month**, plus **$1 per extra 100** | agreed per customer |
+| Mailboxes (personal and shared together) | 5 | unlimited | set per customer |
+| Domains | 3 | unlimited | set per customer |
+| Agents (on the customer's own AI key) | 1 | unlimited | set per customer |
+| Emails sent | 4,000 a month, every recipient counted | unlimited; the hourly and daily abuse limits stay | set per customer |
+| Storage (mail plus files), per organization | 5 GB | 50 GB, +1 GB per extra 100 | set per customer |
+| AI search over mail | all mail (bounded by the 5 GB) | up to 100 searchable emails per person of its size; internal, not on the pricing page | set per customer |
+| Website analytics events | proposed, not built (§3a) | proposed, not built | – |
 
-The recommendation in brief:
-
-- **Price per person, and charge nothing extra for shared mailboxes.** Pro at $6 a month undercuts Google
-  Business Starter and Microsoft 365 Business Basic, which are both $8.40 a month or $7 billed yearly. It matches
-  Fastmail Standard, and xstate also includes agents and connected AI apps.
-- **The free plan is real business email, but AI search only covers the last 90 days.** Keeping mail searchable
-  is the one mail cost that grows without limit (§3). Free has no agents, which was decided earlier.
-- **Limit website analytics events per month (proposed).** They are the other large variable cost, about $15.50
-  per million events, and they come from the customer's visitors, not their people (§3a). Contacts and searches
-  cost too little to limit.
-- **Launch all three plans (decided).** For now Team is Pro with higher limits, longer version history and
-  faster support. SSO, 2FA and an audit log join Team when they are built.
-- **Fix the marketing page before launch.** `apps/web/app/(marketing)/controls.tsx` shows placeholder plans: Free,
-  Pro at $8, Team at $24. It promises things that don't exist (Sites, a Data API, an audit log, a free
-  you.xstate.email subdomain) and gives the free plan an agent, which the agents plan rules out.
+- **No charge per person, seat or mailbox.** Teammates and shared mailboxes cost nothing extra. On Free the
+  5-mailbox limit covers personal and shared mailboxes together; inviting someone without a mailbox doesn't count.
+- **Growth** is billed monthly in advance as two Stripe items: "Growth" ($49 × 1, 5,000 people) and "Extra 100
+  people" ($1 × the extra hundreds). Changing the size is prorated at once.
+- **Custom** is sold by hand: an admin sets `organizations.plan = 'custom'` and `limits_override` in D1. Limits
+  left unset are unlimited.
+- **Over a limit:** counted limits allow 10% over, rounded down, so 5 mailboxes, 3 domains and 1 agent stop at
+  the limit itself. Storage stops over 110%. Emails a month stop at 100%, like every sending cap. Mail always keeps
+  arriving and nothing is deleted.
+- **Active audience over the limit:** a Free organization over 110% is paused for the rest of the month (email
+  API sends, agent runs and new identified website visitors) until the month ends or it upgrades. Growth at or
+  over its size gets a weekly email to owners and admins; nothing stops.
 
 ---
 
@@ -60,8 +48,8 @@ Refreshed 2026-11-19. Stalwart stopped on 2026-11-18, so deepo is no longer an x
 |---|---|---|
 | Cloudflare Workers Paid | $5.00 | Includes 10M requests, 30M CPU-ms, 1M queue operations, D1/DO/KV allowances (Durable Objects: 50M SQLite rows written and 5 GB stored), 50M queried and 10M stored Vectorize dimensions, and Workflows allowances |
 | Amazon SES base | $0 | Pay as you go, no monthly fee, for both sending and receiving |
-| Paddle | $0 | Fees per payment only (§4) |
-| **Total** | **about $5** | Covered by about one Pro person (§5) |
+| Stripe | $0 | Fees per payment only (§4) |
+| **Total** | **about $5** | Covered by one Growth organization (§5) |
 
 There is no server to scale any more: all mail runs on Workers, Durable Objects, R2 and SES, so cost grows with
 use rather than in steps. (Until 2026-11-18 deepo, an EC2 t3.medium at about $36 a month, ran Stalwart, Postgres
@@ -123,7 +111,7 @@ history and leave storage generous.
 
 ### Monthly cost per mailbox
 
-| Profile | Light (Free, 90-day window) | Typical (Pro) | Heavy (Pro at its cap) |
+| Profile | Light | Typical | Heavy |
 |---|---|---|---|
 | Emails kept searchable | about 3,000 | 15,000 | 52,000 |
 | Search vectors | $0.08 | $0.42 | $1.46 |
@@ -135,8 +123,7 @@ history and leave storage generous.
 | Workers, Queues, D1 | $0.01 | $0.02 | $0.04 |
 | **Total** | **about $0.19** | **about $0.93** | **about $2.90** |
 
-The worst case for a free person at every cap is about $1.00 a month: 5 GB of mail, 100 outside recipients every
-day, and 200 MCP searches every day. A typical free organization of 3 light users costs about $0.57 a month.
+A typical free organization of 3 light users costs about $0.57 a month.
 
 None of this includes website analytics, which is per organization, not per mailbox (§3a).
 
@@ -169,16 +156,15 @@ rows-written metric once real traffic arrives.
 | Busy site with product events | 1,000,000 | $15.50 |
 
 A site with 100,000 pageviews a month costs more than a heavy mailbox's search. Unlike mail, the traffic comes
-from the customer's visitors, not their people, so it doesn't grow with seats. The included 50M rows written on
+from the customer's visitors, not their people, so it doesn't grow with the team. The included 50M rows written on
 Workers Paid covers only about 3M events across all organizations together.
 
-**Proposed limits (not decided):**
+**Proposed limits (not decided, not built):**
 
-| | Free | Pro | Team |
-|---|---|---|---|
-| Analytics events a month | 10,000 per org | 25,000 per person, pooled | 100,000 per person, pooled |
-| Cost at the limit | $0.16 per org | $0.39 per person | $1.55 per person |
-| Extra events | – | $5 per 100,000 a month (cost $1.55 today, ~$0.65 after the fix below) | same |
+| | Free | Growth |
+|---|---|---|
+| Analytics events a month | 10,000 per organization | 100 per person of its size (500,000 at 5,000) |
+| Cost at the limit | $0.16 | $7.75 at 5,000 |
 
 Over the limit, the usual 10% grace applies, then `/v1/collect` stops recording events until the month resets.
 Contacts, identify calls and already-recorded data are untouched. Cutting the rows per event (§6, item 7) to about
@@ -188,44 +174,38 @@ Contacts, identify calls and already-recorded data are untouched. Cutting the ro
 
 ## 4. Payment fees
 
-| Provider | Fee | On a 5-person Pro org, monthly ($30) | On the same org, yearly ($300) |
-|---|---|---|---|
-| **Paddle** (merchant of record: handles VAT and sales tax worldwide) | 5% + $0.50 | $2.00, or $0.40 per person | $15.50, or $0.26 per person a month |
-| Stripe + Billing (you handle tax yourself, or add Stripe Tax) | 2.9% + $0.30 + 0.7%, and +1.5% on international cards | $1.38 to $1.83 | $11.10 to $15.60 |
+Stripe: Checkout, Billing and the Customer Portal. There is no merchant of record: HireNinja LLC sells, Stripe
+processes the payment, and taxes are added where the law requires (Terms §4).
 
-**Recommendation: Paddle.** HireNinja LLC sells worldwide to small businesses. A merchant of record takes on
-VAT and GST registration, filing and invoices in every country. The extra 1–2% costs less than doing that work
-yourself. The margins below use Paddle.
+| Fee | On Growth at 5,000 ($49) | On each extra $1 step |
+|---|---|---|
+| 2.9% + $0.30, plus 0.7% for Stripe Billing | $2.06 | $0.04 |
+| Plus 1.5% on international cards | $2.80 | $0.05 |
 
 ---
 
-## 5. Margin per plan
+## 5. Margin
 
-Margin = (price − payment fee − cost to run) ÷ price.
+Margin = (price − payment fee − cost to run) ÷ price. Worst case, every allowance used; typical use is far below
+these allowances, so real margins are higher.
 
-| | Price | Fee | Cost | Margin |
-|---|---|---|---|---|
-| Pro, monthly, typical person | $6.00 | $0.40 | $0.93 | **$4.67 (78%)** |
-| Pro, monthly, heavy person | $6.00 | $0.40 | $2.90 | $2.70 (45%) |
-| Pro, yearly, typical person | $5.00 | $0.26 | $0.93 | $3.81 (76%) |
-| Pro, yearly, heavy person | $5.00 | $0.26 | $2.90 | $1.84 (37%) |
-| Team, monthly, typical person (30 GB used) | $12.00 | $0.65 | $1.23 | $10.12 (84%) |
-| Team, monthly, a person at every cap (200,000 emails, 200 GB) | $12.00 | $0.65 | about $9.50 | about $1.85 (15%) |
-| Extra storage, 100 GB | $5.00 | $0.25 | $1.50 | $3.25 (65%) |
-| Extra analytics events, 100,000 (proposed, §3a) | $5.00 | $0.25 | $1.55 | $3.20 (64%) |
+| | Price | Stripe fee | Audience cost (sends + events) | Mailbox cost | Margin |
+|---|---|---|---|---|---|
+| Free, 1,000 active, 5 light mailboxes | $0 | – | ~$0.64 (4,000 sends) + $0.16 (10,000 events) | ~$0.95 | costs ~$1.75 |
+| Growth, 5,000 active, 10 typical mailboxes, 50,000 sends | $49 | $2.06–2.80 | ~$8.00 + $7.75 | ~$9.30 | **~$21–22 (43–45%)** |
+| Growth, 5,000 active, 33 typical mailboxes | $49 | $2.06–2.80 | ~$8.00 + $7.75 | ~$30.70 | **break-even** |
+| Each extra 1,000 active (10 steps of $1) | $10 | $0.36–0.51 | ~$1.60 + $1.55 + $0.15 storage | – | ~$6.20 (62%) |
 
-Costs refreshed 2026-11-19 (§3): no deepo share, SES receiving added, 2.63 vectors per email. Margins exclude
-website analytics, which is per organization and needs its own limit (§3a). Without one, a Pro organization of
-one person with a 100,000-pageview site would cost $0.93 + $1.55 and fall to a 52% margin; a typical free
-organization with the same site would cost xstate about $2.12 a month instead of $0.57.
+The 33-mailbox row is why searchable mail is capped on Growth: without the cap, each extra mailbox costs about
+$0.93 a month and brings in nothing until the audience grows.
 
-**How free users are paid for.** One typical Pro person contributes about $4.67 a month. That covers about 24
-light free people, or about 8 typical free organizations. Fixed costs ($5) are covered by about one Pro person.
+**How free organizations are paid for.** The 10-mailbox Growth row leaves about $21 a month, which covers about
+12 free organizations at their worst case or about 37 typical ones ($0.57). Fixed costs ($5) are covered by one
+Growth organization.
 
-**Agents and connected apps** barely affect cost. Their token costs are the customer's. The run limits and
-daily call limits exist to stop runaway loops, not to cover a bill. A single connected app searching at today's
-limit of 120 calls a minute would cost xstate about $170 a month, and the daily limits cap it at about $1.80
-a month per person on Pro.
+**Agents and connected apps** barely affect cost. Their AI tokens are on the customer's own key. A single
+connected app searching at today's rate limit of 120 calls a minute would cost xstate about $170 a month, so the
+rate limit is what protects against it, not the price.
 
 ---
 
@@ -241,8 +221,8 @@ a month per person on Pro.
 3. **D1 will hit its 10 GB limit.** `search_docs` and `files` take about 8 MB per heavy mailbox. At that rate
    the limit arrives at about 1,200 heavy mailboxes. Plan a move (for example per-org Durable Objects) well
    before then.
-4. **The SES account quota is shared by every customer.** It is 50,000 recipients a day, 14 a second. 25 Pro
-   orgs sending at their limit of 2,000 a day would fill it. Ask AWS for a higher quota as paid organizations
+4. **The SES account quota is shared by every customer.** It is 50,000 recipients a day, 14 a second. 25
+   organizations sending at today's limit of 2,000 a day would fill it. Ask AWS for a higher quota as paid organizations
    grow.
 5. **Cleared:** deepo no longer runs anything for xstate since Stalwart stopped on 2026-11-18. Stalwart's leftover
    data (Postgres DB, `xstate-mail-blobs`) is deleted in phase 5c after ~2026-12-18.
@@ -256,93 +236,41 @@ a month per person on Pro.
 
 ---
 
-## 7. What enforcing the plans needs
+## 7. How the plans are enforced
 
-**Built 2026-11-16 (billing, not yet limits), uncommitted:**
-- Migration `0031_billing.sql`: `organizations.plan`, interval, Paddle customer and subscription, status, billed
-  seats, period end, scheduled change, and `billing_event_at` so out-of-order webhooks can't regress the plan.
-- `apps/api/src/billing/`: `plans.ts` (prices, PADDLE_PRICES mapping, status → plan), `paddle.ts` (REST calls with
-  fetch, webhook HMAC check), `service.ts` (billing view, confirm checkout, change plan, portal links, seat sync),
-  `webhook.ts` (`POST /webhooks/paddle`). Operations `billing_get`, `billing_confirm_checkout`,
-  `billing_change_plan`, `billing_portal` (off MCP; owners and admins only for changes).
-- Seats follow personal mailboxes: synced after a person's mailbox is created or deleted and hourly (imports are
-  caught by the hourly check). Quantity changes are prorated immediately.
-- `scripts/paddle-catalog.mjs` creates the Pro and Team products and monthly/yearly prices (idempotent) and prints
-  PADDLE_PRICES. The storage add-on isn't in the catalog yet.
-- App: Settings → Billing (`apps/app/src/settings/Billing.tsx`), Paddle.js overlay checkout, `?_ptxn=` links.
-- Marketing pricing table, Terms §4 (Paddle as reseller), Privacy (Paddle replaces Stripe) and Security updated.
-- Tested locally with signed test webhooks (plan applied, bad signature 401, stale event ignored, past due keeps
-  the plan, cancelled → free). A real sandbox checkout still needs the sandbox keys.
+Built; build notes, what was tested and deploy status are in `docs/billing-limits-plan.md`.
 
-**Paddle accounts set up 2026-11-16:**
-- Sandbox ("HireNinja Staging"): API key "xstate local dev" (expires 2027-02-14) and client token in
-  `apps/api/.dev.vars`; catalog created; default payment link `https://localhost/`. Tested end to end in the local
-  app: checkout with the test card → Pro, switch to Team, portal links. No sandbox webhook destination (localhost
-  isn't reachable); checkout is confirmed by the app instead.
-- Live ("HireNinja LLC"): API key "xstate production API" (expires **2027-11-16**, renew before then) and webhook
-  secret stored as Worker secrets; catalog created; client token and live price ids in `wrangler.jsonc`; webhook
-  destination `https://api.xstate.com/webhooks/paddle` (subscription events, platform + simulation).
-- Deployed 2026-11-16 with a 14-day refund policy (`/docs/refunds`, linked from Terms §4 and the footer), which
-  Paddle's domain review requires. `xstate.com` and `go.xstate.com` submitted for Website approval the same day
-  (In review). Once approved: set the live default payment link to `https://go.xstate.com/app/`. Live checkout
-  fails until then.
-
-**Not built yet:** every usage limit below (people, domains, storage, search window, MCP and agent quotas, sending
-by plan) and the 10% grace. Until then, plans change billing and the plan name only.
-
-
-- **D1:** add `organizations.plan`, `plan_seats`, `billing_customer_id` and `billing_status`, plus a usage
-  table with monthly counters for agent runs and daily counters for MCP calls.
-- **Billing:** Paddle checkout and the customer portal, and a `/webhooks/paddle` route that sets the plan. A
-  failed payment gets a 14-day grace period, then the org drops to Free limits. No mail is deleted. AI search
-  goes back to the 90-day window and agents pause.
-- **Over a limit (decided): 10% grace, then stop.** Each usage limit lets an organization go 10% past it.
-  Once it reaches 110%, xstate stops handling more of that kind of traffic. It never deletes anything, and the
-  org gets a notice at 100% and again at 110%. Concretely:
-  - **Storage at 110%:** new incoming mail is refused with a temporary "mailbox full" error (452), not a
-    permanent bounce. Senders' servers keep retrying for several days, so the mail arrives once space is freed
-    or the plan is upgraded. Storage uploads and saves are refused too.
-  - **Searchable mail at 110%:** new mail stops being indexed. Search still works over what is already indexed.
-  - **MCP calls a day and agent runs a month at 110%:** further calls and runs are refused until the day or
-    month resets.
-  - **Sending limits get no grace (my call).** They exist to stop abuse and to protect SES's reputation for
-    every customer, so they stay hard at 100%, as they are today.
-- **Limits, checked where each action already happens:**
-  - People and domains: when a mailbox or domain is created.
-  - Storage: the sum of R2 bytes for raw messages (checked when SES mail is received) and Storage uploads.
-  - Analytics events a month: `/v1/collect` (`audience/collect.ts`), counted in the AudienceStore.
-  - Search window: `search/jobs.ts` skips emails older than the window, and the hourly sweep removes vectors
-    that have aged out of it.
-  - Search history cap: count indexed emails per org.
-  - MCP calls a day: `mcp/server.ts`.
-  - Agent runs a month: `agents/run.ts`.
-  - Sending: make `LIMITS` in `mailserver/sending-rules.ts` depend on the plan.
-- **App:** a Settings → Plan & billing page, and usage bars for storage, searchable mail and agent runs.
-- **Marketing and terms:**
-  - Replace the placeholder pricing table on the marketing page.
-  - Terms §4 already allows a free email plan with paid features. Add the free-plan limits to §6.
-  - Update `security.md` if Paddle receives any customer data beyond billing.
+- **Billing:** Stripe Checkout, the Customer Portal and the webhook (`apps/api/src/billing/stripe.ts`,
+  `billing/stripe-events.ts`). `scripts/billing-catalog.mjs` creates the prices `xstate_growth_base` ($49) and
+  `xstate_growth_extra_100` ($1).
+- **Limits** (`apps/api/src/limits/index.ts`), checked where each action already happens and refused with 402
+  `plan_limit` (429 `send_limit_reached` for sending):
+  - mailboxes: `createMailbox` (personal and shared), adding a member with a mailbox, and the Google import;
+  - domains: `addDomain`; agents: create and duplicate;
+  - storage: Storage uploads, saves, version restores and saved attachments;
+  - emails a month: `reserveSend` (system mail is exempt).
+- **Hourly** (`limits/hourly.ts`): notices at 100% and 110%, the Free audience pause, Growth's weekly email.
+- **Searchable mail on Growth:** `limits/search-cap.ts` moves the emails indexed longest ago out of AI search.
+- **App:** Settings → Billing shows usage bars and a banner while paused.
+- **Not built:** analytics event limits (§3a), and moving Growth up a size automatically.
 
 ---
 
-## 8. Decisions (2026-11-16)
+## 8. Decisions
 
-1. **Free plan:** as proposed. Up to 5 people, 1 domain, 5 GB each, AI search over the last 90 days, connected
-   apps allowed, no agents.
-2. **Pro:** $6 a month per person, or $5 billed yearly.
-3. **Launch all three plans now**, including Team at $12 a month or $10 billed yearly.
-4. **Shared mailboxes have no seat charge.** Their mail counts toward the pooled storage and search caps.
-5. **Over a limit:** a 10% grace, then xstate stops handling more traffic of that kind (§7). Nothing is deleted.
-6. **Payments:** Paddle (merchant of record) for now.
-7. **Dedicated server for xstate:** postponed.
+1. **Price by monthly active audience** (user, 2026-11-19), with the tiers in §8a. This replaced the per-person
+   plans decided on 2026-11-16; there is no charge per person, seat or mailbox.
+2. **Payments on Stripe** (user, 2026-11-19), replacing Paddle (`docs/billing-limits-plan.md`).
+3. **Over a limit:** a 10% grace, then xstate stops handling more of that kind (§1). Sending caps stay hard at
+   100%. Nothing is deleted.
+4. **Dedicated server for xstate:** postponed.
 
 ---
 
-## 8a. New direction: pricing by monthly active audience (2026-11-19, in progress)
+## 8a. Pricing by monthly active audience (decided 2026-11-19)
 
-On 2026-11-19 the user proposed pricing xstate like Loops (https://loops.so/pricing): a free tier up to a number
-of contacts, then $49 a month and up by contacts. This section records what is decided and what is still open.
-Until it is finished, §1 and §8 describe the plans that are built in Paddle.
+Priced like Loops (https://loops.so/pricing): a free tier up to a number of people, then $49 a month and up by
+people.
 
 ### Decided (user, 2026-11-19)
 
@@ -377,7 +305,7 @@ Decided by the user on 2026-11-19 unless marked proposed or open:
 | Domains | 3 | **unlimited** | unlimited |
 | Agents (on the customer's own AI key) | 1 (reverses the 2026-11-16 "no agents on Free" decision; cost ~$0.0001 a run) | **unlimited** | unlimited |
 | Mailboxes (personal and shared together) | **5** | **unlimited** | unlimited |
-| Emails sent | **4,000 a month**, every mailbox, agent and API call together | **unlimited** (hourly and daily abuse limits stay, §7) | unlimited |
+| Emails sent | **4,000 a month**, every mailbox, agent and API call together | **unlimited** (hourly and daily abuse limits stay, §1) | unlimited |
 | Website analytics events | **proposed:** 10,000 a month | **proposed:** 100 per active contact a month | same |
 | AI search over mail | **all mail, no window for now** (user, 2026-11-19; bounded by the 5 GB storage limit) | **up to 100 searchable emails per active audience** (500,000 at 5,000); decided 2026-11-19, internal only, not on the pricing page | grows with the tier |
 | Storage (mail + files), per organization | **5 GB** (user, 2026-11-19) | **50 GB** (user, 2026-11-19; was 35 GB) | +1 GB per extra 100 active audience (user); more at $5 per 100 GB |
@@ -401,7 +329,7 @@ where search results are shown, so a missing old email doesn't look like a bug.
 
 **Unlimited emails on Growth** means no monthly cap. The hourly and daily limits per mailbox and per org
 (`reserveSend` in `mailserver/sending-rules.ts`) stay, because they protect SES's sending reputation for every
-customer (§8, item 5). Raise them for paid orgs as the shared SES quota (50,000 recipients a day, §6, item 4) grows.
+customer (§1). Raise them for paid orgs as the shared SES quota (50,000 recipients a day, §6, item 4) grows.
 SES costs ~$0.16 per 1,000, so 50,000 emails a month is ~$8.
 
 **Free's 4,000 emails a month** counts recipients, because SES bills per recipient: one email to 3 people is 3.
@@ -413,8 +341,8 @@ page shows only the current total as the slider moves, not the per-100 rule.
 - **What counts:** what the customer can see: each email once (its raw message, attachments included), Storage
   files with their kept versions, and trash. The internal `files` copies of mail attachments don't count, or every
   attachment would count twice (§6, item 2).
-- **Over the limit:** the decided 10% grace, then incoming mail is refused with a temporary 452 "mailbox full",
-  so senders retry for days, and uploads are refused (§7). Nothing is deleted.
+- **Over the limit:** the 10% grace, then Storage uploads and saves are refused. Mail always keeps arriving: SES
+  accepts every message before xstate sees it, so a "452 mailbox full" isn't possible. Nothing is deleted.
 - **Measured 2026-11-19 on the main organization:** Storage files 1.9 GB (611 files), plus about 7 GB of mail
   (13.8 GB in the org's R2 bucket on 2026-11-18, minus about 5 GB of attachment copies), so **about 9 GB**.
   This org would already be at 180% of the Free limit and refusing mail. A Google Workspace import of a few years
@@ -446,23 +374,10 @@ organization has about 28 MB of storage per active person (9 GB over 322), while
 (50 GB over 5,000). A steady org will outgrow its storage without moving up a tier, so the $5 per 100 GB add-on
 has to be available at every paid tier, and Billing should show storage and audience side by side.
 
-**Billing in tiers, not by metering.** Paddle bills subscriptions in advance and has no built-in metered billing.
-The org picks a tier. The usual 10% grace applies (§8, item 5), and an org above 110% for two months in a row moves
-up a tier, with notice at 100% and 110%. Settings → Billing shows the live count, split into emailed and
+**Billing in tiers, not by metering.** Growth is a Stripe subscription billed monthly in advance at the size the
+organization picks. The usual 10% grace applies (§1). Above its size, owners and admins get an email every week;
+moving up a size automatically is not decided. Settings → Billing shows the live count, split into emailed and
 website people, so the bill is never a surprise.
-
-### Cost check (worst case, every allowance used)
-
-| | Price | Paddle fee | Audience cost (sends + events) | Mailbox cost | Margin |
-|---|---|---|---|---|---|
-| Free, 1,000 active, 5 light mailboxes | $0 | – | ~$0.64 (4,000 sends) + $0.16 (10,000 events) | ~$0.95 | costs ~$1.75 |
-| Growth, 5,000 active, 10 typical mailboxes, 50,000 sends | $49 | $2.95 | ~$8.00 + $7.75 | ~$9.30 | **~$21 (43%)** |
-| Growth, 5,000 active, 33 typical mailboxes | $49 | $2.95 | ~$8.00 + $7.75 | ~$30.70 | **break-even** |
-| Each extra 1,000 active (10 steps of $1) | $10 | $0.50 | ~$1.60 + $1.55 + $0.15 storage | – | ~$6.20 (62%) |
-
-Typical use is far below these allowances, so real margins will be higher. The 33-mailbox row is why searchable
-mail needs a cap on Growth: without one, each extra mailbox costs about $0.93 a month and brings in nothing until
-the audience grows.
 
 **Custom plan (user, 2026-11-19): for organizations reaching more than 1,000,000 people a month.** Growth's
 $1-per-100 steps run up to 1,000,000 ($9,999 a month); above that the price is agreed per customer. Shown on the
@@ -495,9 +410,9 @@ What it shows:
 - **Received mail sets the count, not sent mail.** About 95% of the active audience are people who wrote to the
   org; about half of those are automated senders (newsletters, notifications, services).
 - **About 80 active people per personal mailbox** in this org (322 over 4). At that rate 1,000 free covers about
-  12 people, so on Free the 5-person limit is what really applies, not the audience limit.
-- **This org pays nothing under the new model**, yet costs about $2.40 a month. That confirms the people limit and
-  the 90-day search window must stay on Free.
+  12 people, so on Free the 5-mailbox limit is what really applies, not the audience limit.
+- **This org pays nothing under the new model**, yet costs about $2.40 a month. That is why Free keeps its 5-mailbox and 5 GB
+  limits.
 
 Limits of this measurement:
 
@@ -512,18 +427,17 @@ Limits of this measurement:
 - **Transactional senders will count high.** A SaaS that sends sign-up and receipt mail from a no-reply mailbox
   counts every user it emails. Decide whether API sends from a no-reply mailbox count the same way.
 
-### To do before the tiers are final
+### Still open
 
 1. **Measure a second, busier organization** once a real customer (or a sales or support mailbox) has a month of
    mail, to check the ~80-per-person figure.
-2. Decide the open points in the tables above.
-3. Decide what happens to the built per-person plans (§1, §7): replaced, or kept for mail-only customers.
-4. Then update §1, §7 and §8, the Paddle catalog (`scripts/paddle-catalog.mjs`), the marketing pricing page and
-   the Terms.
+2. Analytics event limits (§3a), proposed, not built.
+3. Moving Growth up a size automatically when an organization stays over its size.
+4. Whether bounce and system senders, and API sends from a no-reply mailbox, should count toward the audience.
 
 ---
 
-## 9. Sources (read 2026-11-16)
+## 9. Sources (read 2026-11-16 and 2026-11-19)
 
 - Cloudflare Workers, Queues, Workflows, KV, D1, Durable Objects: https://developers.cloudflare.com/workers/platform/pricing/
 - Observability from 2026-12-01: https://developers.cloudflare.com/observability/pricing/
@@ -532,13 +446,7 @@ Limits of this measurement:
 - Workers AI and bge-m3 ($0.012 per million tokens): https://developers.cloudflare.com/workers-ai/platform/pricing/; toMarkdown is free for most formats
 - Amazon SES: https://aws.amazon.com/ses/pricing/ (the old 12-month free tier is gone, replaced by AWS credits)
 - EC2 t3.medium, Ohio, $0.0416 an hour (AWS pricing data file); EBS gp3 $0.08: https://aws.amazon.com/ebs/pricing/; IPv4: https://aws.amazon.com/vpc/pricing/
-- Stripe: https://stripe.com/pricing · Paddle: https://www.paddle.com/pricing
-- Competitors, per person a month (monthly / yearly):
-  - Google Workspace Business Starter $8.40 / $7, 30 GB: https://workspace.google.com/pricing
-  - Microsoft 365 Business Basic $8.40 / $7 (raised 2026-07-01): from microsoft.com search results; the page timed out
-  - Zoho Mail Lite $1 / $1.25 yearly; Forever Free is 5 users, 5 GB and no IMAP: https://www.zoho.com/mail/zohomail-pricing.html
-  - Proton Mail Essentials $6.99 yearly: https://proton.me/business/mail/pricing
-  - Fastmail Standard $6 / $5, 60 GB: https://www.fastmail.com/pricing/
+- Stripe: https://stripe.com/pricing
 - Production usage: D1 queries and `wrangler r2 bucket info xstate-mail-blobs` on 2026-11-16; deepo `df`;
   vectors, org R2 bucket, MailboxStore size, mail volume and the SES bill on 2026-11-18
 - Rows per analytics event: counted from `apps/api/src/audience/store.ts` on 2026-11-19 (not measured)

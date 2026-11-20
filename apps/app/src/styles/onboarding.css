@@ -89,6 +89,26 @@ main { flex: 1; padding: 0 48px; }
 .addr .done { margin: 0 10px; color: var(--text-muted); }
 .addr-add { height: 36px; border: 1px dashed var(--border); border-radius: 7px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--text-dim); width: 100%; }
 .addr-add:hover { color: var(--text-hi); }
+/* Team step: a teammate being added, one already added, and the section labels */
+.section-label { font-size: 12px; color: var(--text-muted); }
+.addr .addr-note { margin: 0 12px; font-size: 12px; color: var(--text-dim); }
+.addr-add:disabled { opacity: 0.4; cursor: default; }
+.person { border: 1px solid var(--border); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; gap: 8px; background: var(--bg-muted); }
+.person-row { display: flex; align-items: center; gap: 8px; }
+.person-row .input { flex: 1; min-width: 0; }
+.person .remove { color: var(--text-dim); padding: 0 4px; }
+.person .remove:hover { color: var(--text-hi); }
+.select { height: 36px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text-hi); font: inherit; }
+.person-done { min-height: 48px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+.person-done .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--bg-muted); color: var(--text-hi); font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-done:has(.invite-link) { align-items: flex-start; }
+.person-done:has(.invite-link) .avatar { margin-top: 2px; }
+.invite-link { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; }
+.invite-link code { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--text-toned); background: var(--bg-muted); border-radius: 5px; padding: 4px 6px; }
+.invite-link .copy { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+.invite-link .copy:hover { color: var(--text-hi); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-hi); font-size: 12px; }
 .chip[aria-pressed="true"] { border-color: var(--text-hi); background: var(--primary-10); }

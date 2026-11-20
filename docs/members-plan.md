@@ -54,8 +54,8 @@ Why:
 - One person, one inbox. Search, push alerts, agents, storage use and the delete question all apply to one
   mailbox. With separate mailboxes, each of those multiplies by the number of domains.
 - The schema already supports it (`addresses`), so no new mailbox kind or per-domain access rows are needed.
-- Pricing counts people and gives aliases free (`docs/pricing-plan.md` §1). Separate mailboxes would blur what
-  a seat is.
+- Plans count mailboxes (Free allows 5, personal and shared together; `docs/pricing-plan.md` §1). Separate
+  mailboxes per domain would use that limit up for one person, while aliases are free.
 - Anyone who really needs a separate inbox for one domain should use a shared mailbox.
 
 Changes to the design:
@@ -253,7 +253,7 @@ The `member_has_mailbox` refusal is removed, because the dialog now handles the 
   - **My Files:** moved into "From <name>" in the deleter's My Files (or the owner's, if the deleter has left).
   - **Agents:** handed to that person.
   - **Membership:** removed. The account is removed too when it's in no other organization.
-  - **Tokens and seats:** their API tokens are revoked (the existing email goes to admins) and seats are synced.
+  - **Tokens:** their API tokens are revoked (the existing email goes to admins).
 - "Move mail into another member's mailbox" isn't built.
 - The old `DELETE /members/:id` stays for cancelling invites and for leaving an organization.
 - To test the hourly job locally, run the `api-cron` launch config (`wrangler dev --test-scheduled`) and open
@@ -296,7 +296,8 @@ suspend and sign out everywhere for admins. Adding members stays on the web.
 - 2-step verification (its own project; the design's Reset button stays hidden until then).
 - Storage limits per member (blocked on pricing limits).
 - Mail forwarding to outside addresses (blocked by the SES forwarding rules in `ses-todo-later`).
-- Seat billing prompts in Add member ("Adds a seat: $12 a month"). Add these once per-seat limits are built.
+- Plan limits in Add member. There is no charge per person or seat. Free allows 5 mailboxes, and adding a
+  member with a mailbox is refused with 402 `plan_limit` past that (`docs/billing-limits-plan.md`).
 
 #### Phase 6 as built (2026-11-18)
 
@@ -326,3 +327,21 @@ owner instead of the invited Mohammad Asif.
   mail to another member, invited ones included. The member dialog offers "Give this mailbox to someone else…".
 - **Not built:** merging separate mailboxes into one (moving mail between stores).
 
+
+#### Follow-up: the onboarding team step (2026-11-20)
+
+Onboarding step 4 (`apps/app/src/onboarding/TeamStep.tsx`, "Set up your team") replaces "Create your email addresses",
+which made every extra address a shared mailbox and had no way to add a person:
+- **Your mailbox**, then **team members** (name, mailbox name suggested from the name, an email for the invite, Member
+  or Admin), then **shared mailboxes** (hello@ / support@ / sales@ / Custom).
+- Teammates go through `members_add` with `signIn: 'invite'`, so each gets their own mailbox and signs in with it. Only
+  invites here: a temporary password is shown once, which doesn't suit a list. Settings → Members offers it.
+- Every teammate with the Member role added here gets Full access to every shared mailbox, and every shared mailbox
+  added here is opened to the existing teammates. Admins open all shared mailboxes anyway.
+- The step shows "N of 5 mailboxes on your plan" from `billing_usage` and stops before the API would refuse
+  (`plan_limit`). The server check stays the real one.
+- An invite that wasn't sent keeps the person on the step with the reason and the invite link (with Copy) on their
+  row; Continue moves on. `deliver` now returns `inviteUrl` whenever the email didn't go out, production included
+  (before: only outside production), so Settings → Add member shows the link too.
+- A return visit shows what exists. Onboarding puts the owner's own mailbox first in its list (several personal
+  mailboxes are listed by address), so "your address is …" is right.

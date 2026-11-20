@@ -4,7 +4,6 @@
 import { PROGRESS_KEY, readJson, writeJson } from '../lib/core'
 import type { Domain, Mailbox, Org, User } from '../lib/types'
 
-export const LOCAL_PART_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 export const POLL_MS = 5000
 
 export type Provider = { id?: string; name?: string }
@@ -14,11 +13,13 @@ export type Data = {
   org: Org
   domain: Domain | null
   mailboxes: Mailbox[]
+  /** Team members other than the owner, known once the team step has loaded them. */
+  teammates?: number
   /** The DNS provider found by the domain check in this visit. */
   provider?: Provider | null
 }
 
-export type Screen = 'loading' | 'account' | 'login' | 'domain' | 'verify' | 'addresses' | 'agent' | 'done' | 'error'
+export type Screen = 'loading' | 'account' | 'login' | 'domain' | 'verify' | 'team' | 'agent' | 'done' | 'error'
 
 export const STEP_LABELS: Record<Screen, string> = {
   loading: '',
@@ -26,7 +27,7 @@ export const STEP_LABELS: Record<Screen, string> = {
   login: '',
   domain: '2 of 5',
   verify: '3 of 5',
-  addresses: '4 of 5',
+  team: '4 of 5',
   agent: '5 of 5',
   done: 'Done',
   error: '',

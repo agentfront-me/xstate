@@ -24,7 +24,9 @@ change how something works. Recent changes are listed [at the end](#changes).
   cookie that says you're signed in, so it can show "Open app"; it holds no token and grants no access.
 - **Invitations** use a long random link. We store only a hash of it, and it expires after 14 days. Sending a new
   invitation cancels the old link. Someone added with their own mailbox signs in with its address; their
-  invitation goes to a secondary email they can already read.
+  invitation goes to a secondary email they can already read. If the email can't be sent, the link is shown to the
+  admin who added them, to pass on another way. Admins can already set that person's password, so it gives them no
+  extra access.
 - **Temporary passwords.** An admin can add someone with a temporary password instead of an invitation. It's shown
   to the admin once and stored only as a hash. Signing in with it only lets the person choose their own password
   (a 15-minute, single-purpose token), and the new one must be different. Admins can only set one for someone who
@@ -234,6 +236,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 20, 2026:** When an invitation email can't be sent, the admin who sent it sees the invitation link
+  to pass on another way.
 - **November 19, 2026:** xstate records its own product analytics (page visits, sign-ups and key actions such as
   adding a domain or sending mail, as counts only) with xstate Analytics on xstate.com and go.xstate.com.
 - **November 19, 2026:** The analytics snippet keeps its random visitor id in a first-party cookie on the site's

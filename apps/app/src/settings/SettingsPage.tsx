@@ -40,6 +40,7 @@ import { ConnectedAppsSection } from './ConnectedApps'
 import { ConnectorsSection } from './Connectors'
 import { PersonalTokens } from './PersonalTokens'
 import { setSettings, useSettingsData, type SettingsData } from './store'
+import { isLocalPart } from '../lib/local-part'
 
 type Section = {
   id: 'account' | 'members' | 'domains' | 'migration' | 'connected-apps' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
@@ -863,7 +864,6 @@ const KIND_HINT: Record<MailboxKind, string> = {
   shared: 'For addresses like hello@ or support@. You get access now, and can give it to others later.',
   agent: 'For an AI agent, which reads and sends from it in xstate.',
 }
-const LOCAL_PART_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 
 /** The mailboxes on one domain, and (for admins) a form to add another. */
 function DomainMailboxes({ account, domain: d }: { account: Account; domain: Domain }) {
@@ -931,7 +931,7 @@ function AddMailboxForm({
     event.preventDefault()
     const localPart = local.trim().toLowerCase()
     const address = `${localPart}@${d.name}`
-    if (!LOCAL_PART_RE.test(localPart) || localPart.includes('..')) return setError('Use letters, numbers, dots, dashes and underscores, like jane or support.')
+    if (!isLocalPart(localPart)) return setError('Use letters, numbers, dots, dashes and underscores, like jane or support.')
     if (account.mailboxes.some((m) => m.address === address)) return setError(`${address} already exists.`)
     if (kind === 'personal' && !owner) return setError('Choose whose inbox this is.')
     setSaving(true)
@@ -1249,7 +1249,6 @@ function OrgKeys({ account }: { account: Account }) {
 
 function BillingSection({ data }: { data: SettingsData }) {
   const b = data.billing
-  const used = 1 + data.members.filter((m) => !m.invited).length
   const soon = () => toast('Billing changes are coming soon')
 
   return (
@@ -1261,7 +1260,7 @@ function BillingSection({ data }: { data: SettingsData }) {
               {b.plan} · {b.price}
             </span>
             <span className="sub">
-              Renews {b.renews}. {b.seats} seats, {used} of them in use.
+              Renews {b.renews}. Up to {b.people.toLocaleString('en-US')} people a month, no charge per seat.
             </span>
           </div>
           <button className="btn" onClick={soon}>

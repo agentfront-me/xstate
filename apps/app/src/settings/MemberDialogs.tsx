@@ -10,6 +10,7 @@ import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
 import { refreshAccount, type Account } from '../lib/account'
 import { copyText, errorMessage, initials, isEmail } from '../lib/core'
+import { localOf, localPartFromName } from '../lib/local-part'
 import type { Domain } from '../lib/types'
 import { Modal } from '../storage/dialogs'
 import '../styles/storage.css'
@@ -58,10 +59,6 @@ export function DeliveryNote({ to, delivery }: { to: string; delivery: Delivery 
   )
 }
 
-const localOf = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '.')
-
-/** Suggests a mailbox name from a full name: "Jordan Lee" → "jordan". */
-const suggestLocal = (name: string) => localOf(name.split(/\s+/)[0] ?? '').replace(/[^a-z0-9._-]/g, '')
 
 // ---------------------------------------------------------------------------------------------------------------
 // Add member
@@ -107,7 +104,7 @@ function AddWithMailboxDialog({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const localPart = localTouched ? localOf(local) : suggestLocal(name)
+  const localPart = localTouched ? localOf(local) : localPartFromName(name)
   const domainName = (id: string) => domains.find((d) => d.id === id)?.name ?? ''
   const others = domains.filter((d) => d.id !== domainId)
 

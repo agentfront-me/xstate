@@ -47,7 +47,7 @@ export type NewMember = {
   recoveryEmail?: string
 }
 
-/** Whether the invite email went out. Outside production the API also returns the link (local mail goes nowhere). */
+/** Whether the invite email went out. The API returns the link when it didn't (and always outside production). */
 export type Delivery = { sent: boolean; reason?: string; inviteUrl?: string }
 
 const key = (orgId: string) => ['members', orgId] as const
@@ -82,11 +82,21 @@ export async function inviteMember(client: QueryClient, orgId: string, input: { 
   return result
 }
 
-/** Adds someone with their own mailbox. `password` is the temporary password, shown once. */
+/** Adds someone with their own mailbox. `password` is the temporary password, shown once. No cache: onboarding. */
+export function postMember(orgId: string, input: NewMember) {
+  return api<{ member: OrgMember; email: Delivery | null; password?: string }>('POST', `/members/orgs/${orgId}/add`, input)
+}
+
+/** postMember, then the members cache. */
 export async function addMember(client: QueryClient, orgId: string, input: NewMember) {
-  const result = await api<{ member: OrgMember; email: Delivery | null; password?: string }>('POST', `/members/orgs/${orgId}/add`, input)
+  const result = await postMember(orgId, input)
   put(client, orgId, result.member)
   return result
+}
+
+/** The members, straight from the API (no cache). */
+export async function fetchMembers(orgId: string) {
+  return (await api<{ members: OrgMember[] }>('GET', `/members/orgs/${orgId}`)).members.map(complete)
 }
 
 export async function updateMember(client: QueryClient, orgId: string, memberId: string, changes: { name?: string; recoveryEmail?: string | null }) {
@@ -140,9 +150,14 @@ export async function deleteMember(client: QueryClient, orgId: string, memberId:
 
 /** Gives a member access to a shared mailbox (or changes its level), or takes it away (null). */
 export async function setSharedAccess(client: QueryClient, orgId: string, mailboxId: string, memberId: string, access: 'full' | 'read' | null) {
+  await putSharedAccess(mailboxId, memberId, access)
+  await Promise.all([client.invalidateQueries({ queryKey: key(orgId) }), client.invalidateQueries({ queryKey: ['mailbox-access', mailboxId] })])
+}
+
+/** setSharedAccess without the cache. */
+export async function putSharedAccess(mailboxId: string, memberId: string, access: 'full' | 'read' | null) {
   if (access) await api('PUT', `/email/mailboxes/${mailboxId}/access/${memberId}`, { access })
   else await api('DELETE', `/email/mailboxes/${mailboxId}/access/${memberId}`)
-  await Promise.all([client.invalidateQueries({ queryKey: key(orgId) }), client.invalidateQueries({ queryKey: ['mailbox-access', mailboxId] })])
 }
 
 /** Hands a personal mailbox, with its mail, to another member. */

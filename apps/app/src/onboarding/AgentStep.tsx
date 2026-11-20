@@ -169,7 +169,7 @@ export function DoneStep({ data, verify, agent }: { data: Data; verify: () => vo
     { label: 'Create your first address', done: true },
     { label: `Connect ${domainName(data)}`, done: verified, action: 'Connect', go: verify },
     { label: 'Send yourself a test email' },
-    { label: 'Add a teammate' },
+    { label: 'Add a teammate', done: !!data.teammates },
     { label: 'Connect an AI agent', done: connected, action: 'Connect', go: agent },
   ]
 

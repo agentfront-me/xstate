@@ -1,6 +1,6 @@
 // Sign-in and onboarding: /login and /signup. One step at a time.
 //
-// Steps: 1 create account → 2 your domain → 3 verify domain → 4 create addresses → 5 connect agent → done.
+// Steps: 1 create account → 2 your domain → 3 verify domain → 4 your team → 5 connect agent → done.
 // After sign-in the step comes from the account itself (domain added? verified? mailboxes?), so a reload or a
 // later sign-in resumes where the person left off. Choices the API doesn't store yet (skipping verification,
 // finishing step 5) are kept in localStorage.
@@ -11,13 +11,14 @@ import { createRoot } from 'react-dom/client'
 import { api, ApiError, errorMessage, session, SITE_URL } from '../lib/core'
 import type { Domain, Mailbox, Org, User } from '../lib/types'
 import { AccountStep, LoginStep } from './AccountStep'
-import { AddressesStep } from './AddressesStep'
 import { AgentStep, DoneStep } from './AgentStep'
 import { DomainStep } from './DomainStep'
+import { TeamStep } from './TeamStep'
 import { progress, readConnectReturn, STEP_LABELS, type Data, type Screen } from './state'
 import { Head } from './ui'
 import { VerifyStep } from './VerifyStep'
 import { identify } from '../lib/analytics'
+import { fetchMembers } from '../settings/members'
 
 readConnectReturn()
 
@@ -43,6 +44,16 @@ function Onboarding() {
       api<{ mailboxes: Mailbox[] }>('GET', `/email/orgs/${org.id}/mailboxes`),
     ])
     const next: Data = { user: me.user, org, domain: domains[0] ?? null, mailboxes }
+    // With teammates there are several personal mailboxes, listed by address: put yours first, since the later
+    // steps show "your address".
+    if (mailboxes.filter((m) => m.kind === 'personal').length > 1) {
+      const members = await fetchMembers(org.id).catch(() => null)
+      if (members) {
+        const own = new Set(members.find((m) => m.you)?.mailboxes.map((mb) => mb.id))
+        next.mailboxes = [...mailboxes.filter((m) => own.has(m.id)), ...mailboxes.filter((m) => !own.has(m.id))]
+        next.teammates = members.filter((m) => !m.you && !m.deleteAfter).length
+      }
+    }
     const p = progress()
 
     // Signing in to an account that already has addresses: go straight to the dashboard. Onboarding is for new
@@ -55,7 +66,7 @@ function Onboarding() {
     setData(next)
     if (!next.domain) return setScreen('domain')
     if (next.domain.status !== 'verified' && p.skippedVerify !== next.domain.id && !next.mailboxes.length) return setScreen('verify')
-    if (!next.mailboxes.length) return setScreen('addresses')
+    if (!next.mailboxes.length) return setScreen('team')
     if (!p.finished) return setScreen('agent')
     setScreen('done')
   }, [])
@@ -96,9 +107,9 @@ function Onboarding() {
   else if (data) {
     if (screen === 'domain') view = <DomainStep data={data} update={update} next={go('verify')} />
     else if (screen === 'verify' && data.domain)
-      view = <VerifyStep key={data.domain.id} data={data} update={update} back={go('domain')} next={go('addresses')} />
-    else if (screen === 'addresses') view = <AddressesStep data={data} update={update} back={go('verify')} next={go('agent')} />
-    else if (screen === 'agent') view = <AgentStep data={data} back={go('addresses')} next={go('done')} />
+      view = <VerifyStep key={data.domain.id} data={data} update={update} back={go('domain')} next={go('team')} />
+    else if (screen === 'team') view = <TeamStep data={data} update={update} back={go('verify')} next={go('agent')} />
+    else if (screen === 'agent') view = <AgentStep data={data} back={go('team')} next={go('done')} />
     else if (screen === 'done') view = <DoneStep data={data} verify={go('verify')} agent={go('agent')} />
   }
 

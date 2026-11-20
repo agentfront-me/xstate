@@ -13,7 +13,7 @@ function at(daysAgo: number, hh: number, mm: number): string {
 }
 
 export const sampleUser: User = { id: 'usr_demo', email: 'asif@xstate.com', name: 'Asif Khan' }
-export const sampleOrg: Org = { id: 'org_demo', name: 'xstate', role: 'owner', plan: 'Pro' }
+export const sampleOrg: Org = { id: 'org_demo', name: 'xstate', role: 'owner', plan: 'Growth' }
 
 export const sampleDomains: Domain[] = [
   { id: 'dom_1', name: 'xstate.com', status: 'verified', enabled: true },
@@ -164,7 +164,8 @@ export type Billing = {
   price: string
   renews: string
   renewsShort: string
-  seats: number
+  /** The plan's size: people reached a month (Growth is $49 for 5,000, then $1 per extra 100). */
+  people: number
   usage: Usage[]
   card: { brand: string; last4: string; expires: string; email: string }
   invoices: { date: string; amount: string }[]
@@ -191,10 +192,10 @@ export const sampleBilling: Billing = {
   price: '$99 / month',
   renews: 'December 1, 2026',
   renewsShort: 'Dec 1',
-  seats: 5,
+  // Growth at 10,000 people: $49 + 50 × $1 = $99, with 50 + 50 GB of storage.
+  people: 10000,
   usage: [
-    { label: 'AI tokens', used: 3.2, total: 5, format: (u: number, t: number) => `${u}M of ${t}M` },
-    { label: 'Conversations', used: 7412, total: 10000, format: (u: number, t: number) => `${u.toLocaleString('en-US')} of ${t.toLocaleString('en-US')}` },
+    { label: 'People reached', used: 7412, total: 10000, format: (u: number, t: number) => `${u.toLocaleString('en-US')} of ${t.toLocaleString('en-US')}` },
     { label: 'Storage', used: 42.6, total: 100, format: (u: number, t: number) => `${u} GB of ${t} GB` },
   ],
   card: { brand: 'Visa', last4: '4242', expires: '08/2028', email: 'billing@xstate.com' },
