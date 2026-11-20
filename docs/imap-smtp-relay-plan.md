@@ -1,9 +1,9 @@
 # Plan: mail apps and calendar apps (IMAP, SMTP, CalDAV)
 
 Status: **draft, 2026-11-20.** The four open questions were answered the same day (§12), and a review the same day
-changed the plan in 13 places (§13). **Phase 0 built and tested locally 2026-11-20; its production half (the bridge
-on deepo, the overnight test) is waiting (§14). Phases 1 and 2 built and tested locally 2026-11-20 (§15, §16).** Work is
-on the `mail-apps` branch, not pushed.
+changed the plan in 13 places (§13). **Phases 0, 1 and 2 are built and deployed (2026-11-20; §14–§16), and
+tested in production through deepo (§17).** Mail apps are released to the main organization only (`MAIL_APPS`). Not
+done yet: the mail ports aren't open to the internet and the bridge has a temporary self-signed certificate (§17).
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -480,4 +480,51 @@ in fake mode; 18 checks, all passing):
 **Still to check in production** (after the bridge is on deepo): a real send to Gmail from Apple Mail, Thunderbird
 and Outlook; that the Bcc recipient gets the message and the others can't see them; that a reply threads with the
 Sent copy.
+
+## 17. Production test (2026-11-20)
+
+**Deployed:** `mail-apps` merged to main and pushed (e6a9b1e): the Worker has `/relay/imap` and `/relay/smtp`, the
+`ImapSession` and `SmtpSession` classes, migration 0047 and the two sign-in rate limiters. `RELAY_SECRET` is set.
+`MAIL_APPS` is the main organization's id, so only it sees the App passwords tab.
+
+**On deepo:** the bridge runs as the `mail-bridge` user under the sandboxed unit (systemd rates its exposure 2.4,
+"OK"), listening on 993, 465 and 587, with the secret in `/etc/mail-bridge/secret`. Its certificate is a
+**temporary self-signed one**. The load tool is at `/usr/local/bin/mail-bridge-loadtest`
+(`services/mail-bridge/loadtest`).
+
+**Tested through an SSH tunnel to deepo** (so: real bridge, real Worker, real SES; only the public ports missing):
+- The spike test passes in production, all 12 checks: sign-in with a real app password, hibernation, the UID list in
+  storage, the wake-up during IDLE, flow control on a 30 MB download, clean-up on logout.
+- Real sending: two messages from asif@xstate.com to itself, one on 465 with an attachment (4.5 seconds) and one on
+  587 with STARTTLS and AUTH LOGIN. Both arrived in the Inbox, and each has exactly one Sent copy. A wrong From
+  header and a wrong MAIL FROM were refused with 550.
+- The App passwords screen works on go.xstate.com (created there for these tests).
+
+**Memory per connection, measured** (connections opened on deepo itself, held, bridge memory read from `ps`):
+
+| Open connections | Bridge memory | Per connection |
+|---|---|---|
+| 0 | 11 MB | – |
+| 250 | 32 MB | 84 KB |
+| 500 | 64 MB | 105 KB |
+| 1,000 | 117 MB | 106 KB |
+
+So about **105 KB per connection**, at the top of the estimate. With about 420 MB available on deepo today, the
+bridge can hold roughly 3,000 connections before the machine gets tight; a larger instance raises that in step.
+All 1,000 opened without a failure.
+
+**Running:** a 12-hour idle test on deepo (unit `mail-bridge-idle-test`, signed in as asif@xstate.com, IDLE renewed
+every 25 minutes), started 08:57 UTC, ending 20:57 UTC. Read it with
+`sudo journalctl -u mail-bridge-idle-test`; the last line says PASSED or LOST.
+
+**Still to do**
+1. **Open ports 993, 465 and 587** in deepo's security group, and confirm 3.130.37.150 is an Elastic IP. Needs
+   `aws login` (the session has expired).
+2. **A real certificate** for `mail.xstate.com` from Let's Encrypt. deepo has no Let's Encrypt account any more, so
+   this means registering one and accepting their terms; it also needs a small nginx server block for
+   `mail.xstate.com` on port 80 (today port 80 redirects everything to hireninja).
+3. After both: Apple Mail, Thunderbird and Outlook against `mail.xstate.com`, and a send to Gmail with a Bcc.
+4. Read the cost of the idle test's Durable Object from Cloudflare's analytics and write the cost per connection
+   into `pricing-plan.md`.
+5. Revoke the app password "Production test (temporary)" once the idle test has ended.
 
