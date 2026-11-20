@@ -823,7 +823,6 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
   const client = useQueryClient()
   const [checking, setChecking] = useState(false)
   const [removing, setRemoving] = useState(false)
-  const n = mailboxesOf(account, d.id).length
   const verified = d.status === 'verified'
   const records = verified ? [] : (account.records[d.id] ?? [])
 
@@ -841,7 +840,23 @@ function DomainRow({ account, domain: d }: { account: Account; domain: Domain })
   }
 
   const remove = async () => {
-    if (!confirm(`Remove ${d.name}?${n ? ` Its ${n} ${n === 1 ? 'mailbox' : 'mailboxes'} will stop receiving mail.` : ''}`)) return
+    // The server refuses while any address is on the domain, so say what to delete first instead of asking.
+    const boxes = mailboxesOf(account, d.id)
+    if (boxes.length) {
+      const shared = boxes.filter((m) => m.kind === 'shared').map((m) => m.address)
+      const personal = boxes.filter((m) => m.kind !== 'shared').map((m) => m.address)
+      alert(
+        [
+          `${d.name} still has ${boxes.length} ${boxes.length === 1 ? 'mailbox' : 'mailboxes'}. Delete ${boxes.length === 1 ? 'it' : 'them'} first, then remove the domain.`,
+          shared.length ? `\nShared (delete in Members → Shared mailboxes):\n${shared.join('\n')}` : '',
+          personal.length ? `\nPersonal (delete the member in Members):\n${personal.join('\n')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+      return
+    }
+    if (!confirm(`Remove ${d.name}? Mail to it will stop being received.`)) return
     setRemoving(true)
     try {
       await removeDomain(client, d.id)

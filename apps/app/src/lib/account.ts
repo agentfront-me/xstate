@@ -162,6 +162,12 @@ export async function createMailbox(client: QueryClient, domainId: string, input
   return result
 }
 
+/** Permanently deletes a mailbox with all its mail, addresses and files. */
+export async function deleteMailbox(client: QueryClient, mailboxId: string): Promise<void> {
+  if (current(client).mode === 'live') await api('DELETE', `/email/mailboxes/${mailboxId}`)
+  update(client, (x) => ({ ...x, mailboxes: x.mailboxes.filter((m) => m.id !== mailboxId) }))
+}
+
 /** Reloads the account (its mailboxes), after something else created or removed one, such as adding a member. */
 export const refreshAccount = (client: QueryClient) => client.invalidateQueries({ queryKey: KEY })
 

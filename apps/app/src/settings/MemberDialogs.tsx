@@ -8,7 +8,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { Icon } from '../components/Icon'
 import { toast } from '../components/Toast'
-import { createMailbox, refreshAccount, type Account } from '../lib/account'
+import { createMailbox, deleteMailbox, refreshAccount, type Account } from '../lib/account'
 import { copyText, errorMessage, initials, isEmail } from '../lib/core'
 import { isLocalPart, localOf, localPartFromName } from '../lib/local-part'
 import type { Domain } from '../lib/types'
@@ -1119,7 +1119,63 @@ function SharedMailboxDialog({
             </div>
           )}
         </section>
+        {manage && <DeleteMailboxSection mailbox={mailbox} onDeleted={onClose} />}
       </div>
     </Modal>
+  )
+}
+
+/** Deletes a shared mailbox for good: its mail, addresses and files. Typing the address confirms. */
+function DeleteMailboxSection({ mailbox, onDeleted }: { mailbox: { id: string; address: string }; onDeleted: () => void }) {
+  const client = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const ready = typed.trim().toLowerCase() === mailbox.address.toLowerCase()
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await deleteMailbox(client, mailbox.id)
+      client.removeQueries({ queryKey: accessKey(mailbox.id) })
+      toast(`${mailbox.address} deleted`)
+      onDeleted()
+    } catch (err) {
+      toast(errorMessage(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section>
+      <div className="md-row">
+        <div>
+          <h3 className="danger">Delete mailbox</h3>
+          <p className="hint">Deletes all its mail, its addresses and its files now. This can't be undone.</p>
+        </div>
+        {!open && (
+          <button className="btn btn-sm danger" onClick={() => setOpen(true)}>
+            Delete mailbox
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="delete-panel">
+          <p className="hint">Mail sent to {mailbox.address} afterwards bounces. Members lose access to it at once.</p>
+          <label className="field">
+            Type {mailbox.address} to confirm
+            <input className="text-input" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+          </label>
+          <span className="row-gap">
+            <button className="btn btn-sm btn-quiet" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-sm danger" disabled={!ready || busy} aria-busy={busy || undefined} onClick={() => void submit()}>
+              Delete mailbox
+            </button>
+          </span>
+        </div>
+      )}
+    </section>
   )
 }
