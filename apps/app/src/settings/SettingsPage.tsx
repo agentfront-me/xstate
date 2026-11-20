@@ -42,7 +42,7 @@ import { PersonalTokens } from './PersonalTokens'
 import { setSettings, useSettingsData, type SettingsData } from './store'
 
 type Section = {
-  id: 'account' | 'members' | 'domains' | 'migration' | 'connected-apps' | 'ai-providers' | 'secrets' | 'api-keys' | 'billing' | 'connectors'
+  id: 'account' | 'members' | 'domains' | 'access' | 'agent-setup' | 'billing'
   label: string
   icon: IconName
   sample?: boolean
@@ -69,39 +69,72 @@ const SECTIONS: Section[] = [
     icon: 'at-sign',
     sub: (a) => {
       const n = a.domains.length
-      if (!n) return 'No domains yet'
-      return `${a.domains.filter((d) => d.status === 'verified').length} of ${n} verified`
+      // A Google Workspace import in progress shows here too: its section is on this page.
+      const importing = importingSub(a)
+      if (!n) return importing || 'No domains yet'
+      return `${a.domains.filter((d) => d.status === 'verified').length} of ${n} verified${importing && ` · ${importing}`}`
     },
   },
-  { id: 'migration', label: 'Migration', icon: 'download', sub: (a) => migrationSub(a) },
-  { id: 'connected-apps', label: 'Connected apps', icon: 'bot', sub: () => 'Claude, Cursor and other AI apps' },
-  { id: 'ai-providers', label: 'AI providers', icon: 'sparkles', sub: () => 'Your Anthropic and OpenAI keys' },
+  // What can reach into xstate: AI apps people connected, the organization's keys, personal tokens.
+  { id: 'access', label: 'Apps and API', icon: 'code', sub: () => 'Connected AI apps, API keys and tokens' },
+  // What agents use to reach out: AI accounts, MCP servers, and the secrets those send.
   {
-    id: 'secrets',
-    label: 'Secrets',
-    icon: 'key-round',
-    sub: (a, d) => (a.mode === 'live' ? 'Values for connector headers' : `${d.secrets.length} organization secrets`),
+    id: 'agent-setup',
+    label: 'Agent setup',
+    icon: 'sparkles',
+    sub: (a, d) => (a.mode === 'live' ? 'AI providers, connectors and secrets' : `${d.integrations.filter((i) => i.connected).length} connected · ${d.secrets.length} secrets`),
   },
-  { id: 'api-keys', label: 'API keys', icon: 'code', sub: () => 'Organization keys and personal tokens' },
   {
     id: 'billing',
     label: 'Billing',
     icon: 'credit-card',
     sub: (a, d) => (a.mode === 'live' ? 'Plan, payment and invoices' : `${d.billing.plan} · renews ${d.billing.renewsShort}`),
   },
-  {
-    id: 'connectors',
-    label: 'Connectors',
-    icon: 'plug',
-    sub: (a, d) => (a.mode === 'live' ? 'MCP servers for agents' : `${d.integrations.filter((i) => i.connected).length} connected`),
-  },
 ]
 
-export function SettingsPage({ section }: { section: string }) {
+/** Pages with tabs. `admins`: only owners and admins see the tab. */
+const TABS: Partial<Record<Section['id'], { id: string; label: string; admins?: boolean }[]>> = {
+  access: [
+    { id: 'connected-apps', label: 'Connected apps' },
+    { id: 'org-keys', label: 'Organization keys', admins: true },
+    { id: 'tokens', label: 'Personal tokens' },
+  ],
+  'agent-setup': [
+    { id: 'ai-providers', label: 'AI providers' },
+    { id: 'connectors', label: 'Connectors' },
+    { id: 'secrets', label: 'Secrets' },
+  ],
+}
+
+/**
+ * Sections that became part of another page: the old address (#/settings/secrets, in emails, redirects and links
+ * across the app) opens that page on the right tab, or scrolled to the part.
+ */
+const MOVED: Record<string, { to: Section['id']; tab?: string; part?: string }> = {
+  migration: { to: 'domains', part: 'google-import' },
+  'connected-apps': { to: 'access', tab: 'connected-apps' },
+  // Emails about personal tokens link to api-keys.
+  'api-keys': { to: 'access', tab: 'tokens' },
+  'org-keys': { to: 'access', tab: 'org-keys' },
+  'ai-providers': { to: 'agent-setup', tab: 'ai-providers' },
+  connectors: { to: 'agent-setup', tab: 'connectors' },
+  secrets: { to: 'agent-setup', tab: 'secrets' },
+}
+
+export function SettingsPage({ section, tab: wantedTab }: { section: string; tab?: string }) {
   const account = useAccount()
   const data = useSettingsData()
   const navigate = useNavigate()
-  const s = SECTIONS.find((x) => x.id === section) ?? SECTIONS[0]!
+  const moved = MOVED[section]
+  const toImport = section === 'migration'
+  const s = SECTIONS.find((x) => x.id === (moved?.to ?? section)) ?? SECTIONS[0]!
+  const part = moved?.part
+  useEffect(() => {
+    if (part) document.getElementById(part)?.scrollIntoView({ block: 'start' })
+  }, [part])
+  // The page's tabs this person may see, and the open one: from an old address, else the address's ?tab=, else the first.
+  const tabs = (TABS[s.id] ?? []).filter((t) => !t.admins || isOrgAdmin(account.org))
+  const tab = tabs.find((t) => t.id === (moved?.tab ?? wantedTab))?.id ?? tabs[0]?.id
   const members = useMembers(account.org.id, account.mode === 'live').data
 
   return (
@@ -145,14 +178,40 @@ export function SettingsPage({ section }: { section: string }) {
           <div className="settings-body">
             {s.id === 'account' && <AccountSection account={account} />}
             {s.id === 'members' && (account.mode === 'live' ? <LiveMembers account={account} /> : <MembersSection account={account} data={data} />)}
-            {s.id === 'domains' && <DomainsSection account={account} />}
-            {s.id === 'migration' && <MigrationSection account={account} />}
-            {s.id === 'connected-apps' && <ConnectedAppsSection account={account} />}
-            {s.id === 'ai-providers' && <AiProvidersSection account={account} />}
-            {s.id === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
-            {s.id === 'api-keys' && <ApiKeysSection account={account} />}
+            {s.id === 'domains' && (
+              <>
+                <DomainsSection account={account} />
+                <MigrationSection account={account} startOpen={toImport} />
+              </>
+            )}
+            {tabs.length > 0 && (
+              <nav className="set-tabs" role="tablist" aria-label={s.label}>
+                {tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    role="tab"
+                    id={`tab-${t.id}`}
+                    aria-selected={t.id === tab}
+                    onClick={() => void navigate({ to: '/settings/$section', params: { section: s.id }, search: { tab: t.id } })}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </nav>
+            )}
+            {tabs.length > 0 && (
+              // The tab names the section, so the section's own heading is hidden in here (dashboard.css).
+              <div className="tab-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} key={tab}>
+                {tab === 'connected-apps' && <ConnectedAppsSection account={account} />}
+                {tab === 'org-keys' && <OrgKeys account={account} />}
+                {tab === 'tokens' &&
+                  (account.mode === 'live' ? <PersonalTokens orgId={account.org.id} admin={isOrgAdmin(account.org)} /> : <p className="muted">Sign in to see your personal tokens.</p>)}
+                {tab === 'ai-providers' && <AiProvidersSection account={account} />}
+                {tab === 'connectors' && (account.mode === 'live' ? <ConnectorsSection account={account} /> : <IntegrationsSection data={data} />)}
+                {tab === 'secrets' && (account.mode === 'live' ? <LiveSecretsSection account={account} /> : <SecretsSection data={data} />)}
+              </div>
+            )}
             {s.id === 'billing' && (account.mode === 'live' ? <LiveBillingSection account={account} /> : <BillingSection data={data} />)}
-            {s.id === 'connectors' && (account.mode === 'live' ? <ConnectorsSection account={account} /> : <IntegrationsSection data={data} />)}
           </div>
         </div>
       </div>
@@ -161,7 +220,8 @@ export function SettingsPage({ section }: { section: string }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Migration: the Google Workspace import runs on its own page (/migrate/); this shows where it stands.
+// Migration: the Google Workspace import runs on its own page (/migrate/); this shows where it stands, as the second
+// section of Domains (#/settings/migration still opens it).
 
 const MIGRATION_STAGES: Record<MigrationStage, string> = {
   connect: 'Not started',
@@ -177,16 +237,23 @@ const MIGRATION_STAGES: Record<MigrationStage, string> = {
 
 const migrationUrl = () => `/migrate/${isDemo() ? '?demo' : ''}`
 
-function migrationSub(account: Account): string {
+/** An import that is under way, for the Domains menu item: "Importing 42%". Empty before one starts and after it ends. */
+function importingSub(account: Account): string {
   const m = migrationSummary(account.org.id)
-  if (!m || m.stage === 'connect') return 'Import from Google Workspace'
-  return m.percent !== null ? `${MIGRATION_STAGES[m.stage]} · ${m.percent}%` : MIGRATION_STAGES[m.stage]
+  if (!m || m.stage === 'connect' || m.stage === 'done') return ''
+  return m.percent !== null ? `Importing ${m.percent}%` : `Import: ${MIGRATION_STAGES[m.stage].toLowerCase()}`
 }
 
-function MigrationSection({ account }: { account: Account }) {
+function MigrationSection({ account, startOpen }: { account: Account; startOpen: boolean }) {
   const admin = isOrgAdmin(account.org)
   const m = migrationSummary(account.org.id)
   const started = !!m && m.stage !== 'connect'
+  // A link until it's clicked. It stays open on its own while there's something to see: an import under way, or
+  // the reminder that xstate can still read Google.
+  const [opened, setOpened] = useState(startOpen)
+  useEffect(() => {
+    if (startOpen) setOpened(true)
+  }, [startOpen])
   // After an import ends, a reminder until xstate's access to Google Workspace is removed.
   const [reminder, setReminder] = useState<AccessReminder>({ open: false })
   const [startingNew, setStartingNew] = useState(false)
@@ -205,9 +272,31 @@ function MigrationSection({ account }: { account: Account }) {
     if (account.mode !== 'live' || !admin) return
     accessReminder(account.org.id).then(setReminder, () => undefined)
   }, [account.mode, account.org.id, admin])
+  const underWay = started && m.stage !== 'done'
+  const open = opened || underWay || reminder.open
+  if (!open) {
+    return (
+      <div className="group" id="google-import">
+        <button className="link-toggle" aria-expanded={false} onClick={() => setOpened(true)}>
+          <Icon name="download" size={14} />
+          Import from Google Workspace
+          <Icon name="chevron-right" size={13} />
+        </button>
+      </div>
+    )
+  }
   return (
-    <div className="group">
+    <div className="group" id="google-import">
       <GroupHead
+        aside={
+          !underWay &&
+          !reminder.open && (
+            <button className="link-toggle" aria-expanded onClick={() => setOpened(false)}>
+              Hide
+              <Icon name="chevron-down" size={13} />
+            </button>
+          )
+        }
         title="Import from Google Workspace"
         sub="Move every user's mail, contacts, calendars and Drive files from Google Workspace to xstate. xstate only reads from Google; nothing there is changed or deleted."
       />
@@ -967,21 +1056,6 @@ function SecretsSection({ data }: { data: SettingsData }) {
 // API keys, in two tabs. Organization Keys: the organization's publishable and secret key, for tracking in the
 // Users section; owners and admins only. Personal Tokens: each member's own tokens for sending email from their
 // server (./PersonalTokens); everyone.
-
-function ApiKeysSection({ account }: { account: Account }) {
-  const admin = isOrgAdmin(account.org)
-  const [tab, setTab] = useState<'org' | 'personal'>(admin ? 'org' : 'personal')
-  if (account.mode !== 'live') return <p className="muted">Sign in to see your organization's API keys.</p>
-  return (
-    <>
-      <nav className="set-tabs" role="tablist" aria-label="API keys">
-        {admin && <button role="tab" aria-selected={tab === 'org'} onClick={() => setTab('org')}>Organization Keys</button>}
-        <button role="tab" aria-selected={tab === 'personal'} onClick={() => setTab('personal')}>Personal Tokens</button>
-      </nav>
-      {tab === 'org' && admin ? <OrgKeys account={account} /> : <PersonalTokens orgId={account.org.id} admin={admin} />}
-    </>
-  )
-}
 
 function OrgKeys({ account }: { account: Account }) {
   const admin = isOrgAdmin(account.org)

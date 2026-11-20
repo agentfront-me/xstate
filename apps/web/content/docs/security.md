@@ -154,7 +154,7 @@ calendar, files and contacts.
   domains and mailboxes is off unless an owner or admin turns it on for that connection.
 - **Tokens.** Access tokens last one hour and are stored only as hashes. A connection ends 30 days after its last
   use. If you leave an organization, the app loses access to it straight away.
-- **You can disconnect an app at any time** in Settings → Connected apps, which shows what each app may do and
+- **You can disconnect an app at any time** in Settings → Apps and API, which shows what each app may do and
   when it was last active. Owners and admins see every app connected to the organization and can disconnect any
   of them. Access ends at once.
 - **Limits and records.** Each connected app can make up to 120 calls a minute. Every call is logged with who made

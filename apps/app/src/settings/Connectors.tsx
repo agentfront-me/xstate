@@ -1,5 +1,5 @@
-// Settings → Connectors: MCP servers the organization's agents can use (design: "+ Add connector"). Added by URL,
-// signed in with OAuth or sent headers whose values can use Settings → Secrets ({{secret.NAME}}). Owners and admins
+// Settings → Agent setup → Connectors: MCP servers the organization's agents can use (design: "+ Add connector"). Added by URL,
+// signed in with OAuth or sent headers whose values can use Settings → Agent setup → Secrets ({{secret.NAME}}). Owners and admins
 // change them; people who manage agents can see them. Each agent then picks which of a connector's tools it may use.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -16,7 +16,7 @@ export const STATUS: Record<Connector['status'], string> = { connected: 'Connect
 
 const AUTH_LABEL: Record<ConnectorAuth, string> = { none: 'No sign-in', headers: 'Headers', oauth: 'OAuth sign-in' }
 
-/** Opens an OAuth sign-in page. The provider sends the person back to Settings → Connectors. */
+/** Opens an OAuth sign-in page. The provider sends the person back to Settings → Agent setup → Connectors. */
 export function openSignIn(url: string) {
   const w = window.open(url, '_blank')
   if (w) w.opener = null
@@ -46,7 +46,7 @@ function Connectors({ orgId, admin }: { orgId: string; admin: boolean }) {
     const error = params.get('error')
     if (params.get('connected')) toast('Connected')
     if (error) toast(error)
-    if (params.size) history.replaceState(null, '', location.href.split('?')[0])
+    if (params.has('connected') || error) history.replaceState(null, '', location.href.split('?')[0])
   }, [])
 
   const act = async (c: Connector, what: 'refresh' | 'signin') => {
@@ -248,7 +248,7 @@ export function ConnectorDialog({ orgId, connector, onClose, onSaved }: { orgId:
                 </div>
               ))}
               <button type="button" className="a-link" onClick={() => setHeaders([...headers, { name: '', value: '' }])}>Add header</button>
-              <span className="dim small">Put tokens in Settings → Secrets and refer to them as {'{{secret.NAME}}'}: they're filled in only when a call is made, and never shown to agents.</span>
+              <span className="dim small">Put tokens in Settings → Agent setup → Secrets and refer to them as {'{{secret.NAME}}'}: they're filled in only when a call is made, and never shown to agents.</span>
             </div>
           )}
         </div>

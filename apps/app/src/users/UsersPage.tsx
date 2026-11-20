@@ -377,7 +377,7 @@ function Setup({ orgId, canManage }: { orgId: string; canManage: boolean }) {
       </p>
       {canManage && (
         <div>
-          <button className="btn btn-sm" onClick={() => void navigate({ to: '/settings/$section', params: { section: 'api-keys' } })}>
+          <button className="btn btn-sm" onClick={() => void navigate({ to: '/settings/$section', params: { section: 'org-keys' } })}>
             <Icon name="key-round" size={13} />API keys
           </button>
         </div>

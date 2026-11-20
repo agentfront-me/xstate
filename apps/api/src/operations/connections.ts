@@ -1,4 +1,4 @@
-// Connecting an AI app over MCP: the consent page's calls (mcp/consent.ts), and Settings → Connected apps
+// Connecting an AI app over MCP: the consent page's calls (mcp/consent.ts), and Settings → Apps and API
 // (mcp/connections.ts). All off MCP: an app can't approve itself, see other connections or disconnect them.
 
 import { z } from 'zod'

@@ -87,7 +87,7 @@ app.post('/webhooks/billing/:provider', handleBillingWebhook)
 // Agents' webhook triggers (agents/triggers.ts): signed with the trigger's secret, or the secret in the URL.
 app.post('/hooks/:triggerId', handleWebhook)
 app.post('/hooks/:triggerId/:token', handleWebhook)
-// Connectors' OAuth sign-in comes back here, then on to Settings → Connectors (agents/connectors.ts).
+// Connectors' OAuth sign-in comes back here, then on to Settings → Agent setup → Connectors (agents/connectors.ts).
 app.get('/connectors/oauth/callback', handleOAuthCallback)
 
 app.onError(onError)

@@ -97,7 +97,7 @@ export async function approveRequest(
   const { redirectTo } = await oauth.completeAuthorization({
     request,
     userId: actor.userId,
-    // Readable without the token (props aren't): what Settings → Connected apps lists.
+    // Readable without the token (props aren't): what Settings → Apps and API lists.
     metadata: { organizationId: input.organizationId, app: app.clientName, appDomain: app.clientDomain ?? null, mailboxIds } satisfies GrantMetadata,
     scope: scopes,
     props: grant,

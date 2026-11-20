@@ -157,7 +157,7 @@ function findIssues(
   if (config.model) {
     const name = label(config.model.provider)
     const p = providers.find((x) => x.provider === config.model!.provider)
-    if (!p) issues.push({ kind: 'key', message: `No ${name} key: add one in Settings → AI providers.`, action: 'fix_key' })
+    if (!p) issues.push({ kind: 'key', message: `No ${name} key: add one in Settings → Agent setup → AI providers.`, action: 'fix_key' })
     else if (p.status === 'invalid') issues.push({ kind: 'key', message: `${name} rejected the organization’s key.`, action: 'fix_key' })
     else if (p.status === 'no_credit') issues.push({ kind: 'key', message: `The ${name} account is out of credit.`, action: 'fix_key' })
   }
@@ -270,8 +270,8 @@ async function scopedConfig(env: Env, organizationId: string, config: AgentConfi
 export async function blocker(env: Env, organizationId: string, config: AgentConfig): Promise<string | null> {
   if (!config.model) return 'Pick a model in the agent’s Settings first.'
   const provider = await db.findProvider(env.DB, organizationId, config.model.provider)
-  if (!provider) return `Add a ${label(config.model.provider)} key in Settings → AI providers first.`
-  if (provider.status === 'invalid') return `${label(config.model.provider)} rejected the organization’s key. Update it in Settings → AI providers.`
+  if (!provider) return `Add a ${label(config.model.provider)} key in Settings → Agent setup → AI providers first.`
+  if (provider.status === 'invalid') return `${label(config.model.provider)} rejected the organization’s key. Update it in Settings → Agent setup → AI providers.`
   if (!config.instructions.trim()) return 'Write the agent’s instructions first.'
   return null
 }

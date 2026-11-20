@@ -370,7 +370,7 @@ function Install({ orgId, status, domain, onOpenLive }: { orgId: string; status:
           <p className="muted small">
             {tab === 'browser'
               ? 'Paste before the closing head tag on every page. Page views are recorded automatically, including route changes in single-page apps.'
-              : 'Use your secret key from Settings → API keys, on your server only. Send "userId" or "email" to say who it was.'}{' '}
+              : 'Use your secret key from Settings → Apps and API, on your server only. Send "userId" or "email" to say who it was.'}{' '}
             <a className="link" href={DOCS_URL} target="_blank" rel="noreferrer">Read the guide</a>
           </p>
 

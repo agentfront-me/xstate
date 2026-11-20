@@ -356,3 +356,21 @@ which made every extra address a shared mailbox and had no way to add a person:
 - **Personal** mailboxes come from Add member; extra addresses from the member dialog. A second separate personal
   mailbox for an existing member can no longer be made in the app (one inbox per person, §3.1).
 - **Agent** mailboxes can no longer be made in the app; nothing in the app used them. The API keeps the kind.
+- **Migration** is no longer its own Settings item: "Import from Google Workspace" is a link under the domain list
+  that expands the import card in place (Hide collapses it). It stays open on its own while an import is under way
+  or while the reminder that xstate can still read Google is showing.
+  `#/settings/migration` still opens Domains and scrolls to it, and the Domains menu item shows a running import
+  ("Importing 42%").
+
+#### Follow-up: Settings menu merged from 9 items to 6 (2026-11-20)
+
+Account, Members, Domains, **Apps and API**, **Agent setup**, Billing.
+- **Apps and API** (`#/settings/access`), what can reach into xstate, as tabs: Connected apps, Organization keys
+  (owners and admins), Personal tokens.
+- **Agent setup** (`#/settings/agent-setup`), what agents use, as tabs: AI providers, Connectors, Secrets.
+- The open tab is in the address (`?tab=secrets`), so a reload or Back returns to it. The tab names the section, so
+  the section's own heading is hidden inside it.
+- Old addresses still work (`MOVED` in `SettingsPage.tsx`): `connected-apps`, `api-keys` (Personal tokens),
+  `org-keys`, `ai-providers`, `connectors` and `secrets` open the new page on that tab; `migration` opens Domains at
+  the import. Emails, the connector OAuth return and links across the app keep using them.
+- Help docs, blog posts, API error messages and comments now name the new places.

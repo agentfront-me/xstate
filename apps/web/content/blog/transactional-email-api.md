@@ -26,7 +26,7 @@ curl https://api.xstate.com/v1/emails \
 
 ## Tokens that can't do more than you
 
-To send, create a personal token in **Settings → API keys → Personal Tokens**:
+To send, create a personal token in **Settings → Apps and API → Personal tokens**:
 
 - Choose which mailboxes it may send from. You can pick only mailboxes you can send from yourself.
 - Choose when it ends: never, or in 30 days, 90 days or 1 year.

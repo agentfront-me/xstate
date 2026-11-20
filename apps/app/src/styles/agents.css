@@ -121,7 +121,7 @@ button.a-tl-head .icon { color: var(--text-dim); }
 .a-version .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .a-live { margin-left: 8px; }
 
-/* Settings → AI providers */
+/* Settings → Agent setup → AI providers */
 .ai-provider .text { gap: 2px; }
 .key-status.valid { color: var(--text-hi); }
 .key-status.invalid { color: #dc2626; }
@@ -183,7 +183,7 @@ button.a-tl-head .icon { color: var(--text-dim); }
 .a-decision { font-size: 12px; white-space: nowrap; color: var(--text-hi); }
 .a-decision.rejected, .a-decision.expired { color: var(--text-muted); }
 
-/* Connectors (Settings → Connectors, Setup → Tools) */
+/* Connectors (Settings → Agent setup → Connectors, Setup → Tools) */
 .a-conn + .a-conn { border-top: 1px solid var(--border); }
 .a-conn .text { gap: 2px; }
 .a-conn-status { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; margin-left: 6px; border-radius: 99px; font-size: 11px; border: 1px solid var(--border); color: var(--text-toned); vertical-align: 1px; }

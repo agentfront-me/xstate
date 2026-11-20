@@ -1,4 +1,4 @@
-// Settings → AI providers and Settings → Secrets (live). Owners and admins only.
+// Settings → Agent setup → AI providers and Settings → Agent setup → Secrets (live). Owners and admins only.
 // Agents run on the organization's own AI keys: each key is checked before it's saved, shown masked afterwards, and
 // its status updates when a run hits a problem with it.
 

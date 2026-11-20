@@ -1,4 +1,4 @@
-// Settings → AI providers: the organization's own Anthropic and OpenAI keys. Owners and admins only.
+// Settings → Agent setup → AI providers: the organization's own Anthropic and OpenAI keys. Owners and admins only.
 // Saving a key checks it first by listing the provider's models (free, no tokens); the list is kept so agents can
 // only pick models the key can use. Runs report key failures back here (reportFailure), so the card shows why.
 
@@ -102,8 +102,8 @@ export async function remove(env: Env, actor: Actor, organizationId: string, pro
 /** The decrypted key for a run, or why there isn't a usable one. Never leaves the Worker. */
 export async function keyFor(env: Env, organizationId: string, provider: ProviderId): Promise<{ key: string } | { error: string }> {
   const row = await db.findProvider(env.DB, organizationId, provider)
-  if (!row) return { error: `No ${label(provider)} key. Add one in Settings → AI providers.` }
-  if (row.status === 'invalid') return { error: `${label(provider)} rejected the key. Update it in Settings → AI providers.` }
+  if (!row) return { error: `No ${label(provider)} key. Add one in Settings → Agent setup → AI providers.` }
+  if (row.status === 'invalid') return { error: `${label(provider)} rejected the key. Update it in Settings → Agent setup → AI providers.` }
   return { key: await unseal(env, row.key_encrypted) }
 }
 

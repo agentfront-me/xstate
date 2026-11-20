@@ -1,7 +1,7 @@
 // Import from Google Workspace: /migrate/. The same focused shell as account creation (xstate header with the step
 // count, one centered column, Back to Settings), wider because the plan and progress screens are tables.
 //
-// Entry points: Settings → Migration, and a card under the domain step of onboarding. The step comes from the
+// Entry points: Settings → Domains, and a card under the domain step of onboarding. The step comes from the
 // migration itself, so a reload or a visit days later lands where it left off. Only owners and admins run a
 // migration; other members see a view-only page.
 
@@ -47,6 +47,7 @@ export type Ctx = {
 
 type Loaded = Omit<Ctx, 'migration' | 'setMigration' | 'go'>
 
+// Settings → Domains, at its import section.
 const settingsUrl = (demo: boolean) => `/app/${demo ? '?demo' : ''}#/settings/migration`
 
 async function loadAccount(): Promise<Loaded> {

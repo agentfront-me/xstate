@@ -1,4 +1,4 @@
-// Settings → Secrets: organization values used in connector headers (Phase 4). Owners and admins only. A value can't
+// Settings → Agent setup → Secrets: organization values used in connector headers (Phase 4). Owners and admins only. A value can't
 // be read back through the API; it's decrypted only when a connector request is made, outside the model's context.
 
 import type { Actor } from '../auth/types'

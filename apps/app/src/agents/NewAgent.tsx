@@ -114,7 +114,7 @@ export function NewAgentDialog({ orgId, mailboxes, onClose, onCreated }: { orgId
                 </button>
               </div>
               {error && <p className="form-error">{error}</p>}
-              {!models.isLoading && !providers.length && <p className="dim small">Drafting uses your organization’s AI key. Add one in Settings → AI providers, or pick a template.</p>}
+              {!models.isLoading && !providers.length && <p className="dim small">Drafting uses your organization’s AI key. Add one in Settings → Agent setup → AI providers, or pick a template.</p>}
             </section>
             <div className="a-new-or"><span>or start from a template</span></div>
             <div className="a-templates">

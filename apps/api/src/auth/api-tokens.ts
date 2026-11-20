@@ -102,7 +102,7 @@ async function presentOne(env: Env, actor: Actor, row: TokenRow): Promise<Token>
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Settings → API keys → Personal Tokens
+// Settings → Apps and API → Personal tokens
 
 /**
  * The actor's tokens, or with `all` everyone's (owners and admins only). Also what the page needs to offer a new
@@ -256,7 +256,7 @@ export async function authenticateToken(env: Env, bearer: string | undefined, wa
   const writable = await writableIds(env, row.organization_id, row.user_id)
   const mailboxIds = (JSON.parse(row.mailbox_ids) as string[]).filter((id) => writable.has(id))
   if (!mailboxIds.length) {
-    throw new ApiError('no_mailboxes', 'This token has no mailbox it can send from any more. Give it one in Settings → API keys.', 403)
+    throw new ApiError('no_mailboxes', 'This token has no mailbox it can send from any more. Give it one in Settings → Apps and API.', 403)
   }
   waitUntil(db.touch(env.DB, row.id, now).catch((err) => console.error('api token touch failed', err)))
   return {
@@ -316,7 +316,7 @@ async function emailCreated(env: Env, row: TokenRow): Promise<void> {
     row.user_id,
     `New API token: ${row.name}`,
     [`An API token named "${row.name}" was just created on your xstate account. It can send email from ${from}.`],
-    'If this wasn’t you, revoke the token in Settings → API keys and change your password.',
+    'If this wasn’t you, revoke the token in Settings → Apps and API and change your password.',
   )
 }
 

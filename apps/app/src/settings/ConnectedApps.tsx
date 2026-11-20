@@ -1,4 +1,4 @@
-// Settings → Connected apps: AI apps (Claude, Cursor, ChatGPT…) connected to the organization over MCP, what each may
+// Settings → Apps and API: AI apps (Claude, Cursor, ChatGPT…) connected to the organization over MCP, what each may
 // do, and Disconnect. Everyone sees their own; owners and admins see everyone's. Connecting happens in the app
 // itself: it sends the person to the consent page (/connect/).
 

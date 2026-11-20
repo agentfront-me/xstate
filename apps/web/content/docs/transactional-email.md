@@ -15,7 +15,7 @@ POST https://api.xstate.com/v1/emails
 
 ## 1. Create a token
 
-1. In xstate, open **Settings → API keys → Personal Tokens** and click **Create token**.
+1. In xstate, open **Settings → Apps and API → Personal tokens** and click **Create token**.
 2. Give it a name, such as "Billing server", and choose the mailboxes it may send from. You can pick any mailbox
    you can send from yourself: your own, or a shared one such as `billing@` you have full access to.
 3. Choose when it ends: never, or in 30 days, 90 days or 1 year.
@@ -278,7 +278,7 @@ A `5xx` answer or a timeout means xstate couldn't tell you what happened. Retry 
   from the next request on. With no mailbox left it stops working, and starts again if access comes back.
 - **It ends when you leave.** If you leave the organization or are removed, your tokens are revoked for good, and
   the owners and admins are told which ones stopped. Someone else then creates a token for the same mailbox.
-- **Revoking is immediate.** Revoke a token in Settings → API keys → Personal Tokens. You can rename a token or
+- **Revoking is immediate.** Revoke a token in Settings → Apps and API → Personal tokens. You can rename a token or
   change its mailboxes there too, without changing the token itself.
 - **To replace a token,** create a new one, switch your server to it, then revoke the old one.
 - **Owners and admins** see every member's tokens, can revoke any of them, and can turn API tokens off for the

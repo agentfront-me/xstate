@@ -130,9 +130,11 @@ const settingsIndex = createRoute({
 const settings = createRoute({
   getParentRoute: () => root,
   path: '/settings/$section',
+  // The open tab on a page that has tabs (Apps and API, Agent setup), so a reload or Back returns to it.
+  validateSearch: (raw: Record<string, unknown>): { tab?: string } => (typeof raw.tab === 'string' ? { tab: raw.tab } : {}),
   component: function Settings() {
     const { section } = settings.useParams()
-    return <SettingsPage section={section} />
+    return <SettingsPage section={section} tab={settings.useSearch().tab} />
   },
 })
 

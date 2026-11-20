@@ -82,7 +82,7 @@
 .u-code pre { margin: 0; padding: 14px 16px; padding-right: 86px; font-size: 12px; line-height: 1.6; color: var(--text-toned); white-space: pre-wrap; word-break: break-all; }
 .u-code .btn { position: absolute; top: 8px; right: 8px; }
 
-/* Settings → API keys */
+/* Settings → Apps and API */
 .key-card .card-row { flex-wrap: wrap; align-items: flex-start; }
 .key-head { display: flex; gap: 12px; width: 100%; align-items: flex-start; }
 .key-head .text { flex: 1; min-width: 0; }
@@ -92,11 +92,7 @@
 .key-line .btn { height: 32px; }
 .key-line .btn.icon-only { width: 32px; padding: 0; }
 
-/* Settings → API keys: the Organization Keys and Personal Tokens tabs */
-.set-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: -4px; }
-.set-tabs button { height: 34px; padding: 0 12px; font-size: 13px; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.set-tabs button:hover { color: var(--text-toned); }
-.set-tabs button[aria-selected="true"] { border-bottom-color: var(--primary); color: var(--text-hi); }
+/* Settings → Apps and API: the Organization Keys and Personal Tokens tabs */
 .tok-form { gap: 14px; }
 .tok-form .select { width: 100%; }
 .tok-boxes { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; max-height: 200px; overflow-y: auto; }

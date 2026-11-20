@@ -1,4 +1,4 @@
-// Settings → Connected apps: the AI apps connected to an organization over MCP, and disconnecting them. Everyone sees
+// Settings → Apps and API: the AI apps connected to an organization over MCP, and disconnecting them. Everyone sees
 // their own; owners and admins see, and can disconnect, everyone's. A connection is an OAuth grant
 // (@cloudflare/workers-oauth-provider), found through each person's grant list and the organization in its metadata.
 

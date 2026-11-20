@@ -261,7 +261,7 @@ async function checkSecretsExist(env: Env, organizationId: string, names: string
   if (!names.length) return
   const have = new Set((await db.listSecrets(env.DB, organizationId)).map((s) => s.name))
   const missing = names.filter((n) => !have.has(n))
-  if (missing.length) throw new ApiError('unknown_secret', `No secret called ${missing.join(', ')}. Add it in Settings → Secrets first.`)
+  if (missing.length) throw new ApiError('unknown_secret', `No secret called ${missing.join(', ')}. Add it in Settings → Agent setup → Secrets first.`)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -287,7 +287,7 @@ async function resolveHeaders(env: Env, row: Row): Promise<Record<string, string
       if (refs.includes(s.name)) secrets.set(s.name, await unseal(env, s.value_encrypted))
     }
     const missing = refs.filter((r) => !secrets.has(r))
-    if (missing.length) throw new ConnectorError('error', `The secret ${missing.join(', ')} was deleted. Add it again in Settings → Secrets.`)
+    if (missing.length) throw new ConnectorError('error', `The secret ${missing.join(', ')} was deleted. Add it again in Settings → Agent setup → Secrets.`)
     await env.DB.prepare(`UPDATE secrets SET last_used_at = ? WHERE organization_id = ? AND name IN (${refs.map(() => '?').join(',')})`)
       .bind(new Date().toISOString(), row.organization_id, ...refs)
       .run()

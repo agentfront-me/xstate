@@ -460,3 +460,16 @@ button.card-row:hover { background: var(--bg-hover); }
 .give-row { justify-content: space-between; gap: 8px; }
 .give-row .select { max-width: 60%; }
 .member-detail .card + .card { margin-top: 8px; }
+
+/* Settings → Domains: the Google Workspace import, a link until it's opened. */
+.link-toggle { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.link-toggle:hover { color: var(--text-hi); }
+
+/* Settings pages with tabs (Apps and API, Agent setup). The tab names the section, so the first heading inside is
+   hidden; its description and action button stay. */
+.set-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: -4px; }
+.set-tabs button { height: 34px; padding: 0 12px; font-size: 13px; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.set-tabs button:hover { color: var(--text-toned); }
+.set-tabs button[aria-selected="true"] { border-bottom-color: var(--primary); color: var(--text-hi); }
+.tab-panel { display: flex; flex-direction: column; gap: 24px; }
+.tab-panel > .group:first-child > .group-head h2 { display: none; }

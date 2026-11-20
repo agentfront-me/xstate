@@ -98,7 +98,7 @@ keys, AI provider keys, secrets, inviting or removing members, and public file l
 
 ## Manage connected apps
 
-**Settings → Connected apps** lists the apps you connected, what each may do and when it was last active, with
+**Settings → Apps and API** lists the apps you connected, what each may do and when it was last active, with
 **Disconnect**. Owners and admins also see every app connected to the organization and can disconnect any of them.
 Access ends at once.
 

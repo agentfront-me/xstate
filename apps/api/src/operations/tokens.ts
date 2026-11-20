@@ -1,4 +1,4 @@
-// Settings → API keys → Personal Tokens (auth/api-tokens.ts). All off MCP and behind a signed-in session: an agent,
+// Settings → Apps and API → Personal tokens (auth/api-tokens.ts). All off MCP and behind a signed-in session: an agent,
 // a connected app or a token itself can't create a token, see one or change one.
 
 import { z } from 'zod'

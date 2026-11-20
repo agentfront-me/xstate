@@ -62,7 +62,7 @@ Some things are never available to a connected app, whatever you choose:
 
 ## Taking access back
 
-**Settings → Connected apps** lists every app you connected, what it may do and when it was last active.
+**Settings → Apps and API** lists every app you connected, what it may do and when it was last active.
 **Disconnect** ends its access at once. Owners and admins see every app connected to the organization and can
 disconnect any of them.
 

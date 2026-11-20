@@ -1,4 +1,4 @@
-// Settings → API keys → Personal Tokens: the tokens a person's own server uses to send email as them. A token is
+// Settings → Apps and API → Personal tokens: the tokens a person's own server uses to send email as them. A token is
 // shown once, right after it is created. Everyone sees their own; owners and admins also see everyone's, can revoke
 // any of them and can turn tokens off for the whole organization.
 

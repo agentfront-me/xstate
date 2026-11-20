@@ -14,7 +14,7 @@ from them.
 ## Install the snippet
 
 Open **Analytics** in xstate: until the first event arrives it shows the snippet with your **publishable key**
-already filled in (it's also in **Settings → API keys → Organization keys**). Paste it before the closing `</head>`
+already filled in (it's also in **Settings → Apps and API → Organization keys**). Paste it before the closing `</head>`
 tag on every page:
 
 ```html
