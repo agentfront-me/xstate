@@ -7,8 +7,8 @@ done yet: real mail apps (Apple Mail, Thunderbird, Outlook) haven't been tried. 
 from the internet with its real certificate (§17).
 **Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
 §18).** **Phase 4 (changes from mail apps) is built, deployed (ab85752) and tested in production (2026-11-20; §19).**
-**Phase 5 (calendars over CalDAV) is built, deployed (a270469) and tested in production (2026-11-20; §20).** The
-"Use your mail and calendar app" docs page and a FAQ entry are written but not published (§20).
+**Phase 5 (calendars over CalDAV) is built, deployed (a270469) and tested in production (2026-11-20; §20).** **Launched to every organization on 2026-11-20** (`MAIL_APPS` set to `on`), with the "Use your mail and calendar
+app" docs page and a FAQ entry published (§20).
 A 12-hour idle test is running on deepo until 21:26 UTC.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and

@@ -31,8 +31,8 @@
     "ENVIRONMENT": "production",
     // Mail and calendar apps (docs/imap-smtp-relay-plan.md): who can create app passwords and sign in with them while
     // IMAP, SMTP and CalDAV are being built. "off" nobody, "on" everybody, or organization ids separated by commas.
-    // Now: the main organization only (asif@xstate.com), for the production test.
-    "MAIL_APPS": "b6b21012-3836-473e-9b2c-92d654c32f69",
+    // Launched to everyone 2026-11-20.
+    "MAIL_APPS": "on",
     // Browser origins allowed to call the API (comma-separated): the dashboard and sign-up pages (go.xstate.com),
     // and the desktop app, which serves the dashboard from app://xstate. xstate.com stays listed because Domain
     // Connect returns there (a redirect_uri is only signed when it's on one of these origins).
