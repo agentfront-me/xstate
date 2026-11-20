@@ -3,7 +3,8 @@
 Status: **draft, 2026-11-20.** The four open questions were answered the same day (§12), and a review the same day
 changed the plan in 13 places (§13). **Phases 0, 1 and 2 are built and deployed (2026-11-20; §14–§16), and
 tested in production through deepo (§17).** Mail apps are released to the main organization only (`MAIL_APPS`). Not
-done yet: the mail ports aren't open to the internet (§17). The bridge has its real certificate.
+done yet: real mail apps (Apple Mail, Thunderbird, Outlook) haven't been tried. `mail.xstate.com` answers on 993, 465 and 587
+from the internet with its real certificate (§17).
 **Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
 §18).** A 12-hour idle test is running on deepo until 21:26 UTC.
 
@@ -525,8 +526,13 @@ line (`FINISHED`) gives the number of drops and the longest connection. If conne
 is a problem to fix before launch; a handful over 12 hours is normal.
 
 **Still to do**
-1. **Open ports 993, 465 and 587** in deepo's security group, and confirm 3.130.37.150 is an Elastic IP. Needs
-   `aws login` (the session has expired).
+1. ~~Open ports 993, 465 and 587~~ **Checked 2026-11-20.** 3.130.37.150 is an Elastic IP
+   (`eipalloc-068fb8f06ed9fcb78`), so it stays. Ports 993, 465 and 587 were already open to the world in deepo's
+   security group (`sg-2b289c41`, "default"), left from the Stalwart days, so nothing had to change. The same
+   group still opens 25, 8080 and 5432 to the world, which nothing needs now (nothing listens on 25 or 8080, and
+   Postgres listens on 127.0.0.1 only); closing them is the user's call.
+   **Tested straight from the internet** with full certificate checks: IMAP sign-in, opening the Inbox and a whole
+   message; sends on 465 and on 587; new mail reaching an idle connection.
 2. ~~A real certificate~~ **Done 2026-11-20.** A Let's Encrypt certificate for `mail.xstate.com` (expires
    2027-02-18), got with certbot's web check on port 80 (user approved registering the account, without an email
    address). On deepo: `/etc/nginx/conf.d/mail-xstate.conf` answers only the check; the hook
