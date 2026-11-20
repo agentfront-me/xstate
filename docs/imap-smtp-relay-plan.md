@@ -2,8 +2,8 @@
 
 Status: **draft, 2026-11-20.** The four open questions were answered the same day (§12), and a review the same day
 changed the plan in 13 places (§13). **Phase 0 built and tested locally 2026-11-20; its production half (the bridge
-on deepo, the overnight test) is waiting (§14). Phase 1 built and tested locally 2026-11-20 (§15).** Work is on the
-`mail-apps` branch, not pushed.
+on deepo, the overnight test) is waiting (§14). Phases 1 and 2 built and tested locally 2026-11-20 (§15, §16).** Work is
+on the `mail-apps` branch, not pushed.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
 Android mail and calendar apps) with xstate. It keeps one rule: **the mailbox store is the only place mail and
@@ -442,4 +442,42 @@ password), sign in to an own mailbox, a read-only shared mailbox (signs in read-
 wrong password; typed in capitals without dashes; last-used; the organization switch (member refused, owner allowed,
 sign-ins refused while off); owner sees everyone's; revoke; throttling after 10 tries. The Settings screen was
 checked in the browser: create, copy dialog, revoke.
+
+## 16. Phase 2 as built (2026-11-20)
+
+- **`relay/smtp-session.ts`**, the `SmtpSession` Durable Object, one per connection: EHLO/HELO, AUTH PLAIN and
+  AUTH LOGIN with an app password, MAIL FROM (with SIZE), RCPT TO, DATA, RSET, NOOP, VRFY, QUIT. It advertises SIZE
+  (35 MB), 8BITMIME, PIPELINING and ENHANCEDSTATUSCODES. Three wrong passwords close the connection.
+- **`mailbox/outbound-raw.ts`**, `sendRawFromStore`: checks the From address, the recipient cap and suppression
+  list, the file-type rules and the 25 MB attachment cap; reserves against the sending limits; takes the Bcc line
+  off; sends through SES; keeps the Sent copy (with SES's Message-ID and a Bcc line) in R2 and the store; queues
+  the mail event; writes one delivery-log line per recipient; tells the apps to reload.
+- **`mailbox/raw-headers.ts`**: removes and adds header lines without touching the body (unit tests).
+- **Bridge:** `/relay/smtp` now reaches the session, on 465 (TLS) and 587 (STARTTLS).
+
+**Changed from the plan**
+- **The message is collected in the session's memory, not streamed to R2.** SES needs the whole message in one
+  request, so it has to be in memory once anyway. What matters is never holding it twice for long: the parser gets
+  it with the files cut out (as received mail already does), and each header rewrite replaces the copy before it.
+  The peak is the message plus its base64 form for SES, the same as a send from the web app. If the session is
+  reset mid-message (the app silent for a long while), the app is told to send again.
+- **`client_message_id` is not stored yet.** It's only needed to match a mail app's own Sent copy (IMAP APPEND),
+  so it comes with phase 4.
+- **Marking the original as answered** (when the message is a reply) also comes with phase 4, with the IMAP
+  `\Answered` flag.
+
+**Tested locally** (`apps/api/scripts/smtp-test.py`: Python's smtplib as the mail app → bridge → `wrangler dev`, SES
+in fake mode; 18 checks, all passing):
+- A message with Cc, Bcc and an attachment is accepted; a second on the same connection; one over port 587 with
+  STARTTLS and AUTH LOGIN.
+- Each has exactly one Sent copy, with its text intact (lines starting with dots included), its Bcc and its
+  attachment; the delivery log has a line for the Bcc recipient.
+- An 18 MB attachment goes through in about 4 seconds; 27 MB of attachments is refused with 552.
+- Refused: MAIL before signing in (530), another From address (550), a blocked file type (550, naming the file),
+  the 51st recipient (452, the other 50 are sent), a read-only shared mailbox (550), three wrong passwords (closed).
+- The hourly limit on outside recipients applies: a run that passed 100 got `451 4.7.1 Sending limit reached`.
+
+**Still to check in production** (after the bridge is on deepo): a real send to Gmail from Apple Mail, Thunderbird
+and Outlook; that the Bcc recipient gets the message and the others can't see them; that a reply threads with the
+Sent copy.
 

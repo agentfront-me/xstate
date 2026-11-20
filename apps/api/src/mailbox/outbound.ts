@@ -220,7 +220,7 @@ async function attachmentBytes(env: OutboundEnv, mailbox: MailboxRow, bucket: st
   throw new EmailError('attachment_not_found', 'An attachment of this message no longer exists; attach it again', 404)
 }
 
-async function safetyOf(bytes: Uint8Array, name: string): Promise<Safety> {
+export async function safetyOf(bytes: Uint8Array, name: string): Promise<Safety> {
   const byName = checkName(name)
   if (byName.level === 'blocked') return byName
   const { safety, body } = await inspectStream(new Response(bytes).body!, name)

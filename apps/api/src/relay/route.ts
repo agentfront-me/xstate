@@ -22,9 +22,9 @@ export async function handleRelay(c: Context<AppEnv>): Promise<Response> {
   if (!(await isBridge(c.env as RelayEnv, c.req.header('X-Relay-Secret')))) return notFound(c)
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') return c.json({ error: { code: 'upgrade_required', message: 'Open this as a WebSocket' } }, 426)
   const protocol = c.req.param('protocol')
-  // SMTP arrives with phase 2; until then the bridge tells the mail app the service is unavailable.
-  if (protocol !== 'imap') return notFound(c)
-  const session = c.env.IMAP_SESSION.get(c.env.IMAP_SESSION.newUniqueId())
+  if (protocol !== 'imap' && protocol !== 'smtp') return notFound(c)
+  const sessions = protocol === 'imap' ? c.env.IMAP_SESSION : c.env.SMTP_SESSION
+  const session = sessions.get(sessions.newUniqueId())
   const query = new URLSearchParams({ ip: c.req.header('X-Client-IP') ?? '', tls: c.req.query('tls') ?? 'implicit' })
   return session.fetch(new Request(`https://relay/?${query}`, { headers: { Upgrade: 'websocket' } }))
 }

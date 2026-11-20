@@ -112,6 +112,8 @@ export { LiveHub } from './live/hub'
 export { MailboxStore } from './mailbox/store'
 // One per mail-app connection: an IMAP session handed over by the mail bridge (relay/imap-session.ts).
 export { ImapSession } from './relay/imap-session'
+// One per mail-app sending connection: an SMTP session handed over by the mail bridge (relay/smtp-session.ts).
+export { SmtpSession } from './relay/smtp-session'
 
 export default {
   // mcp.xstate.com (the MCP server and its OAuth sign-in, mcp/oauth.ts) and the mta-sts.<domain> policy hosts

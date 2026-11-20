@@ -176,7 +176,9 @@
       // One per mailbox: its message index (mailbox/store.ts, docs/mailbox-store-plan.md).
       { "name": "MAILBOX_STORE", "class_name": "MailboxStore" },
       // One per mail-app connection: its IMAP session (relay/imap-session.ts, docs/imap-smtp-relay-plan.md).
-      { "name": "IMAP_SESSION", "class_name": "ImapSession" }
+      { "name": "IMAP_SESSION", "class_name": "ImapSession" },
+      // One per mail-app sending connection: its SMTP session (relay/smtp-session.ts).
+      { "name": "SMTP_SESSION", "class_name": "SmtpSession" }
     ]
   },
   "migrations": [
@@ -185,7 +187,8 @@
     { "tag": "v3-agent-store", "new_sqlite_classes": ["AgentStore"] },
     { "tag": "v4-live-hub", "new_sqlite_classes": ["LiveHub"] },
     { "tag": "v5-mailbox-store", "new_sqlite_classes": ["MailboxStore"] },
-    { "tag": "v6-imap-session", "new_sqlite_classes": ["ImapSession"] }
+    { "tag": "v6-imap-session", "new_sqlite_classes": ["ImapSession"] },
+    { "tag": "v7-smtp-session", "new_sqlite_classes": ["SmtpSession"] }
   ],
   // One agent run = one AgentRun instance (agents/run.ts): every model and tool call is a durable step.
   "workflows": [{ "name": "xstate-agent-run", "binding": "AGENT_RUN", "class_name": "AgentRun" }],
