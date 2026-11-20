@@ -3,7 +3,7 @@ title: Security
 description: How xstate protects your accounts, email, files and agents, and what it does with risky attachments.
 ---
 
-**Last updated:** November 19, 2026
+**Last updated:** November 20, 2026
 
 This page describes what xstate actually does to keep your organization's data safe. We update it whenever we
 change how something works. Recent changes are listed [at the end](#changes).
@@ -33,6 +33,15 @@ change how something works. Recent changes are listed [at the end](#changes).
   signs in with an address of the organization's own, never for the owner, and only the owner can for an admin.
 - **Password reset links** an admin emails a member go to their secondary email, work once and expire after 24
   hours. We store only a hash of the link.
+
+- **Mail and calendar apps** sign in with an **app password**, never with your account password. It's 16 random
+  letters, shown once and stored only as a hash. Each one belongs to a person and works for the mailboxes they can
+  open, with the access they have at that moment, so losing access to a mailbox, leaving the organization or a
+  suspension ends it at the next sign-in. People revoke their own; owners and admins can revoke anyone's and turn
+  mail apps off for the whole organization. Sign-in tries are limited to 10 a minute for each address. Mail apps
+  connect to `mail.xstate.com` over TLS only (ports 993, 465 and 587); a password is never accepted unencrypted.
+  That gateway runs on a server of ours in Amazon's cloud, as its own locked-down service: mail passes through its
+  memory to xstate and is never written to disk there. Calendar apps connect to `dav.xstate.com` over HTTPS.
 
 ## Who can see what
 
@@ -236,6 +245,8 @@ steps to reproduce it, and give us a reasonable time to fix it before sharing it
 
 ## Changes
 
+- **November 20, 2026:** Mail and calendar apps (Apple Mail, Outlook, Thunderbird, Apple Calendar and others) can
+  connect over IMAP, SMTP and CalDAV with app passwords. See [Use your mail and calendar app](/docs/mail-apps).
 - **November 20, 2026:** When an invitation email can't be sent, the admin who sent it sees the invitation link
   to pass on another way.
 - **November 19, 2026:** xstate records its own product analytics (page visits, sign-ups and key actions such as

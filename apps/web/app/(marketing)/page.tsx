@@ -16,7 +16,8 @@ export const metadata: Metadata = {
   },
 }
 
-const faqs = [
+/** Question, answer, and optionally a link to read more. The answer stays plain text for search engines. */
+const faqs: [string, string, { href: string; text: string }?][] = [
   ['Do I need to own a domain?', 'Yes, for now. Connect a domain you own and xstate checks its DNS records for you, usually in a few minutes. Buying a domain during setup and a free xstate subdomain are coming.'],
   ['What can I keep in Storage?', 'Any file. Save attachments from your mail in one click, keep personal and shared spaces for your team, and edit Markdown and CSV or mark up PDFs in the browser. Earlier versions are kept, and you can share a file by link.'],
   ['What does search look through?', 'Every email body, PDF and text attachments, and your files in Storage, indexed by meaning so you can ask in your own words. Your AI apps and agents search the same index, limited to what they were given.'],
@@ -25,6 +26,11 @@ const faqs = [
   ['What does the website snippet track?', 'Page views on its own, and any events you send with one line of code. Visitors stay anonymous until they give an email, for example in a form. Anonymous visitors are removed 30 days after their last visit, and events after 90 days.'],
   ['Which AI apps can work with my mail?', 'Claude, Claude Code, Codex, Cursor and ChatGPT. You approve each one and choose its mailboxes and what it may do: read, draft or send mail, and read or change your calendar, files and contacts.'],
   ['Do you use my mail to train AI?', 'No. We do not use your content to train AI models, for advertising or for profiling, and our staff do not read it unless you ask us to. Agents use the AI provider and key your organization chooses.'],
+  [
+    'Can I use Apple Mail, Outlook or Thunderbird?',
+    'Yes. Create an app password in Settings, then add your mailbox to the app with mail.xstate.com as the server. Mail works over IMAP and SMTP in any app, and your calendars sync to Apple Calendar, Thunderbird and Android over CalDAV. Everything you do in the app shows in xstate too.',
+    { href: '/docs/mail-apps', text: 'Set up your mail app' },
+  ],
   ['Can I take my data with me?', 'Yes. Your mail can be read through the xstate API and from your connected AI apps, files in Storage download as they are, and contacts export as CSV.'],
 ]
 
@@ -146,7 +152,7 @@ export default function Home() {
           </p>
         </div>
         <div className="faq-list">
-          {faqs.map(([q, a]) => (
+          {faqs.map(([q, a, link]) => (
             <details key={q}>
               <summary>
                 <span>{q}</span>
@@ -155,7 +161,15 @@ export default function Home() {
                   <span className="fq-minus">−</span>
                 </span>
               </summary>
-              <p className="muted">{a}</p>
+              <p className="muted">
+                {a}
+                {link && (
+                  <>
+                    {' '}
+                    <a href={link.href}>{link.text} →</a>
+                  </>
+                )}
+              </p>
             </details>
           ))}
         </div>

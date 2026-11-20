@@ -5,6 +5,7 @@
     "quickstart",
     "mcp",
     "transactional-email",
+    "mail-apps",
     "analytics",
     "...",
     "security",

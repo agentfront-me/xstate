@@ -3,7 +3,7 @@ title: Privacy Policy
 description: What data xstate collects, why, who we share it with, and the choices you have.
 ---
 
-**Last updated:** November 19, 2026
+**Last updated:** November 20, 2026
 
 This policy explains how **HireNinja LLC** ("xstate", "we", "us") handles personal data when you use
 xstate.com, go.xstate.com, api.xstate.com, the xstate mobile and desktop apps, and the related services (the
@@ -147,12 +147,14 @@ We share personal data only as described here:
   | Provider | Purpose |
   | --- | --- |
   | Cloudflare, Inc. | Hosting, databases, file storage, queues, search indexing, AI embeddings, DNS and network security |
-  | Amazon Web Services, Inc. | Delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days) |
+  | Amazon Web Services, Inc. | Delivering outgoing email (Amazon SES), bounce and complaint handling; receiving incoming email (Amazon SES, with each message kept in Amazon S3 only until it is copied to your organization's storage, at most 7 days); the server that connects mail apps (Amazon EC2), which passes mail through its memory and stores none |
   | Expo (650 Industries, Inc.), Apple, Google | Delivering push notifications to the mobile apps |
   | Stripe, Inc. | Payments for paid plans: checkout, card processing, invoices, receipts and the billing portal |
 
 - **Providers your organization chooses**, such as AI providers and connected services, when your organization
-  configures them.
+  configures them. This includes the maker of a mail app someone in your organization signs in with, when that app
+  connects through its maker's servers (the new Outlook does): that maker receives the mail under its own terms.
+  Owners and admins can turn mail apps off.
 - **Other members of your organization**, according to the permissions its admins set. Shared mailboxes,
   shared files and org-wide contacts are visible to the members they are shared with. Items you share through a
   public link can be viewed by anyone with the link.

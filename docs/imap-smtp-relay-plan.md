@@ -7,6 +7,8 @@ done yet: real mail apps (Apple Mail, Thunderbird, Outlook) haven't been tried. 
 from the internet with its real certificate (§17).
 **Phase 3 (reading mail over IMAP) is built, deployed (68a39d5) and tested in production through deepo (2026-11-20;
 §18).** **Phase 4 (changes from mail apps) is built, deployed (ab85752) and tested in production (2026-11-20; §19).**
+**Phase 5 (calendars over CalDAV) is built, deployed (a270469) and tested in production (2026-11-20; §20).** The
+"Use your mail and calendar app" docs page and a FAQ entry are written but not published (§20).
 A 12-hour idle test is running on deepo until 21:26 UTC.
 
 This plan lets people use their own mail apps and calendar apps (Apple Mail, Outlook, Thunderbird, the iOS and
@@ -673,4 +675,53 @@ the previous code during the rollout, but that isn't confirmed. Watch for it aft
 
 **Not built yet:** the cap of about 15 connections per mailbox, QRESYNC, LITERAL+, and honouring UNCHANGEDSINCE
 (changes are applied regardless).
+
+## 20. Phase 5 as built (2026-11-20)
+
+Calendar apps can read and change a mailbox's calendars over CalDAV.
+
+**Code**
+- `dav/caldav.ts`: every `/dav/*` request and `/.well-known/caldav`, on the API Worker at `dav.xstate.com`.
+  Discovery (current-user-principal, calendar-home-set), PROPFIND on the principal, the home, a calendar and an
+  event; REPORT calendar-multiget, calendar-query (with time ranges) and sync-collection (with deletions); GET, PUT
+  (with If-Match and If-None-Match), DELETE and MOVE of events; MKCOL with a calendar resourcetype, PROPPATCH and
+  DELETE of calendars. HTTP Basic sign-in with an app password.
+- `dav/xml.ts`: a small XML reader for the request bodies.
+- `mailbox/store.ts`: per event a file name (`dav_name`) and a change number (`cal_modseq`, the ETag), a
+  calendar-wide change number (the sync token), and `event_tombstones` for deleted events, purged after 30 days by
+  the hourly job (an app that synced longer ago is told to start over).
+- Events are read out with `buildIcs` (without METHOD) and taken in with `parseIcs`, and every change goes through
+  `storeCalendars`, so guests are emailed exactly as for a change in the web app.
+- **On deepo:** `mail.xstate.com` on port 443 now redirects calendar apps to `https://dav.xstate.com/dav/`; nginx
+  reloads with each renewed certificate.
+
+**Changed from the plan**
+- **Sign-in is checked once per 5 minutes per isolate,** not on every request: calendar apps sign every request,
+  dozens per sync, which the 10-a-minute sign-in limit would otherwise stop. A revoked app password therefore stops
+  calendar apps within 5 minutes.
+- **MKCALENDAR doesn't work:** the Workers runtime refuses that method name with 501 before our code runs, locally
+  and in production. Apple Calendar uses it to create calendars, so new calendars must be made in xstate (DAVx⁵ and
+  Thunderbird use extended MKCOL, which works). The docs say so.
+- **Cloudflare's browser check blocks some clients:** requests with Python's default user agent got 403 at
+  dav.xstate.com. Apple Calendar's, DAVx⁵'s and Thunderbird's user agents pass. If a calendar app is ever refused, a
+  Cloudflare rule skipping the browser check for `dav.xstate.com` is the fix.
+- **Free/busy and the scheduling inbox and outbox** aren't built (as planned).
+
+**Tested locally** (`apps/api/scripts/caldav-test.py`, the requests Apple Calendar and DAVx⁵ make; 23 checks, all
+passing): discovery from `/.well-known/caldav`; a wrong password gets a Basic challenge; calendars listed with names,
+colors and sync tokens; PUT creates an event that the web app sees at the right time; GET returns it as iCalendar;
+If-None-Match and If-Match are honoured; sync-collection lists changes and deletions; multiget and time-range queries;
+an event made in the web app reaches the calendar app; delete; make, rename and delete a calendar; the default
+calendar can't be deleted; another mailbox's calendars aren't found; a read-only shared mailbox can't change anything.
+
+**Tested in production** (asif@xstate.com, changes only on a throwaway calendar, removed afterwards): starting from
+`https://mail.xstate.com/.well-known/caldav` the redirect leads to dav.xstate.com and the mailbox; the calendars are
+listed; a test calendar is made; an event is created, read back, listed by sync and deleted; the calendar is deleted.
+
+**Docs and FAQ (written, not published).** `apps/web/content/docs/mail-apps.md` ("Use your mail and calendar app":
+app passwords, server settings, set-up for Apple, Outlook, Thunderbird and Android, what to expect, limits, apps that
+sync through their maker's cloud, security, troubleshooting), in the docs sidebar after "Send transactional email";
+a FAQ entry "Can I use Apple Mail, Outlook or Thunderbird?" on the home page linking to it (FAQ entries can now carry
+a link); `security.md` and `privacy.md` updated (app passwords, the gateway on Amazon EC2, mail-app makers' clouds).
+They are committed but not pushed: publishing them is launching mail apps, which needs `MAIL_APPS` set to `on`.
 
